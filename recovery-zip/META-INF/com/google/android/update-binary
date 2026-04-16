@@ -1,0 +1,225 @@
+#!/sbin/sh
+# recovery-zip/META-INF/com/google/android/update-binary
+# ============================================================
+# Hands-on-metal — Mode B: Recovery Image Strip
+# Runs inside OrangeFox or TWRP.
+#
+# Safety guarantees:
+#   • All partitions mounted READ-ONLY (mount -o ro)
+#   • boot / dtbo / vbmeta partitions are NEVER touched
+#   • SHA-256 checksums verified before and after each mount
+#   • All output goes to /sdcard/hands-on-metal/image_dump/
+#   • Partitions unmounted even if extraction fails (trap)
+# ============================================================
+
+OUTFD=$2
+ZIPFILE=$3
+
+OUT=/sdcard/hands-on-metal/image_dump
+LOG=$OUT/recovery_collect.log
+MANIFEST=$OUT/manifest.txt
+
+# ── TWRP / OrangeFox UI print ─────────────────────────────────
+ui_print() {
+    echo "ui_print $*" > /proc/self/fd/"$OUTFD"
+    echo "         " > /proc/self/fd/"$OUTFD"
+}
+
+# ── Logging helper ────────────────────────────────────────────
+log() {
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG"
+}
+
+abort() {
+    ui_print "ABORT: $1"
+    log "ABORT: $1"
+    do_cleanup
+    exit 1
+}
+
+# ── Busybox bootstrap ─────────────────────────────────────────
+# Extract our statically compiled busybox so we have sha256sum,
+# find, cp, etc. regardless of recovery environment.
+BBDIR=/tmp/hom_tools
+mkdir -p "$BBDIR"
+unzip -o "$ZIPFILE" "tools/busybox-arm64" -d "$BBDIR" >/dev/null 2>&1
+BB="$BBDIR/tools/busybox-arm64"
+if [ ! -x "$BB" ]; then
+    # Fallback: use whatever busybox is already in the recovery
+    BB=$(which busybox 2>/dev/null || which busybox64 2>/dev/null)
+    [ -n "$BB" ] || abort "busybox not found; cannot continue safely"
+fi
+chmod 0755 "$BB"
+
+sha256() { "$BB" sha256sum "$1" | awk '{print $1}'; }
+
+# ── Partition detection ────────────────────────────────────────
+# Try by-name symlinks first (most reliable on modern devices).
+find_part() {
+    local name="$1"
+    for p in \
+        "/dev/block/bootdevice/by-name/$name" \
+        "/dev/block/by-name/$name" \
+        "/dev/block/platform/*/by-name/$name" \
+        "/dev/block/mapper/$name" ; do
+        # glob expansion
+        for g in $p; do
+            [ -b "$g" ] && { echo "$g"; return 0; }
+        done
+    done
+    return 1
+}
+
+# ── Cleanup / unmount trap ────────────────────────────────────
+MOUNTED_DIRS=""
+
+do_cleanup() {
+    log "Unmounting partitions..."
+    for d in $MOUNTED_DIRS; do
+        umount "$d" 2>/dev/null && log "  unmounted $d" || log "  warn: could not unmount $d"
+        rmdir "$d" 2>/dev/null
+    done
+}
+trap do_cleanup EXIT
+
+# ── Copy helper ────────────────────────────────────────────────
+copy_from_mount() {
+    local mntdir="$1"
+    local relpath="$2"
+    local src="$mntdir$relpath"
+    local dst="$OUT/partitions$relpath"
+    [ -e "$src" ] || return 0
+    "$BB" mkdir -p "$("$BB" dirname "$dst")"
+    "$BB" cp -p "$src" "$dst" 2>/dev/null && echo "$relpath" >> "$MANIFEST"
+}
+
+copy_dir_from_mount() {
+    local mntdir="$1"
+    local reldir="$2"
+    local src="$mntdir$reldir"
+    [ -d "$src" ] || return 0
+    "$BB" find "$src" -type f 2>/dev/null | while IFS= read -r f; do
+        local rel="${f#$mntdir}"
+        copy_from_mount "$mntdir" "$rel"
+    done
+}
+
+# ── Mount partition and extract ────────────────────────────────
+mount_and_extract() {
+    local part_name="$1"
+    local mntdir="/tmp/hom_${part_name}"
+
+    local dev
+    dev=$(find_part "$part_name") || {
+        log "Partition $part_name not found, skipping"
+        return 0
+    }
+
+    log "Found $part_name at $dev"
+
+    # Checksum the raw block device before mounting (first 4 MiB)
+    local pre_sum
+    pre_sum=$("$BB" dd if="$dev" bs=4096 count=1024 2>/dev/null | "$BB" sha256sum | awk '{print $1}')
+    log "  pre-mount checksum (first 4MiB): $pre_sum"
+
+    "$BB" mkdir -p "$mntdir"
+    # Try mounting read-only with various filesystems
+    local mounted=0
+    for fstype in ext4 f2fs erofs squashfs; do
+        if mount -t "$fstype" -o ro,nosuid,nodev "$dev" "$mntdir" 2>/dev/null; then
+            mounted=1
+            log "  mounted as $fstype"
+            break
+        fi
+    done
+
+    if [ "$mounted" -eq 0 ]; then
+        log "  warn: could not mount $part_name (trying generic ro mount)"
+        mount -o ro,nosuid,nodev "$dev" "$mntdir" 2>/dev/null || {
+            log "  skip: $part_name not mountable"
+            rmdir "$mntdir" 2>/dev/null
+            return 0
+        }
+    fi
+
+    MOUNTED_DIRS="$MOUNTED_DIRS $mntdir"
+
+    log "  Extracting files from $part_name..."
+
+    # VINTF manifests
+    copy_dir_from_mount "$mntdir" "/etc/vintf"
+    copy_from_mount     "$mntdir" "/etc/manifest.xml"
+    copy_dir_from_mount "$mntdir" "/etc/sysconfig"
+    copy_dir_from_mount "$mntdir" "/etc/permissions"
+
+    # Protobuf configs
+    "$BB" find "$mntdir" -name "*.pb" 2>/dev/null | while IFS= read -r f; do
+        copy_from_mount "$mntdir" "${f#$mntdir}"
+    done
+
+    # Init RC files
+    copy_dir_from_mount "$mntdir" "/etc/init"
+
+    # SELinux policies
+    copy_dir_from_mount "$mntdir" "/etc/selinux"
+
+    # vendor libraries (nm output generated by pipeline on host)
+    # We only copy metadata here — the full .so binaries are large.
+    # Copy .so files up to 10 MB each.
+    "$BB" find "$mntdir/lib64" "$mntdir/lib" \
+         -name "*.so" 2>/dev/null | while IFS= read -r f; do
+        local size
+        size=$("$BB" stat -c %s "$f" 2>/dev/null || echo 0)
+        if [ "$size" -le 10485760 ]; then
+            copy_from_mount "$mntdir" "${f#$mntdir}"
+        fi
+    done
+
+    # HAL binaries
+    copy_dir_from_mount "$mntdir" "/bin"
+
+    # Verify the block device has not changed (read-only sanity check)
+    local post_sum
+    post_sum=$("$BB" dd if="$dev" bs=4096 count=1024 2>/dev/null | "$BB" sha256sum | awk '{print $1}')
+    if [ "$pre_sum" != "$post_sum" ]; then
+        log "  ERROR: checksum mismatch for $part_name after mount!"
+        log "    pre:  $pre_sum"
+        log "    post: $post_sum"
+    else
+        log "  checksum OK for $part_name"
+    fi
+
+    umount "$mntdir" 2>/dev/null && MOUNTED_DIRS="${MOUNTED_DIRS//$mntdir/}"
+    rmdir  "$mntdir" 2>/dev/null
+    log "  Done with $part_name"
+}
+
+# ── Main ──────────────────────────────────────────────────────
+
+ui_print ""
+ui_print "************************************"
+ui_print " hands-on-metal Recovery Collector  "
+ui_print "************************************"
+ui_print ""
+ui_print "Output: $OUT"
+ui_print ""
+
+mkdir -p "$OUT/partitions"
+: > "$LOG"
+: > "$MANIFEST"
+
+log "=== Mode B: Recovery collection start ==="
+
+# Process vendor, odm, product — NEVER boot/dtbo/vbmeta
+for part in vendor odm product; do
+    ui_print "- Processing partition: $part"
+    mount_and_extract "$part"
+done
+
+TOTAL=$("$BB" wc -l < "$MANIFEST")
+log "=== Recovery collection complete: $TOTAL files ==="
+ui_print ""
+ui_print "Done! $TOTAL files captured."
+ui_print "Transfer /sdcard/hands-on-metal/ to your host PC"
+ui_print "and run: python pipeline/build_table.py --mode B --dump $OUT"
+ui_print ""
