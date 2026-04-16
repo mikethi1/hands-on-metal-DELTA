@@ -1,0 +1,804 @@
+#!/usr/bin/env python3
+"""
+pipeline/unpack_images.py
+=========================
+Host-side parser for Android boot/ramdisk images.
+
+Handles:
+  • boot.img header versions 0–4 (legacy → GKI)
+  • vendor_boot.img (v3/v4 GKI vendor ramdisk)
+  • Ramdisk compression: gzip, lz4 (framed), lz4 (legacy), lzma, zstd, bzip2
+  • CPIO archive extraction (newc / odc)
+  • Android Verified Boot (AVB) footer stripping (so the payload is readable)
+  • dm-crypt / FBE metadata detection in fstab entries
+  • Raw sparse image detection
+
+Key files extracted from the ramdisk:
+  fstab.*         — filesystem table (partition encryption flags, fstype)
+  init.rc         — root init script (service defs, HAL references)
+  init.*.rc       — device-specific init scripts
+  ueventd.rc / ueventd.*.rc  — device permissions / sysfs rules
+  default.prop / prop.default — early properties
+  lib/modules/**  — kernel modules packed into the ramdisk
+
+All extracted files land under:
+  <dump_dir>/ramdisk/<image_stem>/
+
+Fstab entries are also parsed into the sysconfig_entry table with
+the key prefix "fstab.<mount_point>.<field>".
+
+Usage:
+  python pipeline/unpack_images.py --db hardware_map.sqlite \\
+      --dump /path/to/dump --run-id 1
+
+The script auto-discovers boot.img / vendor_boot.img inside:
+  <dump_dir>/partitions/   (Mode B recovery images)
+  <dump_dir>/boot_images/  (explicit location)
+  <dump_dir>/              (fallback)
+"""
+
+import argparse
+import io
+import os
+import sqlite3
+import struct
+import sys
+from pathlib import Path
+
+# ── Optional compression library imports ────────────────────────────────────
+try:
+    import lz4.frame as _lz4_frame
+    _HAS_LZ4 = True
+except ImportError:
+    _HAS_LZ4 = False
+
+try:
+    import zstandard as _zstd
+    _HAS_ZSTD = True
+except ImportError:
+    _HAS_ZSTD = False
+
+import gzip
+import lzma
+import bz2
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# AVB footer stripping
+# AVB appends a 64-byte footer at the very end of the image that contains
+# the offset of the vbmeta struct.  We detect it and truncate so that the
+# remaining payload bytes are the actual partition content.
+# ════════════════════════════════════════════════════════════════════════════
+
+AVB_FOOTER_MAGIC = b"AVBf"
+AVB_FOOTER_SIZE  = 64
+
+
+def strip_avb_footer(data: bytes) -> bytes:
+    """Return data with AVB footer removed if present."""
+    if len(data) >= AVB_FOOTER_SIZE and data[-AVB_FOOTER_SIZE:-AVB_FOOTER_SIZE + 4] == AVB_FOOTER_MAGIC:
+        return data[:-AVB_FOOTER_SIZE]
+    return data
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Android Sparse Image detection / rejection
+# We do not expand sparse images (that requires simg2img); instead we note
+# their presence and skip them.
+# ════════════════════════════════════════════════════════════════════════════
+
+SPARSE_MAGIC = 0xED26FF3A
+
+
+def is_sparse_image(data: bytes) -> bool:
+    if len(data) < 4:
+        return False
+    magic = struct.unpack_from("<I", data, 0)[0]
+    return magic == SPARSE_MAGIC
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Boot image header parsing
+# Android Boot Image Specification:
+#   https://source.android.com/docs/core/architecture/bootloader/boot-image-header
+#
+# v0 / v1 / v2 share the same base layout; v3 / v4 (GKI) differ significantly.
+# ════════════════════════════════════════════════════════════════════════════
+
+BOOT_MAGIC = b"ANDROID!"
+VENDOR_BOOT_MAGIC = b"VNDRBOOT"
+
+# v0/v1/v2 header (all fields little-endian uint32 unless noted)
+_HDR_V0_FMT = (
+    "8s"    # magic
+    "I"     # kernel_size
+    "I"     # kernel_addr
+    "I"     # ramdisk_size
+    "I"     # ramdisk_addr
+    "I"     # second_size
+    "I"     # second_addr
+    "I"     # tags_addr
+    "I"     # page_size
+    "I"     # header_version  (was "dt_size" in v0)
+    "I"     # os_version
+    "16s"   # name
+    "512s"  # cmdline
+    "32s"   # sha1
+    "1024s" # extra_cmdline
+)
+HDR_V0_SIZE = struct.calcsize("<" + "".join(_HDR_V0_FMT))
+HDR_V0_STRUCT = struct.Struct("<" + "".join(_HDR_V0_FMT))
+
+# v1 adds: recovery_dtbo_size + recovery_dtbo_offset + header_size
+_HDR_V1_EXTRA = struct.Struct("<IQI")
+
+# v2 adds: dtb_size + dtb_addr
+_HDR_V2_EXTRA = struct.Struct("<IQ")
+
+# v3 header (GKI)
+_HDR_V3_FMT = (
+    "8s"    # magic
+    "I"     # kernel_size
+    "I"     # ramdisk_size
+    "I"     # os_version
+    "I"     # header_size
+    "16s"   # reserved
+    "I"     # header_version (must be 3)
+    "1536s" # cmdline
+)
+HDR_V3_STRUCT = struct.Struct("<" + "".join(_HDR_V3_FMT))
+
+# v4 adds: signature_size after the v3 fields
+_HDR_V4_EXTRA = struct.Struct("<I")
+
+# vendor_boot v3/v4 header
+_VENDOR_HDR_V3_FMT = (
+    "8s"    # magic
+    "I"     # header_version
+    "I"     # page_size
+    "I"     # kernel_addr
+    "I"     # ramdisk_addr
+    "I"     # vendor_ramdisk_size
+    "2048s" # cmdline
+    "I"     # tags_addr
+    "16s"   # name
+    "I"     # header_size
+    "I"     # dtb_size
+    "Q"     # dtb_addr
+)
+VENDOR_HDR_V3_STRUCT = struct.Struct("<" + "".join(_VENDOR_HDR_V3_FMT))
+
+# vendor_boot v4 adds: vendor_ramdisk_table_size, vendor_ramdisk_table_entry_num,
+#                      vendor_ramdisk_table_entry_size, bootconfig_size
+_VENDOR_HDR_V4_EXTRA = struct.Struct("<IIII")
+
+
+def _round_up(n: int, page: int) -> int:
+    return ((n + page - 1) // page) * page
+
+
+class BootImage:
+    """Parsed representation of a boot.img or vendor_boot.img."""
+
+    def __init__(self) -> None:
+        self.version: int = 0
+        self.page_size: int = 4096
+        self.kernel_data: bytes = b""
+        self.ramdisk_data: bytes = b""
+        self.second_data: bytes = b""
+        self.dtb_data: bytes = b""
+        self.cmdline: str = ""
+        self.name: str = ""
+        self.vendor: bool = False  # True for vendor_boot.img
+
+
+def parse_boot_image(data: bytes) -> BootImage | None:
+    """Parse a (possibly AVB-stripped) boot.img blob; return BootImage or None."""
+    data = strip_avb_footer(data)
+    if len(data) < 8:
+        return None
+    magic = data[:8]
+
+    if magic == BOOT_MAGIC:
+        return _parse_android_boot(data)
+    if magic == VENDOR_BOOT_MAGIC:
+        return _parse_vendor_boot(data)
+    return None
+
+
+def _parse_android_boot(data: bytes) -> BootImage | None:
+    if len(data) < HDR_V0_SIZE:
+        return None
+
+    fields = HDR_V0_STRUCT.unpack_from(data, 0)
+    (magic, kernel_size, kernel_addr, ramdisk_size, ramdisk_addr,
+     second_size, second_addr, tags_addr, page_size, header_version,
+     os_version, name_b, cmdline_b, sha1, extra_cmdline_b) = fields
+
+    img = BootImage()
+    img.page_size = page_size if page_size else 4096
+    img.name      = name_b.rstrip(b"\x00").decode("utf-8", errors="replace")
+    img.cmdline   = (cmdline_b + extra_cmdline_b).rstrip(b"\x00").decode("utf-8", errors="replace")
+    img.version   = header_version & 0xFF  # low byte is version in v0/v1/v2
+
+    if img.version >= 3:
+        # v3 / v4 GKI — completely different layout
+        return _parse_android_boot_v3(data)
+
+    ps = img.page_size
+
+    # Compute offsets (page-aligned)
+    hdr_pages     = 1
+    kernel_pages  = _round_up(kernel_size, ps) // ps
+    ramdisk_pages = _round_up(ramdisk_size, ps) // ps
+    second_pages  = _round_up(second_size, ps) // ps
+
+    off_kernel  = hdr_pages * ps
+    off_ramdisk = off_kernel  + kernel_pages  * ps
+    off_second  = off_ramdisk + ramdisk_pages * ps
+
+    if img.version >= 2:
+        # Skip v1 recovery_dtbo and v2 dtb — read dtb if present
+        # For our purposes just grab the ramdisk
+        pass
+
+    img.kernel_data  = data[off_kernel  : off_kernel  + kernel_size]
+    img.ramdisk_data = data[off_ramdisk : off_ramdisk + ramdisk_size]
+    if second_size:
+        img.second_data = data[off_second : off_second + second_size]
+
+    return img
+
+
+def _parse_android_boot_v3(data: bytes) -> BootImage | None:
+    if len(data) < HDR_V3_STRUCT.size:
+        return None
+    fields = HDR_V3_STRUCT.unpack_from(data, 0)
+    (magic, kernel_size, ramdisk_size, os_version, header_size,
+     reserved, header_version, cmdline_b) = fields
+
+    img = BootImage()
+    img.version  = header_version
+    img.page_size = 4096  # fixed at 4096 for v3/v4
+    img.cmdline  = cmdline_b.rstrip(b"\x00").decode("utf-8", errors="replace")
+
+    # v4: signature_size follows
+    sig_size = 0
+    if header_version == 4:
+        sig_size = _HDR_V4_EXTRA.unpack_from(data, HDR_V3_STRUCT.size)[0]
+
+    ps = img.page_size
+    hdr_pages     = _round_up(header_size, ps) // ps
+    kernel_pages  = _round_up(kernel_size, ps) // ps
+    ramdisk_pages = _round_up(ramdisk_size, ps) // ps
+
+    off_kernel  = hdr_pages * ps
+    off_ramdisk = off_kernel + kernel_pages * ps
+
+    img.kernel_data  = data[off_kernel  : off_kernel  + kernel_size]
+    img.ramdisk_data = data[off_ramdisk : off_ramdisk + ramdisk_size]
+    return img
+
+
+def _parse_vendor_boot(data: bytes) -> BootImage | None:
+    if len(data) < VENDOR_HDR_V3_STRUCT.size:
+        return None
+    fields = VENDOR_HDR_V3_STRUCT.unpack_from(data, 0)
+    (magic, hdr_version, page_size, kernel_addr, ramdisk_addr,
+     vendor_ramdisk_size, cmdline_b, tags_addr, name_b,
+     header_size, dtb_size, dtb_addr) = fields
+
+    img = BootImage()
+    img.vendor    = True
+    img.version   = hdr_version
+    img.page_size = page_size if page_size else 4096
+    img.name      = name_b.rstrip(b"\x00").decode("utf-8", errors="replace")
+    img.cmdline   = cmdline_b.rstrip(b"\x00").decode("utf-8", errors="replace")
+
+    ps = img.page_size
+    hdr_pages     = _round_up(header_size, ps) // ps
+    ramdisk_pages = _round_up(vendor_ramdisk_size, ps) // ps
+    dtb_pages     = _round_up(dtb_size, ps) // ps
+
+    off_ramdisk = hdr_pages * ps
+    off_dtb     = off_ramdisk + ramdisk_pages * ps
+
+    img.ramdisk_data = data[off_ramdisk : off_ramdisk + vendor_ramdisk_size]
+    if dtb_size:
+        img.dtb_data = data[off_dtb : off_dtb + dtb_size]
+
+    return img
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Ramdisk decompression
+# Android ramdisks can be gzip, lz4 (with or without the legacy frame format),
+# lzma, zstd, or bzip2.  We try each in order.
+# ════════════════════════════════════════════════════════════════════════════
+
+def _try_gzip(data: bytes) -> bytes | None:
+    if data[:2] != b"\x1f\x8b":
+        return None
+    try:
+        return gzip.decompress(data)
+    except Exception:
+        return None
+
+
+def _try_lz4(data: bytes) -> bytes | None:
+    # lz4 framed: magic 0x184D2204
+    # lz4 legacy: magic 0x184C2102
+    if data[:4] not in (b"\x04\x22\x4d\x18", b"\x02\x21\x4c\x18"):
+        return None
+    if not _HAS_LZ4:
+        print("  warn: lz4 ramdisk detected but python-lz4 not installed; "
+              "run: pip install lz4", file=sys.stderr)
+        return None
+    try:
+        return _lz4_frame.decompress(data)
+    except Exception:
+        return None
+
+
+def _try_lzma(data: bytes) -> bytes | None:
+    # XZ: FD 37 7A 58 5A 00   LZMA: first byte 0x5D usually
+    if data[:6] == b"\xfd7zXZ\x00" or (data[0] == 0x5D and len(data) > 13):
+        try:
+            return lzma.decompress(data)
+        except Exception:
+            return None
+    return None
+
+
+def _try_zstd(data: bytes) -> bytes | None:
+    if data[:4] != b"\x28\xb5\x2f\xfd":
+        return None
+    if not _HAS_ZSTD:
+        print("  warn: zstd ramdisk detected but zstandard not installed; "
+              "run: pip install zstandard", file=sys.stderr)
+        return None
+    try:
+        dctx = _zstd.ZstdDecompressor()
+        return dctx.decompress(data, max_output_size=256 * 1024 * 1024)
+    except Exception:
+        return None
+
+
+def _try_bz2(data: bytes) -> bytes | None:
+    if data[:2] != b"BZ":
+        return None
+    try:
+        return bz2.decompress(data)
+    except Exception:
+        return None
+
+
+def decompress_ramdisk(data: bytes) -> bytes | None:
+    """Try all known compression formats; return raw cpio bytes or None."""
+    for fn in (_try_gzip, _try_lz4, _try_lzma, _try_zstd, _try_bz2):
+        result = fn(data)
+        if result is not None:
+            return result
+    # Already uncompressed cpio?
+    if data[:6] in (b"070701", b"070702", b"070707"):
+        return data
+    return None
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# CPIO extraction (newc format — 070701/070702; odc — 070707)
+# We only extract files that are useful for hardware analysis.
+# ════════════════════════════════════════════════════════════════════════════
+
+TARGET_NAMES = {
+    "fstab", "init.rc", "ueventd.rc", "default.prop",
+    "prop.default", "build.prop",
+}
+TARGET_PREFIXES = ("init.", "ueventd.", "fstab.", "lib/modules/")
+TARGET_SUFFIXES = (".rc", ".prop", ".fstab", ".ko", ".so")
+
+
+def _want_file(name: str) -> bool:
+    base = name.lstrip("/").split("/")[-1]
+    stripped = name.lstrip("/")
+    if base in TARGET_NAMES:
+        return True
+    for pfx in TARGET_PREFIXES:
+        if stripped.startswith(pfx):
+            return True
+    for sfx in TARGET_SUFFIXES:
+        if base.endswith(sfx):
+            return True
+    return False
+
+
+def _align4(n: int) -> int:
+    return (n + 3) & ~3
+
+
+def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
+    """Extract a newc CPIO archive; return list of extracted paths."""
+    extracted: list[str] = []
+    pos = 0
+
+    while pos < len(data):
+        if pos + 110 > len(data):
+            break
+        hdr = data[pos:pos + 110]
+        if hdr[:6] not in (b"070701", b"070702"):
+            break
+
+        # Parse fixed-width hex fields
+        def _hex(start: int, length: int = 8) -> int:
+            return int(hdr[start:start + length], 16)
+
+        namesize = _hex(94)
+        filesize = _hex(54)
+
+        pos += 110
+        # Name (null-terminated, padded to 4-byte boundary after header+name)
+        name_raw = data[pos:pos + namesize]
+        name = name_raw.rstrip(b"\x00").decode("utf-8", errors="replace")
+        pos += _align4(110 + namesize) - 110
+
+        if name == "TRAILER!!!":
+            break
+
+        file_data = data[pos:pos + filesize]
+        pos += _align4(filesize)
+
+        if name and _want_file(name):
+            out_path = out_dir / name.lstrip("/")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                out_path.write_bytes(file_data)
+                extracted.append(name)
+            except OSError:
+                pass
+
+    return extracted
+
+
+def extract_cpio_odc(data: bytes, out_dir: Path) -> list[str]:
+    """Extract an odc (old portable) CPIO archive."""
+    extracted: list[str] = []
+    pos = 0
+
+    while pos < len(data):
+        if pos + 76 > len(data):
+            break
+        hdr = data[pos:pos + 76]
+        if hdr[:6] != b"070707":
+            break
+
+        def _oct(start: int, length: int) -> int:
+            return int(hdr[start:start + length], 8)
+
+        namesize = _oct(59, 6)
+        filesize = _oct(65, 11)
+
+        pos += 76
+        name_raw = data[pos:pos + namesize]
+        name = name_raw.rstrip(b"\x00").decode("utf-8", errors="replace")
+        pos += namesize
+
+        if name == "TRAILER!!!":
+            break
+
+        file_data = data[pos:pos + filesize]
+        pos += filesize
+
+        if name and _want_file(name):
+            out_path = out_dir / name.lstrip("/")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                out_path.write_bytes(file_data)
+                extracted.append(name)
+            except OSError:
+                pass
+
+    return extracted
+
+
+def extract_cpio(data: bytes, out_dir: Path) -> list[str]:
+    if data[:6] in (b"070701", b"070702"):
+        return extract_cpio_newc(data, out_dir)
+    if data[:6] == b"070707":
+        return extract_cpio_odc(data, out_dir)
+    return []
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Fstab parser + DB import
+# fstab format:  <device>  <mount_point>  <type>  <options>  <dump>  <pass>
+# The options field contains encryption flags:
+#   encryptable=       FDE encryption key path
+#   fileencryption=    FBE policy (contents:filenames[:mode])
+#   keydirectory=      metadata encryption key dir
+#   avb=               AVB vbmeta partition
+#   logical_block_size / physical_block_size
+# ════════════════════════════════════════════════════════════════════════════
+
+def parse_fstab(text: str, source: str, run_id: int,
+                cur: sqlite3.Cursor) -> int:
+    """Parse one fstab file and insert entries into sysconfig_entry; return count."""
+    inserted = 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        device, mount, fstype, options = parts[0], parts[1], parts[2], parts[3]
+        base_key = f"fstab.{mount.replace('/', '_')}"
+
+        for k, v in [
+            ("device", device),
+            ("type",   fstype),
+            ("options", options),
+        ]:
+            try:
+                cur.execute(
+                    """INSERT OR IGNORE INTO sysconfig_entry
+                       (run_id, source, key, value) VALUES (?,?,?,?)""",
+                    (run_id, source, f"{base_key}.{k}", v),
+                )
+                inserted += cur.rowcount
+            except sqlite3.Error:
+                pass
+
+        # Break out individual mount options
+        for opt in options.split(","):
+            if "=" in opt:
+                ok, _, ov = opt.partition("=")
+            else:
+                ok, ov = opt, "1"
+            ok = ok.strip()
+            ov = ov.strip()
+            if ok in ("encryptable", "fileencryption", "keydirectory",
+                      "avb", "logical_block_size", "physical_block_size",
+                      "metadata_encryption", "wrappedkey"):
+                try:
+                    cur.execute(
+                        """INSERT OR IGNORE INTO sysconfig_entry
+                           (run_id, source, key, value) VALUES (?,?,?,?)""",
+                        (run_id, source,
+                         f"{base_key}.enc.{ok}", ov),
+                    )
+                    inserted += cur.rowcount
+                except sqlite3.Error:
+                    pass
+
+        # Detect and report encryption type
+        enc_type = "none"
+        if "fileencryption=" in options:
+            enc_type = "fbe"
+        elif "encryptable=" in options or "forceencrypt=" in options:
+            enc_type = "fde"
+        if enc_type != "none":
+            try:
+                cur.execute(
+                    """INSERT OR IGNORE INTO sysconfig_entry
+                       (run_id, source, key, value) VALUES (?,?,?,?)""",
+                    (run_id, source, f"{base_key}.enc_type", enc_type),
+                )
+                inserted += cur.rowcount
+            except sqlite3.Error:
+                pass
+
+    return inserted
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# dm-crypt / dm-verity metadata detection
+# On an FDE device the raw userdata partition starts with a 16-KiB
+# "crypto footer" at a magic offset.  We detect its presence without
+# trying to decrypt so the pipeline can note the encryption state.
+# ════════════════════════════════════════════════════════════════════════════
+
+CRYPT_FOOTER_MAGIC = 0xD0B5B1C4  # MAGIC_CRYPT_FOOTER
+
+
+def detect_fde_footer(data: bytes) -> bool:
+    """Return True if data contains an Android FDE crypto footer magic."""
+    # Footer can appear at multiple offsets depending on partition size;
+    # check the first 64 KiB.
+    check_size = min(len(data), 65536)
+    for offset in range(0, check_size - 4, 4):
+        val = struct.unpack_from("<I", data, offset)[0]
+        if val == CRYPT_FOOTER_MAGIC:
+            return True
+    return False
+
+
+DM_VERITY_MAGIC = b"verity"
+
+
+def detect_dm_verity(data: bytes) -> bool:
+    """Return True if data looks like a dm-verity protected image."""
+    return DM_VERITY_MAGIC in data[:4096]
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Main image processing pipeline
+# ════════════════════════════════════════════════════════════════════════════
+
+def process_image(img_path: Path, dump: Path, run_id: int,
+                  cur: sqlite3.Cursor) -> dict:
+    """
+    Process one boot/vendor_boot image file.
+    Returns a dict with status info.
+    """
+    result: dict = {"path": str(img_path), "status": "ok",
+                    "ramdisk_files": [], "enc_detected": False}
+
+    raw = img_path.read_bytes()
+
+    # Detect encryption / special formats before parsing
+    if is_sparse_image(raw):
+        result["status"] = "sparse_image_skipped"
+        print(f"    ↳ sparse image, skipping (run simg2img first): {img_path.name}")
+        return result
+
+    if detect_fde_footer(raw[:65536]):
+        result["enc_detected"] = True
+        print(f"    ↳ FDE crypto footer detected in {img_path.name}")
+        try:
+            cur.execute(
+                """INSERT OR IGNORE INTO sysconfig_entry
+                   (run_id, source, key, value) VALUES (?,?,?,?)""",
+                (run_id, str(img_path), "encryption.fde_footer", "detected"),
+            )
+        except sqlite3.Error:
+            pass
+
+    if detect_dm_verity(raw):
+        print(f"    ↳ dm-verity signature detected in {img_path.name}")
+        try:
+            cur.execute(
+                """INSERT OR IGNORE INTO sysconfig_entry
+                   (run_id, source, key, value) VALUES (?,?,?,?)""",
+                (run_id, str(img_path), "encryption.dm_verity", "detected"),
+            )
+        except sqlite3.Error:
+            pass
+
+    # Parse boot image structure
+    img = parse_boot_image(raw)
+    if img is None:
+        result["status"] = "not_a_boot_image"
+        return result
+
+    print(f"    ↳ boot image v{img.version}, ramdisk={len(img.ramdisk_data)} bytes")
+
+    if not img.ramdisk_data:
+        result["status"] = "no_ramdisk"
+        return result
+
+    # Decompress ramdisk
+    cpio_data = decompress_ramdisk(img.ramdisk_data)
+    if cpio_data is None:
+        result["status"] = "ramdisk_decompress_failed"
+        print(f"    ↳ could not decompress ramdisk (unknown format)", file=sys.stderr)
+        return result
+
+    print(f"    ↳ ramdisk decompressed: {len(cpio_data)} bytes")
+
+    # Extract CPIO
+    out_dir = dump / "ramdisk" / img_path.stem
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files = extract_cpio(cpio_data, out_dir)
+    result["ramdisk_files"] = files
+    print(f"    ↳ extracted {len(files)} relevant files to {out_dir.relative_to(dump)}/")
+
+    # Parse fstab files found in the ramdisk
+    for fname in files:
+        if "fstab" in fname.lower():
+            fpath = out_dir / fname.lstrip("/")
+            if fpath.exists():
+                text = fpath.read_text(errors="replace")
+                n = parse_fstab(text, f"ramdisk:{img_path.name}/{fname}",
+                                run_id, cur)
+                if n:
+                    print(f"      fstab {fname}: {n} entries")
+
+    # Register extracted files in collected_file
+    for fname in files:
+        src_path = f"ramdisk:{img_path.name}/{fname}"
+        local_path = str(out_dir / fname.lstrip("/"))
+        p = Path(local_path)
+        size = p.stat().st_size if p.exists() else None
+        try:
+            cur.execute(
+                """INSERT OR IGNORE INTO collected_file
+                   (run_id, src_path, local_path, size_bytes)
+                   VALUES (?,?,?,?)""",
+                (run_id, src_path, local_path, size),
+            )
+        except sqlite3.Error:
+            pass
+
+    # Save DTB if present (for vendor_boot)
+    if img.dtb_data:
+        dtb_out = dump / "ramdisk" / img_path.stem / "dtb.img"
+        dtb_out.write_bytes(img.dtb_data)
+        print(f"    ↳ DTB saved ({len(img.dtb_data)} bytes)")
+
+    return result
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Image discovery
+# ════════════════════════════════════════════════════════════════════════════
+
+IMAGE_NAMES = ("boot.img", "vendor_boot.img", "recovery.img",
+               "init_boot.img")
+
+
+def find_images(dump: Path) -> list[Path]:
+    found: list[Path] = []
+    for search_dir in (dump / "partitions", dump / "boot_images", dump):
+        if not search_dir.exists():
+            continue
+        for name in IMAGE_NAMES:
+            candidate = search_dir / name
+            if candidate.exists():
+                found.append(candidate)
+        # Also glob for any *.img that matches
+        for img in sorted(search_dir.glob("*.img")):
+            if img not in found and any(n in img.name for n in ("boot", "recovery", "ramdisk")):
+                found.append(img)
+    return found
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Main
+# ════════════════════════════════════════════════════════════════════════════
+
+def main() -> None:
+    ap = argparse.ArgumentParser(
+        description="Unpack Android boot/ramdisk images into the hardware_map database"
+    )
+    ap.add_argument("--db",     required=True, help="Path to hardware_map.sqlite")
+    ap.add_argument("--dump",   required=True, help="Root of the collection dump directory")
+    ap.add_argument("--run-id", required=True, type=int, dest="run_id")
+    ap.add_argument("--image",  default=None,
+                    help="Explicit path to a single image file (skips auto-discovery)")
+    args = ap.parse_args()
+
+    dump    = Path(args.dump)
+    db_path = Path(args.db)
+
+    db = sqlite3.connect(str(db_path))
+    schema = Path(__file__).parent.parent / "schema" / "hardware_map.sql"
+    if schema.exists():
+        db.executescript(schema.read_text())
+
+    cur = db.cursor()
+
+    if args.image:
+        images = [Path(args.image)]
+    else:
+        images = find_images(dump)
+
+    if not images:
+        print("No boot images found.  Place boot.img / vendor_boot.img in "
+              f"{dump}/partitions/ or {dump}/boot_images/", file=sys.stderr)
+        sys.exit(0)
+
+    print(f"Processing {len(images)} image(s)...")
+    total_files = 0
+    for img_path in images:
+        print(f"  {img_path.name}")
+        result = process_image(img_path, dump, args.run_id, cur)
+        total_files += len(result.get("ramdisk_files", []))
+
+    db.commit()
+    db.close()
+    print(f"\nDone — {total_files} ramdisk files extracted total.")
+    print("Tip: re-run build_table.py or report.py to refresh the database.")
+
+
+if __name__ == "__main__":
+    main()

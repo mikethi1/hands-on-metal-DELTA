@@ -510,6 +510,10 @@ def main() -> None:
     print("\n[3/3] Parsing manifests & props...")
     run_submodule(HERE / "parse_manifests.py", base_args)
 
+    # 3a. Unpack boot/ramdisk images
+    print("\n[3b] Unpacking boot/ramdisk images...")
+    run_submodule(HERE / "unpack_images.py", base_args)
+
     # 3. Direct imports (no sub-module)
     cur = db.cursor()
 

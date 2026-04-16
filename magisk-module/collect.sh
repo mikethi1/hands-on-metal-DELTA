@@ -204,6 +204,68 @@ log "Collecting DTBO info..."
 copy_virtual /proc/device-tree/chosen
 copy_virtual_dir /proc/device-tree/soc
 
+# 20. Encryption state (FDE/FBE metadata — no keys collected)
+log "Collecting encryption state..."
+{
+    echo "ro.crypto.state=$(getprop ro.crypto.state)"
+    echo "ro.crypto.type=$(getprop ro.crypto.type)"
+    echo "ro.crypto.volume.filenames_mode=$(getprop ro.crypto.volume.filenames_mode)"
+    echo "vold.decrypt=$(getprop vold.decrypt)"
+    echo "vold.encrypt_progress=$(getprop vold.encrypt_progress)"
+} > "$OUT/encryption_state.txt" && echo "encryption_state.txt" >> "$MANIFEST"
+
+# dm-crypt / dm-verity device-mapper table (reveals encryption algorithm, key size — NOT the key)
+if command -v dmsetup >/dev/null 2>&1; then
+    dmsetup table --showkeys=false > "$OUT/dmsetup_table.txt" 2>/dev/null && \
+        echo "dmsetup_table.txt" >> "$MANIFEST"
+    dmsetup info  > "$OUT/dmsetup_info.txt"  2>/dev/null
+    dmsetup ls    > "$OUT/dmsetup_ls.txt"    2>/dev/null
+fi
+
+# /sys crypto/dm entries
+copy_virtual_dir /sys/module/dm_crypt
+copy_virtual_dir /sys/module/dm_verity
+
+# fstab files from all locations (contain fileencryption= / encryptable= flags)
+log "Collecting fstab files..."
+find /vendor /odm /system /first_stage_ramdisk \
+     -name "fstab*" 2>/dev/null | while IFS= read -r f; do
+    copy_file "$f"
+done
+
+# 21. Live ramdisk extraction from the running boot partition
+log "Extracting live boot/vendor_boot ramdisk images..."
+mkdir -p "$OUT/boot_images"
+
+for boot_part in boot vendor_boot recovery init_boot; do
+    # Resolve block device
+    BOOT_DEV=""
+    for try_path in \
+        "/dev/block/bootdevice/by-name/$boot_part" \
+        "/dev/block/by-name/$boot_part" ; do
+        if [ -b "$try_path" ]; then
+            BOOT_DEV="$try_path"
+            break
+        fi
+    done
+    # Glob fallback for platform-specific paths
+    if [ -z "$BOOT_DEV" ]; then
+        for g in /dev/block/platform/*/by-name/$boot_part; do
+            [ -b "$g" ] && { BOOT_DEV="$g"; break; }
+        done
+    fi
+
+    if [ -z "$BOOT_DEV" ]; then
+        log "  $boot_part partition not found, skipping"
+        continue
+    fi
+
+    log "  Reading $boot_part from $BOOT_DEV..."
+    dd if="$BOOT_DEV" of="$OUT/boot_images/${boot_part}.img" bs=4096 2>/dev/null && \
+        echo "boot_images/${boot_part}.img" >> "$MANIFEST" && \
+        log "  saved ${boot_part}.img ($(wc -c < "$OUT/boot_images/${boot_part}.img") bytes)"
+done
+
 # done
 TOTAL=$(wc -l < "$MANIFEST")
 log "=== Collection complete: $TOTAL files captured ==="
