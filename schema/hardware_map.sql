@@ -262,3 +262,29 @@ CREATE TABLE IF NOT EXISTS collected_file (
     UNIQUE (run_id, src_path)
 );
 CREATE INDEX IF NOT EXISTS idx_file_src ON collected_file(src_path);
+
+-- ------------------------------------------------------------
+-- Environment variable registry
+-- Written by all three modes (A=live Magisk, B=recovery, C=shim).
+-- Captures resolved paths, tool availability flags, Python
+-- versions, Termux state, package locations, and any other
+-- key=value fact discovered at runtime.  The 'source' column
+-- records which script wrote the row; 'real_path' stores the
+-- readlink -f expansion when the value is a filesystem path.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS env_var (
+    env_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      INTEGER REFERENCES collection_run(run_id) ON DELETE CASCADE,
+    mode        TEXT    NOT NULL CHECK (mode IN ('A','B','C')),
+    key         TEXT    NOT NULL,
+    value       TEXT,
+    real_path   TEXT,                        -- readlink -f result, when applicable
+    source      TEXT    NOT NULL,            -- script that emitted this row (e.g. env_detect.sh)
+    category    TEXT    NOT NULL DEFAULT 'general',
+                                             -- shell / python / termux / package / path / crypto / recovery
+    updated_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE (run_id, key)                     -- last writer wins via INSERT OR REPLACE
+);
+CREATE INDEX IF NOT EXISTS idx_env_key      ON env_var(key);
+CREATE INDEX IF NOT EXISTS idx_env_category ON env_var(category);
+CREATE INDEX IF NOT EXISTS idx_env_mode     ON env_var(mode);

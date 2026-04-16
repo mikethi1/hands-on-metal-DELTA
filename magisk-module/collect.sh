@@ -18,19 +18,46 @@ set -u
 OUT=/sdcard/hands-on-metal/live_dump
 LOG=$OUT/collect.log
 MANIFEST=$OUT/manifest.txt
+ENV_REGISTRY=/sdcard/hands-on-metal/env_registry.sh
 
 # ── helpers ──────────────────────────────────────────────────
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG"; }
 
-# copy a single file, preserving the relative path under $OUT
+# Resolve a path to its real absolute path (no symlinks)
+real_abs() {
+    local p="$1"
+    if command -v readlink >/dev/null 2>&1; then
+        readlink -f "$p" 2>/dev/null || echo "$p"
+    else
+        echo "$p"
+    fi
+}
+
+# Write/update a key in the shared env registry
+reg_set() {
+    local cat="$1" key="$2" val="$3"
+    local tmp="${ENV_REGISTRY}.tmp"
+    grep -v "^${key}=" "$ENV_REGISTRY" > "$tmp" 2>/dev/null || true
+    printf '%s="%s"  # cat:%s\n' "$key" "$val" "$cat" >> "$tmp"
+    mv "$tmp" "$ENV_REGISTRY"
+}
+
+# copy a single file, preserving the relative path under $OUT.
+# Also records the real absolute path (readlink -f) to the manifest
+# so symlink chains in /vendor or /system are transparent.
 copy_file() {
     local src="$1"
     local dst="$OUT$src"
     [ -f "$src" ] || return 0
     mkdir -p "$(dirname "$dst")"
-    cp -p "$src" "$dst" 2>/dev/null && \
+    if cp -p "$src" "$dst" 2>/dev/null; then
         echo "$src" >> "$MANIFEST"
+        # Record real absolute path alongside the nominal path
+        local rp
+        rp=$(real_abs "$src")
+        [ "$rp" != "$src" ] && echo "REALPATH:$src=$rp" >> "$MANIFEST"
+    fi
 }
 
 # recursively mirror a directory (read-only, no symlink follow)
@@ -267,6 +294,30 @@ for boot_part in boot vendor_boot recovery init_boot; do
 done
 
 # done
+
+# ── Emit collection-path env vars to the shared registry ─────
+log "Updating env registry with collection paths..."
+reg_set path HOM_LIVE_DUMP_DIR "$(real_abs "$OUT")"
+reg_set path HOM_MANIFEST "$(real_abs "$MANIFEST")"
+reg_set path HOM_COLLECT_LOG "$(real_abs "$LOG")"
+
+# Record the real absolute paths of the key collected artefacts
+for named in "$OUT/getprop.txt" "$OUT/lshal.txt" "$OUT/dmesg.txt" \
+             "$OUT/lsmod.txt" "$OUT/board_summary.txt" \
+             "$OUT/encryption_state.txt"; do
+    [ -f "$named" ] || continue
+    key="HOM_ARTEFACT_$(basename "$named" | tr '.' '_' | tr 'a-z' 'A-Z')"
+    reg_set path "$key" "$(real_abs "$named")"
+done
+
+# Record real paths of any boot images collected
+for boot_part in boot vendor_boot recovery init_boot; do
+    img="$OUT/boot_images/${boot_part}.img"
+    [ -f "$img" ] || continue
+    key="HOM_BOOT_IMG_$(echo "$boot_part" | tr 'a-z-' 'A-Z_')"
+    reg_set path "$key" "$(real_abs "$img")"
+done
+
 TOTAL=$(wc -l < "$MANIFEST")
 log "=== Collection complete: $TOTAL files captured ==="
 log "Output: $OUT"
