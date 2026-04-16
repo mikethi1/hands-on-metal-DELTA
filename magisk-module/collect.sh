@@ -39,7 +39,7 @@ reg_set() {
     local cat="$1" key="$2" val="$3"
     local tmp="${ENV_REGISTRY}.tmp"
     grep -v "^${key}=" "$ENV_REGISTRY" > "$tmp" 2>/dev/null || true
-    printf '%s=%s  # cat:%s\n' "$key" "$val" "$cat" >> "$tmp"
+    printf '%s="%s"  # cat:%s\n' "$key" "$val" "$cat" >> "$tmp"
     mv "$tmp" "$ENV_REGISTRY"
 }
 

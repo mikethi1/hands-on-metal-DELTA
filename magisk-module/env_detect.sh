@@ -36,7 +36,7 @@ reg_set() {
     # implementations, so we rebuild the file via a tmp copy.
     local tmp="${ENV_REGISTRY}.tmp"
     grep -v "^${key}=" "$ENV_REGISTRY" > "$tmp" 2>/dev/null || true
-    printf '%s=%s  # cat:%s\n' "$key" "$val" "$cat" >> "$tmp"
+    printf '%s="%s"  # cat:%s\n' "$key" "$val" "$cat" >> "$tmp"
     mv "$tmp" "$ENV_REGISTRY"
 }
 
@@ -93,7 +93,7 @@ log "Probing core tools..."
 
 for tool in awk sed grep find sort uniq head tail cut tr wc \
             dd cp mv rm mkdir chmod chown ln readlink \
-            nmreadelf nm lshal getprop setprop \
+            readelf nm lshal getprop setprop \
             dmsetup blkid mount umount; do
     p=$(command -v "$tool" 2>/dev/null || true)
     if [ -n "$p" ]; then
@@ -126,7 +126,8 @@ done
 reg_set python HOM_PYTHON_COUNT "$PY_FOUND"
 
 # Site-packages locations for found Pythons
-CANONICAL=$(grep "^HOM_PYTHON_CANONICAL=" "$ENV_REGISTRY" | cut -d= -f2- | cut -d' ' -f1 || true)
+CANONICAL=$(grep "^HOM_PYTHON_CANONICAL=" "$ENV_REGISTRY" | \
+            cut -d= -f2- | sed 's/^"//;s/"[[:space:]].*//' || true)
 if [ -n "$CANONICAL" ] && [ -x "$CANONICAL" ]; then
     SITE=$("$CANONICAL" -c "import site; print(' '.join(site.getsitepackages()))" 2>/dev/null || true)
     reg_set python HOM_PYTHON_SITE_PACKAGES "$SITE"

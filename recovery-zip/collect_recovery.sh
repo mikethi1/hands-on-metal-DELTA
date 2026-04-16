@@ -51,7 +51,7 @@ reg_set() {
     local cat="$1" key="$2" val="$3"
     local tmp="${ENV_REGISTRY}.tmp"
     grep -v "^${key}=" "$ENV_REGISTRY" > "$tmp" 2>/dev/null || true
-    printf '%s=%s  # cat:%s mode:B\n' "$key" "$val" "$cat" >> "$tmp"
+    printf '%s="%s"  # cat:%s mode:B\n' "$key" "$val" "$cat" >> "$tmp"
     mv "$tmp" "$ENV_REGISTRY"
 }
 
@@ -175,7 +175,10 @@ for bprop in \
     copy_file "$bprop"
     # Extract the key hardware/board properties directly
     while IFS='=' read -r k v; do
+        # Skip blank lines and comments
         case "$k" in
+            ''|\#*) continue ;;
+        esac
             ro.board.platform|ro.hardware|ro.product.board|ro.product.device|\
             ro.product.model|ro.build.fingerprint|ro.vendor.build.fingerprint|\
             ro.soc.manufacturer|ro.soc.model|ro.chipname|ro.arch|\
@@ -285,8 +288,9 @@ for prop in ro.crypto.state ro.crypto.type \
     reg_set crypto "$key" "$v"
 done
 
-# Indicate whether userdata appears decrypted (heuristic: /data/data is readable)
-if [ -d /data/data ] && ls /data/data >/dev/null 2>&1; then
+# Indicate whether userdata appears decrypted (heuristic: a well-known
+# subdirectory that only exists when userdata is readable).
+if [ -r /data/data/. ] && [ -d /data/data ]; then
     reg_set crypto HOM_USERDATA_DECRYPTED "true"
 else
     reg_set crypto HOM_USERDATA_DECRYPTED "false"
