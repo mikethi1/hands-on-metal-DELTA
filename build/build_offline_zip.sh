@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # build/build_offline_zip.sh
 # ============================================================
 # Builds the fully offline, self-contained flashable ZIPs:
@@ -55,6 +55,16 @@ echo ""
 # ── dependency check ──────────────────────────────────────────
 if [ "${HOM_DEPS_CHECKED:-}" != "1" ]; then
     source "$REPO_ROOT/check_deps.sh" || exit 1
+fi
+
+# ── sha256sum portability ─────────────────────────────────────
+if command -v sha256sum >/dev/null 2>&1; then
+    SHA256="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+    SHA256="shasum -a 256"
+else
+    echo "ERROR: neither sha256sum nor shasum found — cannot generate checksums." >&2
+    exit 1
 fi
 
 # ── output directory ──────────────────────────────────────────
@@ -183,7 +193,7 @@ echo "[4/4] Generating checksums..."
 CHECKSUM_FILE="$DIST_DIR/checksums-${VERSION}.sha256"
 (
     cd "$DIST_DIR"
-    sha256sum \
+    $SHA256 \
         "hands-on-metal-magisk-module-${VERSION}.zip" \
         "hands-on-metal-recovery-${VERSION}.zip" \
     > "$CHECKSUM_FILE"

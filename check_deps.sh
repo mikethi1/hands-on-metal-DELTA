@@ -44,6 +44,21 @@ echo ""
 echo "Checking host-side dependencies..."
 echo ""
 
+# ── Detect execution environment ──────────────────────────────
+_hom_env_type="unknown"
+if [ -d "/data/data/com.termux/files/usr" ] || [ -n "${TERMUX_VERSION:-}" ]; then
+    _hom_env_type="termux"
+elif [ -n "$(getprop ro.build.display.id 2>/dev/null)" ]; then
+    _hom_env_type="android"
+else
+    _hom_env_type="host"
+fi
+
+if [ "$_hom_env_type" != "unknown" ]; then
+    echo "  ℹ  Environment: $_hom_env_type"
+    echo ""
+fi
+
 # ── Required tools ────────────────────────────────────────────
 _hom_require git       "Cloning the repo and running fetch_all_deps.sh"
 _hom_require zip       "Building flashable ZIPs (build_offline_zip.sh, fetch_all_deps.sh)"
@@ -72,13 +87,22 @@ echo ""
 if [ "$_hom_dep_ok" = false ]; then
     echo "ERROR: One or more required tools are missing. Install them and try again." >&2
     echo ""
-    unset _hom_dep_ok _hom_require _hom_optional
+    unset _hom_dep_ok _hom_require _hom_optional _hom_env_type
     return 1 2>/dev/null || exit 1
 fi
 
 echo "  ✓  All required dependencies found"
 echo ""
 
+# ── native Android terminal guidance ─────────────────────────
+if [ "$_hom_env_type" = "android" ]; then
+    echo "  ℹ  Running in native Android shell."
+    echo "     Some build tools (git, python3, curl, zip, unzip, tar)"
+    echo "     may not be available. Install Termux or use the"
+    echo "     Android 15+ built-in Terminal for full functionality."
+    echo ""
+fi
+
 export HOM_DEPS_CHECKED=1
 
-unset _hom_dep_ok _hom_require _hom_optional
+unset _hom_dep_ok _hom_require _hom_optional _hom_env_type

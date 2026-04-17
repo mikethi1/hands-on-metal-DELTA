@@ -274,6 +274,57 @@ else
     reg_set termux HOM_TERMUX_INSTALLED "false"
 fi
 
+# ── 5b. Native Android terminal detection ─────────────────────
+# Android 15+ includes a built-in Terminal app that runs a
+# lightweight Debian VM.  Detect this and other non-Termux
+# Android shell environments (adb shell, AOSP terminal).
+#
+# Environment types:
+#   termux             — Termux app (detected above)
+#   android_terminal   — Android 15+ built-in Terminal (AVF VM)
+#   adb_shell          — adb shell / local shell over adbd
+#   android_native     — other native Android shell (mksh)
+#   linux_host         — Linux/macOS/CI host (not Android)
+#   unknown            — could not determine
+
+log "Detecting shell environment type..."
+
+HOM_ENV_TYPE="unknown"
+
+if [ -n "$TERMUX_PREFIX" ]; then
+    HOM_ENV_TYPE="termux"
+elif [ -n "$(getprop ro.build.display.id 2>/dev/null)" ]; then
+    # We are on Android (getprop is present and returns build info)
+    # Distinguish between Android 15 Terminal VM and native shell
+    if [ -d /apex/com.android.virt ] || \
+       grep -q "com.android.virtualization" /proc/cmdline 2>/dev/null || \
+       [ -n "${ANDROID_TERMINAL_APP:-}" ]; then
+        HOM_ENV_TYPE="android_terminal"
+    elif [ -n "${ADB_VENDOR_KEYS:-}" ] || \
+         grep -q "adbd" /proc/self/cmdline 2>/dev/null; then
+        HOM_ENV_TYPE="adb_shell"
+    else
+        HOM_ENV_TYPE="android_native"
+    fi
+else
+    HOM_ENV_TYPE="linux_host"
+fi
+
+reg_set shell HOM_ENV_TYPE "$HOM_ENV_TYPE"
+
+# Record whether key host-side build tools are available
+# (these are needed by fetch_all_deps.sh / build_offline_zip.sh
+# but are NOT expected in recovery or Magisk service context)
+for build_tool in zip unzip curl git tar python3 bash; do
+    p=$(command -v "$build_tool" 2>/dev/null || true)
+    key="HOM_BUILD_TOOL_$(echo "$build_tool" | tr 'a-z' 'A-Z')"
+    if [ -n "$p" ]; then
+        reg_set shell "$key" "$p"
+    else
+        reg_set shell "$key" "MISSING"
+    fi
+done
+
 # Decide whether Termux SHOULD be installed by setup_termux.sh.
 # Criteria: no system Python found AND no Termux prefix AND we have
 # network access (checked later in setup_termux.sh).
