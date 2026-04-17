@@ -51,25 +51,25 @@ run_selected() {
     local script="${SCRIPT_PATHS[$idx]}"
     local kind="${SCRIPT_TYPES[$idx]}"
     local rel="${SCRIPT_LABELS[$idx]}"
-    local args
+    local args_array=()
 
     echo
     echo "Selected: $rel"
-    read -r -p "Arguments (optional): " args
+    read -r -a args_array -p "Arguments (optional): "
 
     echo
     echo "Running..."
     (
         cd "$REPO_ROOT" || exit 1
         if [ "$kind" = "python" ]; then
-            if [ -n "$args" ]; then
-                python3 "$script" $args
+            if [ "${#args_array[@]}" -gt 0 ]; then
+                python3 "$script" "${args_array[@]}"
             else
                 python3 "$script"
             fi
         else
-            if [ -n "$args" ]; then
-                bash "$script" $args
+            if [ "${#args_array[@]}" -gt 0 ]; then
+                bash "$script" "${args_array[@]}"
             else
                 bash "$script"
             fi
