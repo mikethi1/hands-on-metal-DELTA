@@ -152,6 +152,9 @@ The menu lists all shell scripts (`build/`, `core/`, `magisk-module/`, `recovery
 and all pipeline Python scripts (`pipeline/*.py`), then lets you run any of them
 with optional arguments.
 
+Note: argument input is space-separated; embedded space quoting is not supported
+inside the menu prompt.
+
 ---
 
 ## Dependency stack

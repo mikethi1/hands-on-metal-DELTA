@@ -55,7 +55,7 @@ run_selected() {
 
     echo
     echo "Selected: $rel"
-    echo "Note: enter space-separated arguments (embedded-space quoting is not supported)."
+    echo "Note: enter space-separated arguments (embedded space quoting is not supported)."
     read -r -a args_array -p "Arguments (optional): "
 
     echo
@@ -84,7 +84,7 @@ run_selected() {
 
 main() {
     if [ ! -d "$REPO_ROOT/pipeline" ]; then
-        echo "Error: run this script from the repository root." >&2
+        echo "Error: pipeline directory not found in repository." >&2
         exit 1
     fi
 
