@@ -1,8 +1,8 @@
 {
   "_comment": "hands-on-metal partition naming index",
-  "_version": "1.0.0",
-  "_updated": "2026-04-16",
-  "_description": "Versioned offline index of known partition naming patterns by device family. Used when online lookup is unavailable.",
+  "_version": "2.0.0",
+  "_updated": "2026-04-17",
+  "_description": "Versioned offline index of known partition naming patterns, device families, and Android version profiles. Used to determine correct install path before a run.",
 
   "partition_types": {
     "boot": {
@@ -47,6 +47,13 @@
       "magisk_patch_target": false,
       "common_names": ["vbmeta", "vbmeta_a", "vbmeta_b", "vbmeta_system", "vbmeta_vendor"],
       "typical_size_mb": [1, 4]
+    },
+    "dtbo": {
+      "description": "Device-tree blob overlay partition. Contains SoC and board device-tree patches.",
+      "magisk_patch_target": false,
+      "api_level_min": 28,
+      "common_names": ["dtbo", "dtbo_a", "dtbo_b"],
+      "typical_size_mb": [8, 16, 32]
     }
   },
 
@@ -58,6 +65,200 @@
     "/dev/block/mapper/{name}"
   ],
 
+  "android_version_profiles": {
+    "api_21_22": {
+      "android_version": "5.0-5.1 Lollipop",
+      "api_range": [21, 22],
+      "init_boot": false,
+      "vendor_boot": false,
+      "dynamic_partitions": false,
+      "ab_typical": false,
+      "sar_typical": false,
+      "avb_typical": false,
+      "patch_target": "boot",
+      "keepverity_default": false,
+      "keepforceencrypt_default": false,
+      "notes": "FDE only; no Treble; no dynamic partitions; busybox may be required in recovery",
+      "support_tier": "partial"
+    },
+    "api_23": {
+      "android_version": "6.0 Marshmallow",
+      "api_range": [23, 23],
+      "init_boot": false,
+      "vendor_boot": false,
+      "dynamic_partitions": false,
+      "ab_typical": false,
+      "sar_typical": false,
+      "avb_typical": false,
+      "patch_target": "boot",
+      "keepverity_default": false,
+      "keepforceencrypt_default": false,
+      "notes": "Adoptable storage; FDE; first dm-verity enforcement on some devices",
+      "support_tier": "partial"
+    },
+    "api_24_25": {
+      "android_version": "7.0-7.1 Nougat",
+      "api_range": [24, 25],
+      "init_boot": false,
+      "vendor_boot": false,
+      "dynamic_partitions": false,
+      "ab_typical": "some",
+      "sar_typical": false,
+      "avb_typical": false,
+      "patch_target": "boot",
+      "keepverity_default": false,
+      "keepforceencrypt_default": true,
+      "notes": "First A/B devices (Pixel 1); dm-verity on more devices; FDE common",
+      "support_tier": "partial"
+    },
+    "api_26_27": {
+      "android_version": "8.0-8.1 Oreo",
+      "api_range": [26, 27],
+      "init_boot": false,
+      "vendor_boot": false,
+      "dynamic_partitions": false,
+      "ab_typical": "some",
+      "sar_typical": false,
+      "avb_typical": true,
+      "avb_version_typical": "1.0",
+      "patch_target": "boot",
+      "keepverity_default": true,
+      "keepforceencrypt_default": true,
+      "notes": "Project Treble required; vendor partition required; AVB 1.0; FBE on new devices",
+      "support_tier": "supported"
+    },
+    "api_28": {
+      "android_version": "9 Pie",
+      "api_range": [28, 28],
+      "init_boot": false,
+      "vendor_boot": false,
+      "dynamic_partitions": false,
+      "ab_typical": "common",
+      "sar_typical": true,
+      "avb_typical": true,
+      "avb_version_typical": "1.0",
+      "patch_target": "boot",
+      "keepverity_default": true,
+      "keepforceencrypt_default": true,
+      "legacysar_when_ab_false": true,
+      "notes": "SAR required; APEX updatable first seen; FBE required; A/B common on new flagships",
+      "support_tier": "supported"
+    },
+    "api_29": {
+      "android_version": "10 Q",
+      "api_range": [29, 29],
+      "init_boot": false,
+      "vendor_boot": false,
+      "dynamic_partitions": true,
+      "ab_typical": true,
+      "sar_typical": true,
+      "avb_typical": true,
+      "avb_version_typical": "2.0",
+      "patch_target": "boot",
+      "keepverity_default": true,
+      "keepforceencrypt_default": true,
+      "notes": "Dynamic partitions (super) required; GKI not yet mandatory; FBE required",
+      "support_tier": "supported"
+    },
+    "api_30": {
+      "android_version": "11 R",
+      "api_range": [30, 30],
+      "init_boot": false,
+      "vendor_boot": true,
+      "dynamic_partitions": true,
+      "ab_typical": true,
+      "sar_typical": true,
+      "avb_typical": true,
+      "avb_version_typical": "2.0",
+      "patch_target": "boot",
+      "keepverity_default": true,
+      "keepforceencrypt_default": true,
+      "notes": "GKI 1.0 optional; vendor_boot introduced; virtual A/B (VAB) for new devices",
+      "support_tier": "supported"
+    },
+    "api_31_32": {
+      "android_version": "12-12L S",
+      "api_range": [31, 32],
+      "init_boot": false,
+      "vendor_boot": true,
+      "dynamic_partitions": true,
+      "ab_typical": true,
+      "sar_typical": true,
+      "avb_typical": true,
+      "avb_version_typical": "2.0",
+      "patch_target": "boot",
+      "keepverity_default": true,
+      "keepforceencrypt_default": true,
+      "notes": "GKI 2.0 required; vendor_boot required; VAB; EROFS on some",
+      "support_tier": "supported"
+    },
+    "api_33": {
+      "android_version": "13 Tiramisu",
+      "api_range": [33, 33],
+      "init_boot": true,
+      "vendor_boot": true,
+      "dynamic_partitions": true,
+      "ab_typical": true,
+      "sar_typical": true,
+      "avb_typical": true,
+      "avb_version_typical": "2.0",
+      "patch_target": "init_boot",
+      "keepverity_default": true,
+      "keepforceencrypt_default": true,
+      "notes": "init_boot introduced and required; Magisk MUST patch init_boot not boot; EROFS common",
+      "support_tier": "supported"
+    },
+    "api_34": {
+      "android_version": "14 UpsideDownCake",
+      "api_range": [34, 34],
+      "init_boot": true,
+      "vendor_boot": true,
+      "dynamic_partitions": true,
+      "ab_typical": true,
+      "sar_typical": true,
+      "avb_typical": true,
+      "avb_version_typical": "2.0",
+      "patch_target": "init_boot",
+      "keepverity_default": true,
+      "keepforceencrypt_default": true,
+      "notes": "EROFS very common; stricter AVB chain; init_boot standard",
+      "support_tier": "supported"
+    },
+    "api_35": {
+      "android_version": "15 VanillaIceCream",
+      "api_range": [35, 35],
+      "init_boot": true,
+      "vendor_boot": true,
+      "dynamic_partitions": true,
+      "ab_typical": true,
+      "sar_typical": true,
+      "avb_typical": true,
+      "avb_version_typical": "2.0",
+      "patch_target": "init_boot",
+      "keepverity_default": true,
+      "keepforceencrypt_default": true,
+      "patchvbmetaflag_required_from_spl": "2026-05-01",
+      "notes": "May-2026 AVB anti-rollback policy active for SPL >= 2026-05-01; PATCHVBMETAFLAG required",
+      "support_tier": "supported"
+    },
+    "api_36_plus": {
+      "android_version": "16+ future",
+      "api_range": [36, 999],
+      "init_boot": true,
+      "vendor_boot": true,
+      "dynamic_partitions": true,
+      "ab_typical": true,
+      "sar_typical": true,
+      "avb_typical": true,
+      "patch_target": "init_boot",
+      "keepverity_default": true,
+      "keepforceencrypt_default": true,
+      "patchvbmetaflag_required_from_spl": "2026-05-01",
+      "notes": "Future Android version - candidate entry auto-created; best-effort install",
+      "support_tier": "unknown"
+    }
+  },
+
   "device_families": {
     "qualcomm_ab": {
       "description": "Qualcomm SoC, A/B slots",
@@ -65,24 +266,43 @@
       "is_ab": true,
       "boot_partition": "boot",
       "init_boot_api_min": 33,
-      "example_devices": ["Pixel 6 Pro", "Samsung Galaxy S21 (US)", "OnePlus 9 Pro"],
-      "by_name_hint": "/dev/block/bootdevice/by-name/"
+      "example_devices": ["Pixel 6 Pro", "Samsung Galaxy S21 (US)", "OnePlus 9 Pro", "Xiaomi 12 Pro"],
+      "by_name_hint": "/dev/block/bootdevice/by-name/",
+      "support_tier": "known-supported",
+      "notes": ""
     },
     "qualcomm_non_ab": {
-      "description": "Qualcomm SoC, non-A/B (older devices)",
+      "description": "Qualcomm SoC, non-A/B (older devices, API <= 27)",
       "soc_match": ["msm", "sdm"],
       "is_ab": false,
       "boot_partition": "boot",
-      "example_devices": ["OnePlus 6T", "Samsung Galaxy S10 (Snapdragon)"],
-      "by_name_hint": "/dev/block/bootdevice/by-name/"
+      "init_boot_api_min": null,
+      "example_devices": ["OnePlus 6T", "Samsung Galaxy S10 (Snapdragon)", "Xiaomi Mi 8"],
+      "by_name_hint": "/dev/block/bootdevice/by-name/",
+      "support_tier": "known-supported",
+      "notes": "recovery partition present; no dynamic partitions on API < 29"
     },
     "mediatek_ab": {
       "description": "MediaTek SoC, A/B slots",
       "soc_match": ["mt", "mediatek"],
       "is_ab": true,
       "boot_partition": "boot",
-      "example_devices": ["Motorola Edge 30 Ultra", "Redmi Note 11 Pro+ 5G"],
-      "by_name_hint": "/dev/block/by-name/"
+      "init_boot_api_min": 33,
+      "example_devices": ["Motorola Edge 30 Ultra", "Redmi Note 11 Pro+ 5G", "POCO X5 Pro"],
+      "by_name_hint": "/dev/block/by-name/",
+      "support_tier": "known-supported",
+      "notes": "by-name path is /dev/block/by-name/, not bootdevice/"
+    },
+    "mediatek_non_ab": {
+      "description": "MediaTek SoC, non-A/B (older budget/mid-range devices)",
+      "soc_match": ["mt6", "mt67", "mt68"],
+      "is_ab": false,
+      "boot_partition": "boot",
+      "init_boot_api_min": null,
+      "example_devices": ["Redmi Note 8", "Samsung Galaxy A12 (MT)", "Realme C21"],
+      "by_name_hint": "/dev/block/by-name/",
+      "support_tier": "known-partial",
+      "notes": "SP Flash Tool may be required for some devices if fastboot is unavailable"
     },
     "google_tensor": {
       "description": "Google Tensor (Pixel 6+), A/B with init_boot on API 33+",
@@ -90,16 +310,87 @@
       "is_ab": true,
       "boot_partition": "init_boot",
       "init_boot_api_min": 33,
-      "example_devices": ["Pixel 7", "Pixel 7 Pro", "Pixel 8", "Pixel 8 Pro"],
-      "by_name_hint": "/dev/block/by-name/"
+      "example_devices": ["Pixel 7", "Pixel 7 Pro", "Pixel 8", "Pixel 8 Pro", "Pixel 9"],
+      "by_name_hint": "/dev/block/by-name/",
+      "support_tier": "known-supported",
+      "notes": "Factory images always available at developers.google.com/android/images"
+    },
+    "google_tensor_pixel6": {
+      "description": "Google Tensor GS101 (Pixel 6 series, API 31-32), A/B, no init_boot",
+      "soc_match": ["gs101"],
+      "is_ab": true,
+      "boot_partition": "boot",
+      "init_boot_api_min": 33,
+      "example_devices": ["Pixel 6", "Pixel 6 Pro", "Pixel 6a"],
+      "by_name_hint": "/dev/block/by-name/",
+      "support_tier": "known-supported",
+      "notes": "Shipped API 31; init_boot absent unless upgraded to API 33 ROM"
     },
     "samsung_exynos_ab": {
       "description": "Samsung Exynos SoC, A/B",
       "soc_match": ["exynos"],
       "is_ab": true,
       "boot_partition": "boot",
-      "example_devices": ["Samsung Galaxy S22 (Exynos)", "Galaxy A53"],
-      "by_name_hint": "/dev/block/by-name/"
+      "init_boot_api_min": 33,
+      "example_devices": ["Samsung Galaxy S22 (Exynos)", "Galaxy A53", "Galaxy S23 (Exynos)"],
+      "by_name_hint": "/dev/block/by-name/",
+      "support_tier": "known-supported",
+      "notes": "KEEPVERITY=true mandatory; Samsung custom dm-verity implementation"
+    },
+    "samsung_exynos_non_ab": {
+      "description": "Samsung Exynos SoC, non-A/B (older flagships and budget)",
+      "soc_match": ["exynos"],
+      "is_ab": false,
+      "boot_partition": "boot",
+      "init_boot_api_min": null,
+      "example_devices": ["Samsung Galaxy S10 (Exynos)", "Galaxy A50", "Galaxy Note 10 (Exynos)"],
+      "by_name_hint": "/dev/block/platform/*/by-name/",
+      "support_tier": "known-supported",
+      "notes": "Platform path varies; use /dev/block/platform/ glob"
+    },
+    "kirin_non_ab": {
+      "description": "HiSilicon Kirin (Huawei/Honor), non-A/B",
+      "soc_match": ["hi3", "kirin", "hi6"],
+      "is_ab": false,
+      "boot_partition": "boot",
+      "init_boot_api_min": null,
+      "example_devices": ["Huawei P30", "Huawei Mate 20 Pro", "Honor 20 Pro"],
+      "by_name_hint": "/dev/block/platform/*/by-name/",
+      "support_tier": "known-partial",
+      "notes": "Bootloader unlock blocked on most Huawei/Honor post-2018; limited TWRP support; custom AVB"
+    },
+    "unisoc_non_ab": {
+      "description": "Unisoc (Spreadtrum) SoC, non-A/B",
+      "soc_match": ["sc", "ums", "t618", "t760", "t310"],
+      "is_ab": false,
+      "boot_partition": "boot",
+      "init_boot_api_min": null,
+      "example_devices": ["Realme C30", "Samsung Galaxy A03", "Nokia G20"],
+      "by_name_hint": "/dev/block/by-name/",
+      "support_tier": "known-partial",
+      "notes": "Limited fastboot support; may require vendor flash tool; TWRP coverage sparse"
+    },
+    "nvidia_tegra": {
+      "description": "NVIDIA Tegra SoC (tablets, Shield), non-A/B",
+      "soc_match": ["tegra"],
+      "is_ab": false,
+      "boot_partition": "boot",
+      "init_boot_api_min": null,
+      "example_devices": ["NVIDIA Shield Tablet", "Google Nexus 9"],
+      "by_name_hint": "/dev/block/platform/*/by-name/",
+      "support_tier": "known-partial",
+      "notes": "NVIDIA-specific bootloader; nvflash may be needed for recovery"
+    },
+    "intel_x86": {
+      "description": "Intel Atom SoC (legacy x86 Android tablets)",
+      "soc_match": ["intel", "baytrail", "cherrytrail"],
+      "is_ab": false,
+      "boot_partition": "boot",
+      "init_boot_api_min": null,
+      "example_devices": ["ASUS ZenFone 2", "Lenovo TAB 2 A10-70F"],
+      "by_name_hint": "/dev/block/by-name/",
+      "support_tier": "experimental",
+      "notes": "x86 ABI; magisk32 not applicable; very limited support"
     }
   },
 
@@ -118,6 +409,49 @@
     "minimum_supported_str": "25.0",
     "recommended": 27001,
     "recommended_str": "27.0",
+    "init_boot_support_min": 25000,
+    "may_2026_policy_min": 27000,
     "notes": "Magisk 27+ supports init_boot patching and the May-2026 anti-rollback policy."
+  },
+
+  "pre_run_condition_checks": {
+    "description": "Conditions evaluated before the install begins to determine feasibility",
+    "checks": [
+      {
+        "id": "bootloader_unlocked",
+        "description": "Bootloader must be unlocked to flash custom images",
+        "detection": "getprop ro.boot.verifiedbootstate == orange OR fastboot getvar unlocked == yes",
+        "failure_message": "Bootloader is locked. Unlock it before proceeding.",
+        "blocker": true
+      },
+      {
+        "id": "anti_rollback_spl",
+        "description": "Image SPL must be >= device SPL to avoid rollback fuse burn",
+        "detection": "HOM_ARB_ROLLBACK_RISK == false",
+        "failure_message": "Boot image SPL is older than device SPL. Flash blocked.",
+        "blocker": true
+      },
+      {
+        "id": "magisk_version_min",
+        "description": "Magisk binary must be >= 25000",
+        "detection": "HOM_MAGISK_VER_CODE >= 25000",
+        "failure_message": "Magisk version too old. Upgrade to 25.0 or newer.",
+        "blocker": true
+      },
+      {
+        "id": "storage_writable",
+        "description": "/sdcard/hands-on-metal must be writable",
+        "detection": "touch /sdcard/hands-on-metal/.write_test",
+        "failure_message": "Cannot write to /sdcard/hands-on-metal/. Storage may be encrypted or full.",
+        "blocker": true
+      },
+      {
+        "id": "root_available",
+        "description": "Shell must have root access (uid 0 or Magisk root)",
+        "detection": "id | grep uid=0",
+        "failure_message": "Script not running as root. Use Magisk, TWRP terminal, or adb root.",
+        "blocker": true
+      }
+    ]
   }
 }
