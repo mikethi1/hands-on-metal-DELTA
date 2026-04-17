@@ -33,6 +33,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOLS_DIR="$REPO_ROOT/tools"
 DIST_DIR="$REPO_ROOT/dist"
 BUILD_DIR="$REPO_ROOT/build"
+HOM_TMPDIR="${TMPDIR:-/tmp}"
 
 # ── defaults ──────────────────────────────────────────────────
 MAGISK_VERSION="v30.7"
@@ -89,9 +90,18 @@ require_cmd() {
 
 download() {
     local url="$1" dest="$2"
+    local dest_dir
+    dest_dir="$(dirname "$dest")"
+    if [ ! -d "$dest_dir" ]; then
+        mkdir -p "$dest_dir" || { fail "Cannot create directory: $dest_dir"; exit 1; }
+    fi
     echo "  Downloading: $url"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --retry 3 --retry-delay 2 -o "$dest" "$url"
+        if ! curl -fsSL --retry 3 --retry-delay 2 -o "$dest" "$url"; then
+            fail "Download failed: $url"
+            fail "Check network connectivity and that the URL is reachable."
+            exit 1
+        fi
     else
         fail "curl is required for downloads."
         exit 1
@@ -153,7 +163,7 @@ else
 
     step "2/5  Fetching Magisk ${MAGISK_VERSION} binaries..."
     MAGISK_APK_URL="https://github.com/topjohnwu/Magisk/releases/download/${MAGISK_VERSION}/Magisk-${MAGISK_VERSION}.apk"
-    MAGISK_APK="/tmp/hands-on-metal-magisk-${MAGISK_VERSION}.apk"
+    MAGISK_APK="$HOM_TMPDIR/hands-on-metal-magisk-${MAGISK_VERSION}.apk"
 
     all_magisk_present=true
     for t in magisk64 magisk32 magiskinit64; do
@@ -174,16 +184,16 @@ else
             'lib/arm64-v8a/libmagisk64.so' \
             'lib/armeabi-v7a/libmagisk32.so' \
             'lib/arm64-v8a/libmagiskinit.so' \
-            -d /tmp/ 2>/dev/null || {
+            -d "$HOM_TMPDIR/" 2>/dev/null || {
                 fail "Extraction failed — APK may not contain expected library paths."
                 fail "Check the Magisk release at: $MAGISK_APK_URL"
                 exit 1
             }
 
-        cp /tmp/libmagisk64.so   "$TOOLS_DIR/magisk64"   && chmod +x "$TOOLS_DIR/magisk64"
-        cp /tmp/libmagisk32.so   "$TOOLS_DIR/magisk32"   && chmod +x "$TOOLS_DIR/magisk32"
-        cp /tmp/libmagiskinit.so "$TOOLS_DIR/magiskinit64" && chmod +x "$TOOLS_DIR/magiskinit64"
-        rm -f /tmp/libmagisk64.so /tmp/libmagisk32.so /tmp/libmagiskinit.so
+        cp "$HOM_TMPDIR/libmagisk64.so"   "$TOOLS_DIR/magisk64"   && chmod +x "$TOOLS_DIR/magisk64"
+        cp "$HOM_TMPDIR/libmagisk32.so"   "$TOOLS_DIR/magisk32"   && chmod +x "$TOOLS_DIR/magisk32"
+        cp "$HOM_TMPDIR/libmagiskinit.so" "$TOOLS_DIR/magiskinit64" && chmod +x "$TOOLS_DIR/magiskinit64"
+        rm -f "$HOM_TMPDIR/libmagisk64.so" "$HOM_TMPDIR/libmagisk32.so" "$HOM_TMPDIR/libmagiskinit.so"
 
         ok "magisk64, magisk32, magiskinit64 → $TOOLS_DIR/"
 
