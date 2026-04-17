@@ -301,7 +301,7 @@ elif [ -n "$(getprop ro.build.display.id 2>/dev/null)" ]; then
        [ -n "${ANDROID_TERMINAL_APP:-}" ]; then
         HOM_ENV_TYPE="android_terminal"
     elif [ -n "${ADB_VENDOR_KEYS:-}" ] || \
-         grep -q "adbd" /proc/self/cmdline 2>/dev/null; then
+         grep -qz "adbd" /proc/$PPID/cmdline 2>/dev/null; then
         HOM_ENV_TYPE="adb_shell"
     else
         HOM_ENV_TYPE="android_native"

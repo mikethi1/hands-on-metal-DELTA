@@ -96,10 +96,9 @@ echo ""
 
 # ── native Android terminal guidance ─────────────────────────
 if [ "$_hom_env_type" = "android" ]; then
-    echo "  ℹ  Running in native Android shell."
-    echo "     Some build tools (git, python3, curl, zip, unzip, tar)"
-    echo "     may not be available. Install Termux or use the"
-    echo "     Android 15+ built-in Terminal for full functionality."
+    echo "  ℹ  Running in native Android shell (not Termux)."
+    echo "     If build tools are missing, install Termux from F-Droid"
+    echo "     or use adb shell from a host machine with all tools."
     echo ""
 fi
 
