@@ -160,6 +160,15 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 cat <<'EOF' > /tmp/hands-on-metal-setup.sh
 #!/usr/bin/env bash
 set -e
+# git is needed to clone — check before anything else
+if ! command -v git >/dev/null 2>&1; then
+    echo "ERROR: git is not installed." >&2
+    echo "  Debian / Ubuntu : sudo apt install git" >&2
+    echo "  Termux          : pkg install git" >&2
+    echo "  Fedora          : sudo dnf install git" >&2
+    echo "  macOS           : xcode-select --install" >&2
+    exit 1
+fi
 git clone https://github.com/mikethi/hands-on-metal.git
 cd hands-on-metal
 bash check_deps.sh              # verify host tools (optional — runs automatically)
