@@ -1,0 +1,40 @@
+#!/sbin/sh
+# magisk-module/META-INF/com/google/android/update-binary
+# ============================================================
+# Magisk module installer script.
+# This runs inside Magisk's module installation framework when
+# the user flashes the ZIP via the Magisk app.
+# ============================================================
+
+SKIPUNZIP=1
+MODPATH="${MODPATH:-/data/adb/modules/hands-on-metal-collector}"
+
+ui_print() { echo "ui_print $1" >&"$OUTFD"; }
+abort()    { ui_print "ABORT: $1"; exit 1; }
+
+ui_print ""
+ui_print "************************************"
+ui_print " hands-on-metal Hardware Collector  "
+ui_print "************************************"
+ui_print ""
+
+# Verify Magisk version is recent enough
+[ "$MAGISK_VER_CODE" -ge 25000 ] 2>/dev/null || \
+    abort "Magisk 25+ required (found $MAGISK_VER_CODE)"
+
+# Extract module files
+ui_print "- Extracting module files..."
+unzip -o "$ZIPFILE" \
+    module.prop \
+    collect.sh \
+    service.sh \
+    -d "$MODPATH" \
+    >&2 || abort "Extraction failed"
+
+# Make scripts executable
+chmod 0755 "$MODPATH/collect.sh" "$MODPATH/service.sh"
+
+ui_print "- Module installed to $MODPATH"
+ui_print "- Collection will run on next boot"
+ui_print "- Output: /sdcard/hands-on-metal/live_dump/"
+ui_print ""
