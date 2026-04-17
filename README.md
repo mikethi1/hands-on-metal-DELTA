@@ -131,6 +131,7 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 | [`tools/`](tools/) | Optional binaries (`busybox-arm64`, `magisk64`, `magisk32`, `magiskinit64`) — not committed; fetched by `fetch_all_deps.sh` |
 | [`halium-shim/`](halium-shim/) | C shim + Makefile for Halium/libhybris bridge research |
 | [`tests/`](tests/) | Python unit tests for `parse_logs` and `build_table` |
+| [`setup.sh`](setup.sh) | One-step bootstrap — clones the repo, checks deps, fetches binaries, builds ZIPs |
 | [`terminal_menu.sh`](terminal_menu.sh) | Interactive terminal launcher — run any project script from one menu |
 | [`check_deps.sh`](check_deps.sh) | Host-side dependency checker — verifies all required tools are installed |
 | [`docs/`](docs/) | Full documentation (see below) |
@@ -156,28 +157,36 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 
 ### 1 — Clone and fetch all dependencies
 
+**One-liner** (requires `curl` and `git`):
+
 ```bash
 cat <<'EOF' > /tmp/hands-on-metal-setup.sh
 #!/usr/bin/env bash
 set -e
-# git is needed to clone — check before anything else
-if ! command -v git >/dev/null 2>&1; then
-    echo "ERROR: git is not installed." >&2
-    echo "  Debian / Ubuntu : sudo apt install git" >&2
-    echo "  Termux          : pkg install git" >&2
-    echo "  Fedora          : sudo dnf install git" >&2
-    echo "  macOS           : xcode-select --install" >&2
-    exit 1
-fi
-git clone https://github.com/mikethi/hands-on-metal.git
-cd hands-on-metal
-bash check_deps.sh              # verify host tools (optional — runs automatically)
-bash build/fetch_all_deps.sh
+curl -fsSL https://raw.githubusercontent.com/mikethi/hands-on-metal/main/setup.sh | bash
 EOF
 chmod +x /tmp/hands-on-metal-setup.sh
 /tmp/hands-on-metal-setup.sh
 cd hands-on-metal               # enter the repo after setup
 ```
+
+**Or clone first**, then run the setup script locally:
+
+```bash
+cat <<'EOF' > /tmp/hands-on-metal-setup.sh
+#!/usr/bin/env bash
+set -e
+git clone https://github.com/mikethi/hands-on-metal.git
+cd hands-on-metal
+bash setup.sh
+EOF
+chmod +x /tmp/hands-on-metal-setup.sh
+/tmp/hands-on-metal-setup.sh
+```
+
+If `git` is not installed the script prints platform-specific install
+instructions (Debian/Ubuntu, Termux, Fedora, Arch/Manjaro, macOS) and exits.
+The script is safe to re-run — it skips steps that are already complete.
 
 `fetch_all_deps.sh` will:
 
@@ -191,13 +200,25 @@ cd hands-on-metal               # enter the repo after setup
 If you already have the binaries in `tools/` or want device-side binaries:
 
 ```bash
+cat <<'EOF' > /tmp/hands-on-metal-build.sh
+#!/usr/bin/env bash
+set -e
 bash build/build_offline_zip.sh
+EOF
+chmod +x /tmp/hands-on-metal-build.sh
+/tmp/hands-on-metal-build.sh
 ```
 
 To build without bundled tools (rely on what's already on the device):
 
 ```bash
+cat <<'EOF' > /tmp/hands-on-metal-build-no-tools.sh
+#!/usr/bin/env bash
+set -e
 bash build/build_offline_zip.sh --no-tools
+EOF
+chmod +x /tmp/hands-on-metal-build-no-tools.sh
+/tmp/hands-on-metal-build-no-tools.sh
 ```
 
 ### 3 — Flash to your device
@@ -205,21 +226,33 @@ bash build/build_offline_zip.sh --no-tools
 **Mode A — Magisk already installed:**
 
 ```bash
+cat <<'EOF' > /tmp/hands-on-metal-flash-magisk.sh
+#!/usr/bin/env bash
+set -e
 # Push the ZIP to the device
 adb push dist/hands-on-metal-magisk-module-v2.0.0.zip /sdcard/
 
 # Then on the device:
 # Magisk app → Modules → Install from storage → select the ZIP → reboot
+EOF
+chmod +x /tmp/hands-on-metal-flash-magisk.sh
+/tmp/hands-on-metal-flash-magisk.sh
 ```
 
 **Mode B — no Magisk yet (flash from TWRP / OrangeFox):**
 
 ```bash
+cat <<'EOF' > /tmp/hands-on-metal-flash-recovery.sh
+#!/usr/bin/env bash
+set -e
 # Push the ZIP to the device
 adb push dist/hands-on-metal-recovery-v2.0.0.zip /sdcard/
 
 # Then on the device:
 # Boot into TWRP/OrangeFox → Install → select the ZIP → swipe to confirm → reboot
+EOF
+chmod +x /tmp/hands-on-metal-flash-recovery.sh
+/tmp/hands-on-metal-flash-recovery.sh
 ```
 
 ### 4 — Run the host-side pipeline after collection
@@ -228,13 +261,18 @@ After your device has booted and collected hardware data, pull the logs and
 run the pipeline on your PC:
 
 ```bash
+cat <<'EOF' > /tmp/hands-on-metal-pipeline.sh
+#!/usr/bin/env bash
+set -e
+RUN_ID="${1:?Usage: hands-on-metal-pipeline.sh <RUN_ID>}"
+
 # Pull logs from device to your PC
 adb pull /sdcard/hands-on-metal/logs/ ./logs/
 adb pull /sdcard/hands-on-metal/live_dump/ ./live_dump/
 
-# Parse the master log (replace <RUN_ID> with the actual run ID from the log filename)
+# Parse the master log
 python pipeline/parse_logs.py \
-    --log ./logs/master_<RUN_ID>.log \
+    --log "./logs/master_${RUN_ID}.log" \
     --out /tmp/parsed.json
 
 # Run failure analysis
@@ -247,16 +285,25 @@ python pipeline/build_table.py \
     --db hardware_map.sqlite \
     --dump ./live_dump \
     --mode A \
-    --run-id <RUN_ID>
+    --run-id "$RUN_ID"
 
 # Generate a human-readable report
 python pipeline/report.py --db hardware_map.sqlite
+EOF
+chmod +x /tmp/hands-on-metal-pipeline.sh
+/tmp/hands-on-metal-pipeline.sh 20250417_143022   # ← replace with your actual RUN_ID
 ```
 
 ### 5 — Run the unit tests
 
 ```bash
+cat <<'EOF' > /tmp/hands-on-metal-test.sh
+#!/usr/bin/env bash
+set -e
 python -m pytest tests/
+EOF
+chmod +x /tmp/hands-on-metal-test.sh
+/tmp/hands-on-metal-test.sh
 ```
 
 ### 6 — Interactive terminal menu (optional)
@@ -265,7 +312,13 @@ Launch a single interactive menu that lists every script in the project and
 lets you run any of them with arguments:
 
 ```bash
+cat <<'EOF' > /tmp/hands-on-metal-menu.sh
+#!/usr/bin/env bash
+set -e
 bash terminal_menu.sh
+EOF
+chmod +x /tmp/hands-on-metal-menu.sh
+/tmp/hands-on-metal-menu.sh
 ```
 
 The menu lists all shell scripts (`build/`, `core/`, `magisk-module/`,
