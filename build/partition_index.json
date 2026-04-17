@@ -1,0 +1,123 @@
+{
+  "_comment": "hands-on-metal partition naming index",
+  "_version": "1.0.0",
+  "_updated": "2026-04-16",
+  "_description": "Versioned offline index of known partition naming patterns by device family. Used when online lookup is unavailable.",
+
+  "partition_types": {
+    "boot": {
+      "description": "Standard Android boot partition (ramdisk + kernel). Patched by Magisk on API <= 32 or when init_boot is absent.",
+      "magisk_patch_target": true,
+      "common_names": ["boot", "boot_a", "boot_b"],
+      "image_magic": "ANDROID!",
+      "typical_size_mb": [32, 64, 128]
+    },
+    "init_boot": {
+      "description": "Generic ramdisk partition introduced in Android 13 (API 33). Contains init only; kernel stays in boot. Magisk patches this on API 33+.",
+      "magisk_patch_target": true,
+      "api_level_min": 33,
+      "common_names": ["init_boot", "init_boot_a", "init_boot_b"],
+      "image_magic": "ANDROID!",
+      "typical_size_mb": [8, 16, 32]
+    },
+    "vendor_boot": {
+      "description": "Vendor-specific ramdisk (API 30+, GKI 2.0). Not patched by Magisk but listed for reference.",
+      "magisk_patch_target": false,
+      "api_level_min": 30,
+      "common_names": ["vendor_boot", "vendor_boot_a", "vendor_boot_b"],
+      "image_magic": "VNDRBOOT",
+      "typical_size_mb": [32, 64]
+    },
+    "recovery": {
+      "description": "Dedicated recovery partition (non-A/B devices). Not present on A/B devices where recovery ramdisk is embedded in boot/vendor_boot.",
+      "magisk_patch_target": false,
+      "common_names": ["recovery", "recovery_a", "recovery_b"],
+      "image_magic": "ANDROID!",
+      "typical_size_mb": [32, 64, 128]
+    },
+    "super": {
+      "description": "Dynamic partition container (Android 10+). Contains system, vendor, product, odm as logical partitions.",
+      "magisk_patch_target": false,
+      "api_level_min": 29,
+      "common_names": ["super"],
+      "typical_size_mb": [2048, 4096, 8192]
+    },
+    "vbmeta": {
+      "description": "AVB vbmeta image. Contains verification metadata for boot chain. Magisk optionally patches this.",
+      "magisk_patch_target": false,
+      "common_names": ["vbmeta", "vbmeta_a", "vbmeta_b", "vbmeta_system", "vbmeta_vendor"],
+      "typical_size_mb": [1, 4]
+    }
+  },
+
+  "by_name_paths": [
+    "/dev/block/bootdevice/by-name/{name}",
+    "/dev/block/by-name/{name}",
+    "/dev/block/platform/*/by-name/{name}",
+    "/dev/block/platform/*/*/by-name/{name}",
+    "/dev/block/mapper/{name}"
+  ],
+
+  "device_families": {
+    "qualcomm_ab": {
+      "description": "Qualcomm SoC, A/B slots",
+      "soc_match": ["msm", "sm", "sdm", "qcom"],
+      "is_ab": true,
+      "boot_partition": "boot",
+      "init_boot_api_min": 33,
+      "example_devices": ["Pixel 6 Pro", "Samsung Galaxy S21 (US)", "OnePlus 9 Pro"],
+      "by_name_hint": "/dev/block/bootdevice/by-name/"
+    },
+    "qualcomm_non_ab": {
+      "description": "Qualcomm SoC, non-A/B (older devices)",
+      "soc_match": ["msm", "sdm"],
+      "is_ab": false,
+      "boot_partition": "boot",
+      "example_devices": ["OnePlus 6T", "Samsung Galaxy S10 (Snapdragon)"],
+      "by_name_hint": "/dev/block/bootdevice/by-name/"
+    },
+    "mediatek_ab": {
+      "description": "MediaTek SoC, A/B slots",
+      "soc_match": ["mt", "mediatek"],
+      "is_ab": true,
+      "boot_partition": "boot",
+      "example_devices": ["Motorola Edge 30 Ultra", "Redmi Note 11 Pro+ 5G"],
+      "by_name_hint": "/dev/block/by-name/"
+    },
+    "google_tensor": {
+      "description": "Google Tensor (Pixel 6+), A/B with init_boot on API 33+",
+      "soc_match": ["gs", "tensor"],
+      "is_ab": true,
+      "boot_partition": "init_boot",
+      "init_boot_api_min": 33,
+      "example_devices": ["Pixel 7", "Pixel 7 Pro", "Pixel 8", "Pixel 8 Pro"],
+      "by_name_hint": "/dev/block/by-name/"
+    },
+    "samsung_exynos_ab": {
+      "description": "Samsung Exynos SoC, A/B",
+      "soc_match": ["exynos"],
+      "is_ab": true,
+      "boot_partition": "boot",
+      "example_devices": ["Samsung Galaxy S22 (Exynos)", "Galaxy A53"],
+      "by_name_hint": "/dev/block/by-name/"
+    }
+  },
+
+  "anti_rollback": {
+    "may_2026_policy_spl": "2026-05-01",
+    "description": "Devices with security patch level >= 2026-05-01 require Magisk to be built with May-2026 anti-rollback compatibility. The PATCHVBMETAFLAG must be set to true when patching.",
+    "magisk_flags_required": {
+      "PATCHVBMETAFLAG": true,
+      "KEEPVERITY": "device-dependent (true for A/B)",
+      "KEEPFORCEENCRYPT": true
+    }
+  },
+
+  "magisk_versions": {
+    "minimum_supported": 25000,
+    "minimum_supported_str": "25.0",
+    "recommended": 27001,
+    "recommended_str": "27.0",
+    "notes": "Magisk 27+ supports init_boot patching and the May-2026 anti-rollback policy."
+  }
+}
