@@ -9,13 +9,33 @@ Input: JSON produced by parse_logs.py
 Output: Structured failure analysis JSON with confidence-ranked causes
         and remediation steps for each failure.
 
+Device-model-aware reasoning:
+  When a device family is matched in partition_index.json, the analyzer
+  compares actual detected variable values against the family's known
+  defaults (partition_model, avb_behavior, required_flags).
+  Deviations from defaults are flagged as additional probable causes.
+
+  For unknown devices (family=none) or when repeated/consecutive failures
+  occur on the same step, confidence scores are boosted and reasoning uses
+  the API-level defaults from android_version_profiles.
+
+Consecutive failure detection:
+  The same signature appearing in multiple log runs (or repeated errors
+  in one run) boosts that signature's confidence score logarithmically.
+
 Usage:
-  python pipeline/failure_analysis.py \
-      --parsed parsed.json \
+  python pipeline/failure_analysis.py \\
+      --parsed parsed.json \\
+      --out analysis.json
+
+  # With partition_index for model-aware reasoning:
+  python pipeline/failure_analysis.py \\
+      --parsed parsed.json \\
+      --index build/partition_index.json \\
       --out analysis.json
 
   # Pipe from parse_logs:
-  python pipeline/parse_logs.py --log logs/ --out - | \
+  python pipeline/parse_logs.py --log logs/ --out - | \\
       python pipeline/failure_analysis.py --parsed - --out analysis.json
 """
 
@@ -23,10 +43,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 # ── Failure signature database ───────────────────────────────────────────────
@@ -378,14 +398,165 @@ def _build_device_snapshot(parsed: dict) -> dict:
         "HOM_MAGISK_VER_CODE", "HOM_ARB_ROLLBACK_RISK",
         "HOM_ARB_MAY2026_ACTIVE", "HOM_CANDIDATE_FAMILY_MATCHED",
         "HOM_FLASH_STATUS", "HOM_ENV_CLASS",
+        # default vars loaded by apply_defaults.sh
+        "HOM_DEFAULT_PATCH_TARGET", "HOM_DEFAULT_KEEPVERITY",
+        "HOM_DEFAULT_KEEPFORCEENCRYPT", "HOM_DEFAULT_PATCHVBMETAFLAG",
+        "HOM_DEFAULT_AVB_VERSION", "HOM_DEFAULT_HAS_RECOVERY",
+        "HOM_DEFAULT_HAS_SUPER",
     ]
     return {k: var_map.get(k, "") for k in keys}
 
 
+# ── Partition-index model defaults ────────────────────────────────────────────
+
+def _load_index(index_path: str | None) -> dict:
+    """Load partition_index.json; return empty dict if unavailable."""
+    if not index_path:
+        return {}
+    p = Path(index_path)
+    if not p.exists():
+        print(f"Warning: partition_index not found: {p}", file=sys.stderr)
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"Warning: could not parse partition_index: {exc}", file=sys.stderr)
+        return {}
+
+
+def _get_family_defaults(index: dict, family: str) -> dict:
+    """Return the family entry from device_families, or {} if not found."""
+    return index.get("device_families", {}).get(family, {})
+
+
+def _get_api_profile(index: dict, api: int) -> dict:
+    """Return the android_version_profile covering the given API level."""
+    for profile in index.get("android_version_profiles", {}).values():
+        lo, hi = profile.get("api_range", [0, 0])
+        if lo <= api <= hi:
+            return profile
+    return {}
+
+
+def _detect_defaults_deviations(
+    var_map: dict[str, str],
+    family_defaults: dict,
+    api_profile: dict,
+) -> list[dict]:
+    """
+    Compare actual detected vars against family/API-level defaults.
+    Return a list of deviation records describing mismatches that
+    could explain a failure.
+    """
+    deviations: list[dict] = []
+
+    # ── patch target deviation ────────────────────────────────
+    actual_boot_part = var_map.get("HOM_DEV_BOOT_PART", "")
+    default_target = (
+        var_map.get("HOM_DEFAULT_PATCH_TARGET")
+        or api_profile.get("patch_target", "")
+    )
+    if actual_boot_part and default_target and actual_boot_part != default_target:
+        deviations.append({
+            "field": "patch_target",
+            "expected": default_target,
+            "actual": actual_boot_part,
+            "description": (
+                f"Device detected '{actual_boot_part}' but family default "
+                f"is '{default_target}'. Wrong partition may have been patched."
+            ),
+            "remediation": (
+                f"Set HOM_DEV_BOOT_PART={default_target} in env_registry.sh "
+                f"and re-run the install."
+            ),
+        })
+
+    # ── KEEPVERITY deviation ──────────────────────────────────
+    actual_kv = var_map.get("HOM_DEFAULT_KEEPVERITY", "")
+    rf = family_defaults.get("required_flags", {})
+    expected_kv = str(rf.get("KEEPVERITY", "")).lower() if rf else ""
+    if actual_kv and expected_kv and actual_kv != expected_kv:
+        deviations.append({
+            "field": "KEEPVERITY",
+            "expected": expected_kv,
+            "actual": actual_kv,
+            "description": (
+                f"KEEPVERITY mismatch: device uses '{actual_kv}' but family "
+                f"requires '{expected_kv}'. dm-verity state may be wrong after flash."
+            ),
+            "remediation": (
+                f"Ensure Magisk patch runs with KEEPVERITY={expected_kv}. "
+                f"Set HOM_DEFAULT_KEEPVERITY={expected_kv} in env_registry.sh."
+            ),
+        })
+
+    # ── AVB version deviation ─────────────────────────────────
+    actual_avb = var_map.get("HOM_DEV_AVB_VERSION", "")
+    expected_avb = (
+        var_map.get("HOM_DEFAULT_AVB_VERSION")
+        or family_defaults.get("avb_behavior", {}).get("avb_version", "")
+    )
+    if actual_avb and expected_avb and expected_avb != "none":
+        if actual_avb != expected_avb:
+            deviations.append({
+                "field": "avb_version",
+                "expected": expected_avb,
+                "actual": actual_avb,
+                "description": (
+                    f"AVB version mismatch: detected v{actual_avb}, "
+                    f"family default is v{expected_avb}. "
+                    f"AVB chain verification may behave differently."
+                ),
+                "remediation": (
+                    "This is usually informational only, but if vbmeta patching "
+                    "fails, check Magisk version supports this AVB version."
+                ),
+            })
+
+    return deviations
+
+
+# ── Consecutive-failure scoring ───────────────────────────────────────────────
+
+def _consecutive_score_boost(matches: list[dict]) -> list[dict]:
+    """
+    Count how many times each signature_id appears in the matches list
+    (multi-run or repeated within one run) and boost confidence
+    logarithmically: boost = log2(count) * 0.05, capped at 0.15.
+    """
+    from collections import Counter
+    counts = Counter(m["signature_id"] for m in matches)
+    result = []
+    for m in matches:
+        sig_id = m["signature_id"]
+        count = counts[sig_id]
+        boost = min(0.15, math.log2(count) * 0.05) if count > 1 else 0.0
+        m = dict(m)
+        m["confidence"] = round(min(1.0, m["confidence"] + boost), 3)
+        if count > 1:
+            m["consecutive_occurrences"] = count
+        result.append(m)
+    return result
+
+
 # ── Main analysis ─────────────────────────────────────────────────────────────
 
-def analyze(parsed: dict) -> dict:
+def analyze(parsed: dict, index: dict | None = None) -> dict:
     """Run all signatures against parsed log; return ranked failure analysis."""
+    index = index or {}
+    var_map = {v["name"]: v["value"] for v in parsed.get("variables", [])}
+
+    # Resolve device family and API level for model-aware reasoning
+    family = var_map.get("HOM_CANDIDATE_FAMILY_MATCHED", "none")
+    try:
+        api_level = int(var_map.get("HOM_DEV_SDK_INT", "0") or "0")
+    except ValueError:
+        api_level = 0
+
+    family_defaults = _get_family_defaults(index, family) if family != "none" else {}
+    api_profile = _get_api_profile(index, api_level) if api_level else {}
+
+    # ── Signature matching ────────────────────────────────────
     matches = []
     for sig in SIGNATURES:
         conf = _match_signature(sig, parsed)
@@ -402,6 +573,30 @@ def analyze(parsed: dict) -> dict:
                     if parsed.get("steps") else ""
                 ),
             })
+
+    # ── Consecutive-failure confidence boost ──────────────────
+    matches = _consecutive_score_boost(matches)
+
+    # ── Model-defaults deviation analysis ─────────────────────
+    deviations = _detect_defaults_deviations(var_map, family_defaults, api_profile)
+    if deviations:
+        # Add a synthetic deviation signature if not already covered
+        existing_ids = {m["signature_id"] for m in matches}
+        for dev in deviations:
+            synth_id = f"DEVIATION_{dev['field'].upper()}"
+            if synth_id not in existing_ids:
+                matches.append({
+                    "signature_id": synth_id,
+                    "name": f"Config deviation: {dev['field']}",
+                    "confidence": 0.65,
+                    "probable_cause": dev["description"],
+                    "remediation": [dev["remediation"]],
+                    "docs_link": "docs/TROUBLESHOOTING.md",
+                    "step": "",
+                    "model_deviation": True,
+                    "expected": dev["expected"],
+                    "actual": dev["actual"],
+                })
 
     # Sort by confidence descending
     matches.sort(key=lambda x: x["confidence"], reverse=True)
@@ -426,6 +621,9 @@ def analyze(parsed: dict) -> dict:
         "failures": matches,
         "top_cause": matches[0] if matches else None,
         "device_snapshot": _build_device_snapshot(parsed),
+        "family_defaults_used": family if family_defaults else "none",
+        "api_profile_used": api_profile.get("android_version", "none"),
+        "model_deviations": deviations,
         "redacted": True,
     }
 
@@ -447,6 +645,14 @@ def main() -> None:
         help="Path to parsed.json from parse_logs.py, or '-' for stdin",
     )
     ap.add_argument(
+        "--index",
+        default="",
+        help=(
+            "Path to build/partition_index.json for model-aware reasoning. "
+            "If not provided, reasoning falls back to signature matching only."
+        ),
+    )
+    ap.add_argument(
         "--out",
         default="-",
         help="Output JSON file, or '-' for stdout (default: stdout)",
@@ -460,14 +666,25 @@ def main() -> None:
         raw = Path(args.parsed).read_text(encoding="utf-8")
     parsed = json.loads(raw)
 
-    result = analyze(parsed)
+    # Load partition index (optional, for model-aware reasoning)
+    index = _load_index(args.index or None)
+    if index:
+        print(
+            f"Partition index loaded: v{index.get('_version', '?')} "
+            f"({len(index.get('device_families', {}))} families, "
+            f"{len(index.get('android_version_profiles', {}))} API profiles)",
+            file=sys.stderr,
+        )
+
+    result = analyze(parsed, index)
 
     # Print summary to stderr
     top = result.get("top_cause")
     print(
         f"Analysis: overall={result['overall_result']} "
         f"errors={result['failure_count']} warnings={result['warning_count']} "
-        f"signatures_matched={len(result['failures'])}",
+        f"signatures_matched={len(result['failures'])} "
+        f"deviations={len(result.get('model_deviations', []))}",
         file=sys.stderr,
     )
     if top:

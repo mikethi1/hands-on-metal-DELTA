@@ -2,42 +2,47 @@
 """
 pipeline/upload.py
 ==================
-Privacy-aware diagnostic upload for hands-on-metal install failures.
+Upload a hands-on-metal share bundle.
 
-Default (redacted) mode:
-  - Reads logs, analysis JSON, and env_registry.sh
-  - Applies PII redaction (all variables matching PII patterns → '#')
-  - Uploads a public GitHub Gist with the redacted bundle
+DEFAULT (no auth, no network):
+  Reads the local share/ bundle and prints a summary.
+  All PII is already stripped by core/share.sh.
+  Use this mode to review what would be shared before doing anything.
 
-Private (opt-in) mode  [--private]:
-  - Skips PII redaction
-  - Creates a SECRET GitHub Gist (URL-only access, not publicly searchable)
-  - Also writes the bundle to /sdcard/hands-on-metal/private/ locally
-  - Never commits to git history
+  python pipeline/upload.py --bundle /sdcard/hands-on-metal/share/<RUN_ID>/
 
-Usage:
-  # Redacted upload (default, safe for public sharing):
+AUTHENTICATED UPLOAD (opt-in, requires --token):
+  Creates a public GitHub Gist with the redacted bundle.
+
   python pipeline/upload.py \\
-      --logs /tmp/hom_logs/ \\
-      --analysis /tmp/analysis.json \\
+      --bundle /sdcard/hands-on-metal/share/<RUN_ID>/ \\
       --token "$GITHUB_TOKEN"
 
-  # Unredacted private upload (requires explicit consent):
+PRIVATE UPLOAD (opt-in, requires --token + explicit consent):
+  Creates a SECRET GitHub Gist (URL-based access only, not searchable).
+  Also writes a copy to --private-dir for local reference.
+  The bundle content must still be fully assembled before this is called.
+
   python pipeline/upload.py \\
-      --logs /tmp/hom_logs/ \\
-      --analysis /tmp/analysis.json \\
+      --bundle /sdcard/hands-on-metal/share/<RUN_ID>/ \\
       --token "$GITHUB_TOKEN" \\
       --private \\
       --consent "I consent to sharing unredacted diagnostic data"
 
-Environment variables:
-  GITHUB_TOKEN   GitHub personal access token with gist scope
+Notes:
+  - No token → local summary only (default)
+  - Token without --private → public Gist, redacted content
+  - Token + --private + consent → secret Gist, content passed as-is
+  - PII is stripped by core/share.sh before this script sees the data
+  - This script never reads env_registry.sh or log files directly;
+    it only reads the pre-built share bundle from core/share.sh
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -46,141 +51,80 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 
-# ── PII redaction ─────────────────────────────────────────────────────────────
-# These patterns mirror core/privacy.sh so behavior is consistent
-# between on-device shell redaction and host-side Python redaction.
-
-_PII_NAME_FRAGMENTS = {
-    "IMEI", "IMSI", "MEID", "MSISDN", "ICCID", "SIM_ID", "SIM_SERIAL",
-    "PHONE_NUMBER", "PHONE_NUM", "SUBSCRIBER", "OWNER_NAME", "OWNER_EMAIL",
-    "ACCOUNT_NAME", "ACCOUNT_ID", "USER_NAME", "WIFI_SSID", "WIFI_PSK",
-    "WIFI_PASSWORD", "BLUETOOTH_NAME", "BT_NAME", "GPS_LATITUDE",
-    "GPS_LONGITUDE", "GPS_COORDS", "LOCATION", "EMAIL", "FINGERPRINT",
-    "BUILD_FINGERPRINT",
-}
-
-_PII_VALUE_RES = [
-    re.compile(r"^\d{14,15}$"),                                      # IMEI/IMSI
-    re.compile(r"^\d{19,20}$"),                                      # ICCID
-    re.compile(r"^\d{3}[-. ]\d{3}[-. ]\d{4}$"),                     # US phone
-    re.compile(r"^(\+\d{1,3})?[ .-]?\d{3}[ .-]\d{3}[ .-]\d{4}$"),  # intl phone
-    re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$"),  # email
-]
-
-_REDACTED = "#"
+_REQUIRED_CONSENT = "I consent to sharing unredacted diagnostic data"
 
 
-def _is_pii_name(name: str) -> bool:
-    upper = name.upper()
-    return any(frag in upper for frag in _PII_NAME_FRAGMENTS)
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _is_pii_value(value: str) -> bool:
-    return any(rx.match(value) for rx in _PII_VALUE_RES)
+# ── Bundle loader ─────────────────────────────────────────────────────────────
 
-
-def redact_value(name: str, value: str) -> str:
-    """Return the value with PII replaced by '#'."""
-    if _is_pii_name(name) or (value and _is_pii_value(value)):
-        return _REDACTED
-    return value
-
-
-def redact_env_registry(text: str) -> str:
-    """Redact an env_registry.sh file's PII values."""
-    lines = []
-    for line in text.splitlines():
-        m = re.match(r'^(\w+)="([^"]*)"(\s.*)?$', line)
-        if m:
-            name, value, rest = m.group(1), m.group(2), m.group(3) or ""
-            safe = redact_value(name, value)
-            lines.append(f'{name}="{safe}"{rest}')
-        else:
-            lines.append(line)
-    return "\n".join(lines)
-
-
-def redact_analysis(analysis: dict) -> dict:
-    """Redact PII from the device_snapshot in an analysis dict."""
-    import copy
-    a = copy.deepcopy(analysis)
-    snapshot = a.get("device_snapshot", {})
-    for k, v in snapshot.items():
-        snapshot[k] = redact_value(k, str(v))
-    a["redacted"] = True
-    return a
-
-
-# ── Bundle builder ─────────────────────────────────────────────────────────────
-
-def build_bundle(
-    logs_dir: Path | None,
-    analysis_path: Path | None,
-    private: bool,
-) -> dict[str, str]:
-    """
-    Collect all relevant files into a dict mapping filename → content.
-    Applies redaction unless private=True.
-    """
+def load_bundle(bundle_dir: Path) -> dict[str, str]:
+    """Load all files from a share/ bundle directory."""
     files: dict[str, str] = {}
+    if not bundle_dir.is_dir():
+        raise SystemExit(f"Bundle directory not found: {bundle_dir}")
 
-    # env_registry.sh
-    registry_candidates = []
-    if logs_dir:
-        registry_candidates += list(logs_dir.glob("**/env_registry.sh"))
-        registry_candidates += list(logs_dir.glob("env_registry.sh"))
-    for rp in registry_candidates[:1]:
-        text = rp.read_text(errors="replace")
-        if not private:
-            text = redact_env_registry(text)
-        files["env_registry.sh"] = text
+    for f in sorted(bundle_dir.iterdir()):
+        if f.is_file():
+            files[f.name] = f.read_text(errors="replace")
 
-    # Master log
-    if logs_dir:
-        for lf in sorted(logs_dir.glob("**/master_*.log"))[:1]:
-            files["master.log"] = lf.read_text(errors="replace")
-
-    # Var audit
-    if logs_dir:
-        for lf in sorted(logs_dir.glob("**/var_audit_*.txt"))[:1]:
-            text = lf.read_text(errors="replace")
-            if not private:
-                # Redact values in VAR lines
-                redacted_lines = []
-                for line in text.splitlines():
-                    m = re.search(r'\[VAR\s*\]\[[^\]]+\]\s*(\w+)="([^"]*)"', line)
-                    if m:
-                        name, value = m.group(1), m.group(2)
-                        safe = redact_value(name, value)
-                        line = line.replace(f'"{value}"', f'"{safe}"', 1)
-                    redacted_lines.append(line)
-                text = "\n".join(redacted_lines)
-            files["var_audit.txt"] = text
-
-    # Run manifest
-    if logs_dir:
-        for lf in sorted(logs_dir.glob("**/run_manifest_*.txt"))[:1]:
-            files["run_manifest.txt"] = lf.read_text(errors="replace")
-
-    # Analysis JSON
-    if analysis_path and analysis_path.exists():
-        analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
-        if not private:
-            analysis = redact_analysis(analysis)
-        files["failure_analysis.json"] = json.dumps(analysis, indent=2)
-
-    # Summary README for the Gist
-    mode_label = "UNREDACTED (private)" if private else "REDACTED (public)"
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    files["README.md"] = (
-        f"# hands-on-metal install diagnostic bundle\n\n"
-        f"Generated: {ts}  \n"
-        f"Mode: **{mode_label}**  \n\n"
-        "See [hands-on-metal](https://github.com/mikethi/hands-on-metal) "
-        "for documentation and troubleshooting guides.\n"
-    )
+    if not files:
+        raise SystemExit(f"Bundle directory is empty: {bundle_dir}")
 
     return files
+
+
+def summarise_bundle(files: dict[str, str]) -> None:
+    """Print a human-readable summary of the bundle to stdout."""
+    print("\n=== hands-on-metal share bundle ===")
+
+    if "share_bundle.json" in files:
+        try:
+            data = json.loads(files["share_bundle.json"])
+            run_id = data.get("run_id", "unknown")
+            generated = data.get("generated_at", "unknown")
+            var_count = len(data.get("variables", {}))
+            steps = data.get("steps", [])
+            failed = [s for s in steps if s.get("status") == "FAIL"]
+            print(f"Run ID     : {run_id}")
+            print(f"Generated  : {generated}")
+            print(f"Variables  : {var_count}")
+            print(f"Steps      : {len(steps)} ({len(failed)} failed)")
+            print(f"PII-redacted: {data.get('pii_redacted', True)}")
+
+            # Key device vars
+            vv = data.get("variables", {})
+            for key, label in [
+                ("HOM_DEV_BRAND", "Brand"),
+                ("HOM_DEV_MODEL", "Model"),
+                ("HOM_DEV_SDK_INT", "API"),
+                ("HOM_DEV_ANDROID_VER", "Android"),
+                ("HOM_DEV_IS_AB", "A/B"),
+                ("HOM_DEV_BOOT_PART", "Boot partition"),
+                ("HOM_DEV_AVB_STATE", "AVB state"),
+                ("HOM_MAGISK_VER_CODE", "Magisk"),
+                ("HOM_CANDIDATE_FAMILY_MATCHED", "Device family"),
+            ]:
+                val = vv.get(key, "")
+                if val:
+                    print(f"  {label:<18}: {val}")
+
+            if failed:
+                print(f"\nFailed steps:")
+                for s in failed:
+                    print(f"  ❌ {s['step']} — {s.get('note', '')}")
+        except json.JSONDecodeError:
+            print("(could not parse share_bundle.json)")
+
+    print(f"\nFiles in bundle:")
+    for name, content in files.items():
+        print(f"  {name}  ({len(content):,} chars)")
+
+    if "README.txt" in files:
+        print(f"\n--- README ---")
+        print(files["README.txt"])
 
 
 # ── GitHub Gist upload ────────────────────────────────────────────────────────
@@ -188,11 +132,10 @@ def build_bundle(
 def upload_gist(
     files: dict[str, str],
     token: str,
-    private: bool,
-    description: str = "hands-on-metal install diagnostic",
+    public: bool,
+    description: str,
 ) -> str:
-    """Upload files to GitHub Gist; return the Gist URL."""
-    public = not private  # public Gist for redacted; secret Gist for private
+    """Upload files dict to a GitHub Gist; return the Gist HTML URL."""
     payload = json.dumps({
         "description": description,
         "public": public,
@@ -216,111 +159,128 @@ def upload_gist(
             return result.get("html_url", "")
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"GitHub API error {exc.code}: {body}") from exc
+        raise RuntimeError(f"GitHub API {exc.code}: {body}") from exc
 
 
-# ── Local private folder write ────────────────────────────────────────────────
+# ── Private local dir ─────────────────────────────────────────────────────────
 
-def write_local_private(files: dict[str, str], out_dir: Path) -> None:
-    """Write bundle to a local private directory (never committed to git)."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # Write a .gitignore to prevent accidental commits
-    gi = out_dir / ".gitignore"
-    if not gi.exists():
-        gi.write_text("*\n", encoding="utf-8")
+def write_private_local(files: dict[str, str], private_dir: Path) -> None:
+    """Write bundle files to a local private directory (gitignored)."""
+    private_dir.mkdir(parents=True, exist_ok=True)
+    # Ensure the directory is gitignored so nothing commits accidentally
+    gitignore = private_dir / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text("*\n", encoding="utf-8")
     for name, content in files.items():
-        (out_dir / name).write_text(content, encoding="utf-8")
-    print(f"Private bundle written to: {out_dir}", file=sys.stderr)
+        (private_dir / name).write_text(content, encoding="utf-8")
+    print(f"Private copy written to: {private_dir}", file=sys.stderr)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Upload hands-on-metal diagnostics to GitHub Gist with privacy controls"
+        description=(
+            "Upload a hands-on-metal share bundle. "
+            "Default (no --token): local summary only. "
+            "With --token: upload to GitHub Gist. "
+            "With --private + consent: secret Gist."
+        )
     )
     ap.add_argument(
-        "--logs",
-        help="Path to the logs directory (contains master_*.log, env_registry.sh, etc.)",
+        "--bundle",
+        required=True,
+        help="Path to the share/<RUN_ID>/ directory created by core/share.sh",
     )
-    ap.add_argument("--analysis", help="Path to failure_analysis.json")
     ap.add_argument(
         "--token",
         default="",
-        help="GitHub personal access token (or set GITHUB_TOKEN env var)",
+        help=(
+            "GitHub personal access token with 'gist' scope. "
+            "If not provided, only a local summary is shown. "
+            "Can also be set via GITHUB_TOKEN environment variable. "
+            "This is an opt-in feature — the default is local-only."
+        ),
     )
     ap.add_argument(
         "--private",
         action="store_true",
-        help="Opt-in to unredacted private upload (creates secret Gist + local copy)",
+        help=(
+            "Create a secret Gist (URL-only access, not publicly searchable). "
+            "Requires --consent. Use when sharing unredacted data with a maintainer."
+        ),
     )
     ap.add_argument(
         "--consent",
         default="",
         help=(
-            'Required with --private: must be exactly '
-            '"I consent to sharing unredacted diagnostic data"'
+            f"Required with --private. "
+            f"Must be exactly: \"{_REQUIRED_CONSENT}\""
         ),
     )
     ap.add_argument(
-        "--local-private-dir",
-        default="/sdcard/hands-on-metal/private",
-        help="Local directory for private bundle (default: /sdcard/hands-on-metal/private)",
+        "--private-dir",
+        default="",
+        help=(
+            "Local directory to write private bundle copy (default: "
+            "<bundle-dir>/../private/). Only used with --private."
+        ),
     )
     ap.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Build the bundle and show file names but do not upload",
+        "--description",
+        default="hands-on-metal install diagnostic",
+        help="Gist description (optional)",
     )
     args = ap.parse_args()
 
     # Validate private consent
     if args.private:
-        required_consent = "I consent to sharing unredacted diagnostic data"
-        if args.consent != required_consent:
+        if args.consent != _REQUIRED_CONSENT:
             ap.error(
-                f"--private requires --consent '{required_consent}' "
-                "(exact string required to confirm opt-in)"
+                f"--private requires --consent with the exact text:\n"
+                f"  \"{_REQUIRED_CONSENT}\""
             )
 
+    bundle_dir = Path(args.bundle)
+    files = load_bundle(bundle_dir)
+
+    # Always show local summary
+    summarise_bundle(files)
+
     # Resolve token
-    import os
     token = args.token or os.environ.get("GITHUB_TOKEN", "")
 
-    logs_dir = Path(args.logs) if args.logs else None
-    analysis_path = Path(args.analysis) if args.analysis else None
-
-    # Build bundle
-    print("Building diagnostic bundle...", file=sys.stderr)
-    bundle = build_bundle(logs_dir, analysis_path, private=args.private)
-
-    mode = "private (unredacted)" if args.private else "public (redacted)"
-    print(f"Bundle mode: {mode}", file=sys.stderr)
-    print(f"Files: {list(bundle.keys())}", file=sys.stderr)
-
-    if args.dry_run:
-        for name, content in bundle.items():
-            print(f"\n--- {name} ({len(content)} chars) ---")
-            print(content[:500] + ("..." if len(content) > 500 else ""))
-        return
-
-    # Write local private copy first (always, when --private)
-    if args.private:
-        write_local_private(bundle, Path(args.local_private_dir))
-
-    # Upload to Gist
+    # No token → local-only mode (done)
     if not token:
         print(
-            "No GITHUB_TOKEN — skipping Gist upload. "
-            "Bundle is available locally if --private was set.",
+            "\nNo GITHUB_TOKEN provided — local summary only.\n"
+            "To upload to GitHub, set GITHUB_TOKEN and re-run with --token.\n"
+            "See README.txt in the bundle directory for instructions.",
             file=sys.stderr,
         )
         return
 
-    print("Uploading to GitHub Gist...", file=sys.stderr)
+    # Write private local copy first (if --private)
+    if args.private:
+        priv_dir = (
+            Path(args.private_dir)
+            if args.private_dir
+            else bundle_dir.parent / "private" / bundle_dir.name
+        )
+        write_private_local(files, priv_dir)
+
+    # Upload to Gist
+    public_gist = not args.private  # public Gist for redacted; secret for private
+    visibility = "secret" if args.private else "public"
+    print(f"\nUploading {visibility} Gist to GitHub...", file=sys.stderr)
+
     try:
-        url = upload_gist(bundle, token, private=args.private)
-        visibility = "secret" if args.private else "public"
+        url = upload_gist(
+            files,
+            token=token,
+            public=public_gist,
+            description=args.description,
+        )
         print(f"Upload successful ({visibility} Gist):")
         print(url)
     except RuntimeError as exc:

@@ -54,9 +54,21 @@ LOCATION
 EMAIL
 FINGERPRINT
 BUILD_FINGERPRINT
+SERIAL_NUMBER
+HW_SERIAL
+HARDWARE_SERIAL
+DEVICE_SERIAL
+WLAN_MAC
+WIFI_MAC
+BT_MAC
+BLUETOOTH_MAC
+ETH_MAC
+MAC_ADDR
+MAC_ADDRESS
 "
-# Note: HOM_DEV_FINGERPRINT is included via FINGERPRINT match.
-# The build fingerprint contains device serial information on some OEMs.
+# HOM_DEV_FINGERPRINT is included via FINGERPRINT match.
+# Build fingerprints contain device serial info on some OEMs.
+# All MAC address fields uniquely identify hardware — always redacted.
 
 # ── PII value heuristics ──────────────────────────────────────
 # Returns 0 (true) if the value looks like PII.
@@ -69,7 +81,13 @@ _HOM_PII_VALUE_PATTERNS="
 ^[0-9]{3}[-. ][0-9]{3}[-. ][0-9]{4}$
 ^(\+[0-9]{1,3})?[ .-]?[0-9]{3}[ .-][0-9]{3}[ .-][0-9]{4}$
 ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$
+^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$
+^[0-9A-Fa-f]{12}$
 "
+# Patterns cover: IMEI/IMSI (15 digits), MEID (14 hex), ICCID (19-20 digits),
+# US/intl phone numbers, email addresses,
+# colon/dash-separated MAC addresses (xx:xx:xx:xx:xx:xx),
+# and compact 12-char hex MACs.
 
 # ── Redaction sentinel ────────────────────────────────────────
 _HOM_REDACTED="#"
