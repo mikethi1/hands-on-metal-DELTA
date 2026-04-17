@@ -1,0 +1,211 @@
+#!/sbin/sh
+# recovery-zip/META-INF/com/google/android/update-binary
+# ============================================================
+# Hands-on-metal — Full Recovery Installer
+#
+# Runs inside TWRP or OrangeFox when the ZIP is flashed.
+# This path is for devices WITHOUT Magisk already installed.
+#
+# Guided workflow:
+#   1. Environment detection (shell, tools, paths)
+#   2. Device profile (model, API level, A/B, SAR, AVB, Treble)
+#   3. Boot image acquisition (auto-discover or user-specified)
+#   4. Anti-rollback check (May-2026+ protection)
+#   5. Magisk patch (using bundled offline Magisk binary/apk)
+#   6. Flash patched boot image to device
+#   7. Install hands-on-metal Magisk module
+#   8. Collect recovery hardware data
+#   9. Reboot into system
+#
+# Each step prints:
+#   • What it does and WHY it is needed
+#   • Progress indication
+#   • Full result and log path
+#
+# Safety:
+#   • Boot partitions read-only before patching step
+#   • Pre/post flash SHA-256 verification
+#   • Anti-rollback check blocks flashing if risky
+#   • Logs everything to /sdcard/hands-on-metal/logs/
+# ============================================================
+
+OUTFD=$2
+ZIPFILE=$3
+
+OUT=/sdcard/hands-on-metal
+LOG_DIR="$OUT/logs"
+ENV_REGISTRY="$OUT/env_registry.sh"
+STATE_FILE="/tmp/hom_install_state"
+BOOT_WORK_DIR="$OUT/boot_work"
+
+export OUTFD ZIPFILE OUT LOG_DIR ENV_REGISTRY STATE_FILE BOOT_WORK_DIR
+
+# ── TWRP ui_print ─────────────────────────────────────────────
+ui_print() {
+    printf 'ui_print %s\n' "$*" > /proc/self/fd/"$OUTFD"
+    printf 'ui_print \n'         > /proc/self/fd/"$OUTFD"
+}
+
+set_progress() {
+    printf 'set_progress %s\n' "$1" > /proc/self/fd/"$OUTFD"
+}
+
+# ── Busybox bootstrap ─────────────────────────────────────────
+BBDIR=/tmp/hom_tools
+mkdir -p "$BBDIR"
+unzip -o "$ZIPFILE" "tools/busybox-arm64" -d "$BBDIR" >/dev/null 2>&1
+BB="$BBDIR/tools/busybox-arm64"
+if [ ! -x "$BB" ]; then
+    BB=$(command -v busybox 2>/dev/null || command -v busybox64 2>/dev/null || true)
+fi
+[ -n "$BB" ] && chmod 0755 "$BB" 2>/dev/null || BB=""
+
+# ── Extract all scripts to a temp working directory ───────────
+WORK_DIR=/tmp/hom_work
+mkdir -p "$WORK_DIR"
+unzip -o "$ZIPFILE" "core/*" "magisk-module/*" "build/*" -d "$WORK_DIR" >/dev/null 2>&1
+
+CORE="$WORK_DIR/core"
+MAGISK_MODULE_DIR="$WORK_DIR/magisk-module"
+PARTITION_INDEX="$WORK_DIR/build/partition_index.json"
+export CORE MAGISK_MODULE_DIR PARTITION_INDEX
+
+# Extract bundled Magisk binary (if offline bundle was built)
+mkdir -p "$WORK_DIR/tools"
+unzip -o "$ZIPFILE" "tools/magisk*" -d "$WORK_DIR" >/dev/null 2>&1
+BUNDLED_MAGISK="$WORK_DIR/tools/magisk64"
+BUNDLED_MAGISK32="$WORK_DIR/tools/magisk32"
+[ -f "$BUNDLED_MAGISK" ]   && chmod 0755 "$BUNDLED_MAGISK"
+[ -f "$BUNDLED_MAGISK32" ] && chmod 0755 "$BUNDLED_MAGISK32"
+export BUNDLED_MAGISK BUNDLED_MAGISK32
+
+# ── Bootstrap core scripts ────────────────────────────────────
+
+mkdir -p "$OUT" "$LOG_DIR" "$BOOT_WORK_DIR"
+[ -f "$ENV_REGISTRY" ] || : > "$ENV_REGISTRY"
+
+SCRIPT_NAME="recovery_installer"
+export SCRIPT_NAME
+
+# shellcheck source=/dev/null
+. "$CORE/logging.sh"
+# shellcheck source=/dev/null
+. "$CORE/ux.sh"
+# shellcheck source=/dev/null
+. "$CORE/state_machine.sh"
+
+log_banner "hands-on-metal Recovery Installer (RUN_ID=$RUN_ID)"
+
+# ── Header ────────────────────────────────────────────────────
+
+ux_print ""
+ux_print "╔══════════════════════════════════════════╗"
+ux_print "║   hands-on-metal  Recovery Installer     ║"
+ux_print "║   Guided Magisk Root Workflow            ║"
+ux_print "╚══════════════════════════════════════════╝"
+ux_print ""
+ux_print "Logs: $LOG_DIR/"
+ux_print ""
+
+set_progress "0.05"
+
+# ── Step 1: Environment Detection ─────────────────────────────
+
+ux_step_info "Environment Detection" \
+    "Probes available shell tools, block device layout, and crypto state" \
+    "Without knowing what tools are available we cannot safely locate \
+partitions or run the patch workflow"
+
+SCRIPT_NAME="env_detect" sh "$MAGISK_MODULE_DIR/env_detect.sh"
+sm_set_state "ENV_DETECTED"
+ux_step_result "Environment Detection" "OK"
+set_progress "0.15"
+
+# ── Step 2: Device Profile ────────────────────────────────────
+
+SCRIPT_NAME="device_profile"
+export SCRIPT_NAME
+# shellcheck source=/dev/null
+. "$CORE/device_profile.sh"
+run_device_profile
+sm_set_state "DEVICE_PROFILED"
+set_progress "0.25"
+
+# ── Step 3: Boot Image Acquisition ───────────────────────────
+
+SCRIPT_NAME="boot_image"
+export SCRIPT_NAME
+# shellcheck source=/dev/null
+. "$CORE/boot_image.sh"
+run_boot_image_acquire
+sm_set_state "BOOT_IMG_ACQUIRED"
+set_progress "0.40"
+
+# ── Step 4: Anti-Rollback Check ──────────────────────────────
+
+SCRIPT_NAME="anti_rollback"
+export SCRIPT_NAME
+# shellcheck source=/dev/null
+. "$CORE/anti_rollback.sh"
+run_anti_rollback_check
+sm_set_state "ANTI_ROLLBACK_CHECKED"
+set_progress "0.55"
+
+# ── Step 5: Magisk Patch ──────────────────────────────────────
+
+SCRIPT_NAME="magisk_patch"
+export SCRIPT_NAME
+# shellcheck source=/dev/null
+. "$CORE/magisk_patch.sh"
+run_magisk_patch
+sm_set_state "BOOT_IMG_PATCHED"
+set_progress "0.70"
+
+# ── Step 6: Flash + Install ───────────────────────────────────
+
+SCRIPT_NAME="flash"
+export SCRIPT_NAME
+# shellcheck source=/dev/null
+. "$CORE/flash.sh"
+
+ux_step_info "Flash + Module Install" \
+    "Writes the patched boot image and installs the Magisk module" \
+    "This permanently enables root access and installs the hardware collection module"
+
+sm_set_state "FLASH_QUEUED"
+run_flash_recovery_path
+sm_set_state "FLASHED"
+set_progress "0.85"
+
+# ── Step 7: Recovery Hardware Collection ─────────────────────
+
+ux_step_info "Recovery Hardware Collection" \
+    "Mounts partitions read-only and collects hardware metadata, fstab, VINTF manifests" \
+    "This data feeds the offline analysis pipeline (python pipeline/)"
+
+SCRIPT_NAME="collect_recovery" sh "$WORK_DIR/recovery-zip/collect_recovery.sh" \
+    2>>"$LOG_DIR/collect_recovery_recovery.log" || \
+    log_warn "collect_recovery.sh returned non-zero (data may be partial)"
+
+set_progress "0.95"
+
+# ── Done ──────────────────────────────────────────────────────
+
+sm_set_state "COMPLETE"
+set_progress "1.00"
+
+ux_section "Recovery Installation Complete"
+ux_print "  Boot image: patched and flashed"
+ux_print "  Magisk module: installed"
+ux_print "  Hardware data: $OUT/"
+ux_print "  Full logs: $LOG_DIR/"
+ux_print ""
+ux_print "  After reboot:"
+ux_print "    1. Open Magisk app — confirm root is active"
+ux_print "    2. Reboot → check /sdcard/hands-on-metal/live_dump/"
+ux_print ""
+
+log_banner "Recovery installer complete"
+
+# Cleanup temp work directory
+rm -rf "$WORK_DIR" "$BBDIR" 2>/dev/null || true

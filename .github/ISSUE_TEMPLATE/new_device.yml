@@ -1,0 +1,153 @@
+name: New device / Android version candidate
+description: Submit a new device or Android version combination for compatibility database inclusion
+title: "New device candidate: [BRAND] [MODEL] (API [N])"
+labels: ["new-device", "needs-review"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Device candidate submission
+
+        This template is for submitting a new device or Android version that is not
+        yet in the `build/partition_index.json` compatibility database.
+
+        **Your privacy is protected by default.**
+        Do not paste raw build fingerprints, IMEI, serial numbers, MAC addresses,
+        or other personal identifiers. Use the redacted `share_bundle.json` from
+        `/sdcard/hands-on-metal/share/<RUN_ID>/` instead.
+
+        If the installer ran and created a candidate entry automatically, attach
+        the JSON from `/sdcard/hands-on-metal/candidates/` below.
+
+  - type: input
+    id: brand
+    attributes:
+      label: Device brand / manufacturer
+      description: "e.g. Samsung, Xiaomi, OnePlus, Google"
+      placeholder: "Samsung"
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Device model
+      description: "Marketing name (e.g. Galaxy S24, Pixel 9 Pro)"
+      placeholder: "Galaxy S24"
+    validations:
+      required: true
+
+  - type: input
+    id: android_version
+    attributes:
+      label: Android version / API level
+      description: "e.g. Android 14 (API 34)"
+      placeholder: "Android 14 (API 34)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: soc_family
+    attributes:
+      label: SoC / chipset family
+      description: Select the closest match
+      options:
+        - Qualcomm Snapdragon (A/B slots)
+        - Qualcomm Snapdragon (non-A/B)
+        - MediaTek (A/B slots)
+        - MediaTek (non-A/B)
+        - Google Tensor
+        - Samsung Exynos (A/B)
+        - Samsung Exynos (non-A/B)
+        - HiSilicon Kirin
+        - Unisoc / Spreadtrum
+        - NVIDIA Tegra
+        - Other / Unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_result
+    attributes:
+      label: Install result
+      options:
+        - Success — rooted and working
+        - Partial — installed but something is wrong
+        - Failed — install did not complete
+        - Unknown — could not verify
+    validations:
+      required: true
+
+  - type: textarea
+    id: share_bundle
+    attributes:
+      label: Share bundle (share_bundle.json)
+      description: |
+        Paste the contents of `/sdcard/hands-on-metal/share/<RUN_ID>/share_bundle.json`.
+        This file contains only non-PII hardware and install variables.
+        Do NOT paste raw env_registry.sh — use the share bundle only.
+      render: json
+      placeholder: |
+        {
+          "schema_version": "1.0",
+          "run_id": "...",
+          ...
+        }
+    validations:
+      required: false
+
+  - type: textarea
+    id: candidate_json
+    attributes:
+      label: Candidate entry JSON (auto-generated)
+      description: |
+        If the installer auto-created a candidate file in
+        `/sdcard/hands-on-metal/candidates/`, paste its contents here.
+        Build fingerprints in this file have already been redacted to '#'.
+      render: json
+      placeholder: |
+        {
+          "schema_version": "1.0",
+          "device": { ... },
+          ...
+        }
+    validations:
+      required: false
+
+  - type: textarea
+    id: partition_list
+    attributes:
+      label: Partition list (optional)
+      description: |
+        Output of: `ls /dev/block/bootdevice/by-name/` or
+        `ls /dev/block/by-name/` or `ls /dev/block/platform/*/by-name/`
+        This helps identify the correct by-name path for the device.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: failure_details
+    attributes:
+      label: Failure details (if install failed)
+      description: |
+        Paste relevant lines from the master log or run_manifest.
+        Remove any personal identifiers before pasting.
+        Or run: `python pipeline/failure_analysis.py --parsed parsed.json`
+        and paste the output.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have not included IMEI, serial numbers, MAC addresses, or phone numbers
+          required: true
+        - label: I have not included a raw build fingerprint (it should be '#' if present)
+          required: true
+        - label: I have read INSTALL_HUB.md and TROUBLESHOOTING.md
+          required: false
+        - label: I understand this is a new/unknown device and manual review is needed
+          required: true
