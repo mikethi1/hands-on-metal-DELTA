@@ -94,9 +94,11 @@ trusted PC.
 ### 1 — Clone and fetch all dependencies
 
 ```bash
+cat << 'EOF'
 git clone https://github.com/mikethi/hands-on-metal.git
 cd hands-on-metal
 bash build/fetch_all_deps.sh
+EOF
 ```
 
 `fetch_all_deps.sh` will:
@@ -110,19 +112,24 @@ bash build/fetch_all_deps.sh
 
 **Mode A — Magisk already installed:**
 ```bash
+cat << 'EOF'
 adb push dist/hands-on-metal-magisk-module-v2.0.0.zip /sdcard/
 # Magisk app → Modules → Install from storage → select the ZIP → reboot
+EOF
 ```
 
 **Mode B — no Magisk yet (flash from TWRP / OrangeFox):**
 ```bash
+cat << 'EOF'
 adb push dist/hands-on-metal-recovery-v2.0.0.zip /sdcard/
 # Boot TWRP/OrangeFox → Install → select the ZIP → reboot
+EOF
 ```
 
 ### 3 — Run the host-side pipeline after collection
 
 ```bash
+cat << 'EOF'
 python pipeline/parse_logs.py \
     --log /sdcard/hands-on-metal/logs/master_<RUN_ID>.log \
     --out /tmp/parsed.json
@@ -138,6 +145,7 @@ python pipeline/build_table.py \
     --run-id <RUN_ID>
 
 python pipeline/report.py --db hardware_map.sqlite
+EOF
 ```
 
 ### Optional — Run scripts from an interactive terminal menu
@@ -145,7 +153,9 @@ python pipeline/report.py --db hardware_map.sqlite
 If you prefer a single launcher in terminal, use:
 
 ```bash
+cat << 'EOF'
 bash terminal_menu.sh
+EOF
 ```
 
 The menu lists all shell scripts (`build/`, `core/`, `magisk-module/`, `recovery-zip/`)
@@ -194,8 +204,10 @@ All dependencies are pulled by `build/fetch_all_deps.sh`.
 
 `setup_termux.sh` installs the following via `pkg` (compatible with any Termux version and any setup — Play Store, F-Droid, or GitHub release):
 
-```
+```bash
+cat << 'EOF'
 python  git  curl  wget  openssh  sqlite
+EOF
 ```
 
 ---
