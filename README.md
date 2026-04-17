@@ -264,7 +264,7 @@ run the pipeline on your PC:
 cat <<'EOF' > /tmp/hands-on-metal-pipeline.sh
 #!/usr/bin/env bash
 set -e
-RUN_ID="${1:?Usage: $0 <RUN_ID>}"
+RUN_ID="${1:?Usage: hands-on-metal-pipeline.sh <RUN_ID>}"
 
 # Pull logs from device to your PC
 adb pull /sdcard/hands-on-metal/logs/ ./logs/
@@ -291,8 +291,7 @@ python pipeline/build_table.py \
 python pipeline/report.py --db hardware_map.sqlite
 EOF
 chmod +x /tmp/hands-on-metal-pipeline.sh
-# Replace <RUN_ID> with the actual run ID from the log filename
-/tmp/hands-on-metal-pipeline.sh <RUN_ID>
+/tmp/hands-on-metal-pipeline.sh 20250417_143022   # ← replace with your actual RUN_ID
 ```
 
 ### 5 — Run the unit tests
