@@ -143,7 +143,8 @@ if [ -n "$CANONICAL" ] && [ -x "$CANONICAL" ]; then
     PY_MINOR=$("$CANONICAL" -c "import sys; print(sys.version_info.minor)" 2>/dev/null || echo 0)
     reg_set python HOM_PYTHON_MAJOR "$PY_MAJOR"
     reg_set python HOM_PYTHON_MINOR "$PY_MINOR"
-    if [ "$PY_MAJOR" -ge 3 ] 2>/dev/null && [ "$PY_MINOR" -ge 8 ] 2>/dev/null; then
+    if [ "$PY_MAJOR" -gt 3 ] 2>/dev/null || \
+       { [ "$PY_MAJOR" -eq 3 ] 2>/dev/null && [ "$PY_MINOR" -ge 8 ] 2>/dev/null; }; then
         reg_set python HOM_PYTHON_ADEQUATE "true"
     else
         reg_set python HOM_PYTHON_ADEQUATE "false"

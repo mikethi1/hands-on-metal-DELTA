@@ -52,9 +52,10 @@ _hom_require curl      "Downloading Magisk APK and busybox binary (fetch_all_dep
 _hom_require python3   "Pipeline scripts and Termux bootstrap"
 _hom_require tar       "Bundle creation via git archive (fetch_all_deps.sh)"
 
-# sha256sum OR shasum — at least one is required
+# sha256sum OR shasum — at least one is required.
+# On macOS shasum is used with the -a 256 flag (shasum -a 256).
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
-    echo "  ✗  MISSING (required): sha256sum or shasum — Checksum verification" >&2
+    echo "  ✗  MISSING (required): sha256sum or shasum -a 256 — Checksum verification" >&2
     _hom_dep_ok=false
 fi
 
