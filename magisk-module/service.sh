@@ -110,6 +110,7 @@ if [ ! -f "$SENTINEL" ]; then
         . "$CORE/logging.sh"
         . "$CORE/ux.sh"
         . "$CORE/state_machine.sh"
+        . "$CORE/privacy.sh"
 
         log_banner "service.sh boot run (RUN_ID=$RUN_ID)"
         sm_print_status

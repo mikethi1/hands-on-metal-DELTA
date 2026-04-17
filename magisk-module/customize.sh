@@ -42,6 +42,8 @@ export SCRIPT_NAME
 . "$CORE/ux.sh"
 # shellcheck source=/dev/null
 . "$CORE/state_machine.sh"
+# shellcheck source=/dev/null
+. "$CORE/privacy.sh"
 
 mkdir -p "$OUT" "$LOG_DIR"
 log_banner "hands-on-metal root workflow (Magisk path)"
@@ -86,6 +88,21 @@ fi
 
 ux_step_result "Device Profile" "OK"
 ux_progress 20
+
+# ── step 2b: candidate entry & family defaults ───────────────
+# Check if the device is in the known-compatibility database and
+# apply safe defaults for Magisk flags.  Unknown devices get a
+# candidate entry for maintainer review.
+
+_source_core "candidate_entry.sh"
+SCRIPT_NAME="candidate_entry"
+run_candidate_entry
+
+_source_core "apply_defaults.sh"
+SCRIPT_NAME="apply_defaults"
+run_apply_defaults
+
+ux_progress 25
 
 # ── step 3: boot image acquisition ───────────────────────────
 

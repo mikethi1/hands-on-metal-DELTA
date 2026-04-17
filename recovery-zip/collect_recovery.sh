@@ -129,6 +129,15 @@ mkdir -p "$OUT"
 # Ensure env registry exists (Mode A may not have run yet)
 [ -f "$ENV_REGISTRY" ] || : > "$ENV_REGISTRY"
 
+# Pre-flight: record execution context if env_detect hasn't run
+if ! grep -q "^HOM_EXEC_NODE=" "$ENV_REGISTRY" 2>/dev/null; then
+    _uid=$(id -u 2>/dev/null || echo 9999)
+    _node="unprivileged"
+    [ "$_uid" = "0" ] && _node="root_recovery"
+    reg_set shell HOM_EXEC_NODE "$_node"
+    reg_set shell HOM_EXEC_UID "$_uid"
+fi
+
 log "=== collect_recovery.sh start (Mode B) ==="
 
 # ── 1. Record recovery environment ───────────────────────────
@@ -178,7 +187,6 @@ for bprop in \
         # Skip blank lines and comments
         case "$k" in
             ''|\#*) continue ;;
-        esac
             ro.board.platform|ro.hardware|ro.product.board|ro.product.device|\
             ro.product.model|ro.build.fingerprint|ro.vendor.build.fingerprint|\
             ro.soc.manufacturer|ro.soc.model|ro.chipname|ro.arch|\
@@ -287,6 +295,22 @@ for prop in ro.crypto.state ro.crypto.type \
     key="HOM_RECOVERY_$(echo "$prop" | tr '.' '_' | tr 'a-z' 'A-Z')"
     reg_set crypto "$key" "$v"
 done
+
+# FDE/FBE classification (aligned with env_detect.sh and collect.sh)
+_rec_cs=$(getprop ro.crypto.state 2>/dev/null || echo "unknown")
+_rec_ct=$(getprop ro.crypto.type 2>/dev/null || echo "unknown")
+_rec_cc="none"
+case "$_rec_cs" in
+    encrypted)
+        case "$_rec_ct" in
+            block) _rec_cc="FDE" ;;
+            file)  _rec_cc="FBE" ;;
+            *)     _rec_cc="unknown_encrypted" ;;
+        esac
+        ;;
+    unencrypted) _rec_cc="none" ;;
+esac
+reg_set crypto HOM_CRYPTO_CLASS "$_rec_cc"
 
 # Indicate whether userdata appears decrypted (heuristic: a well-known
 # subdirectory that only exists when userdata is readable).

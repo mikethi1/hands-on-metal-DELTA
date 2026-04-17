@@ -91,6 +91,26 @@ copy_virtual_dir() {
 
 mkdir -p "$OUT"
 : > "$MANIFEST"
+
+# ── pre-flight: verify env_detect ran ────────────────────────
+# env_detect.sh must have populated ENV_REGISTRY before collect.sh
+# is invoked.  If it hasn't, the on-device HOM_EXEC_NODE and
+# HOM_CRYPTO_CLASS vars will be missing, and collection may
+# write data without knowing what execution context it runs in.
+if [ ! -f "$ENV_REGISTRY" ] || \
+   ! grep -q "^HOM_EXEC_NODE=" "$ENV_REGISTRY" 2>/dev/null; then
+    log "[WARN ] ENV_REGISTRY missing or env_detect.sh not run — running inline detection"
+    # Minimal inline context so collect.sh can still proceed
+    _uid=$(id -u 2>/dev/null || echo 9999)
+    _node="unprivileged"
+    if [ "$_uid" = "0" ]; then
+        [ -d /data/adb/magisk ] && _node="root_magisk" || _node="root_other"
+    fi
+    [ -f "$ENV_REGISTRY" ] || : > "$ENV_REGISTRY"
+    reg_set shell HOM_EXEC_NODE "$_node"
+    reg_set shell HOM_EXEC_UID "$_uid"
+fi
+
 log "=== hands-on-metal collect.sh start ==="
 log "Device: $(getprop ro.product.model)"
 
@@ -335,13 +355,34 @@ copy_virtual_dir /proc/device-tree/soc
 
 # 20. Encryption state (FDE/FBE metadata — no keys collected)
 log "Collecting encryption state..."
+_cs=$(getprop ro.crypto.state 2>/dev/null || echo "unknown")
+_ct=$(getprop ro.crypto.type 2>/dev/null || echo "unknown")
+_cfm=$(getprop ro.crypto.volume.filenames_mode 2>/dev/null || echo "unknown")
+_vd=$(getprop vold.decrypt 2>/dev/null || echo "unknown")
+_vep=$(getprop vold.encrypt_progress 2>/dev/null || echo "unknown")
 {
-    echo "ro.crypto.state=$(getprop ro.crypto.state)"
-    echo "ro.crypto.type=$(getprop ro.crypto.type)"
-    echo "ro.crypto.volume.filenames_mode=$(getprop ro.crypto.volume.filenames_mode)"
-    echo "vold.decrypt=$(getprop vold.decrypt)"
-    echo "vold.encrypt_progress=$(getprop vold.encrypt_progress)"
+    echo "ro.crypto.state=$_cs"
+    echo "ro.crypto.type=$_ct"
+    echo "ro.crypto.volume.filenames_mode=$_cfm"
+    echo "vold.decrypt=$_vd"
+    echo "vold.encrypt_progress=$_vep"
 } > "$OUT/encryption_state.txt" && echo "encryption_state.txt" >> "$MANIFEST"
+
+# Record FDE/FBE classification (aligned with env_detect.sh)
+_crypto_class="none"
+case "$_cs" in
+    encrypted)
+        case "$_ct" in
+            block) _crypto_class="FDE" ;;
+            file)  _crypto_class="FBE" ;;
+            *)     _crypto_class="unknown_encrypted" ;;
+        esac
+        ;;
+    unencrypted) _crypto_class="none" ;;
+esac
+reg_set crypto HOM_CRYPTO_CLASS "$_crypto_class"
+reg_set crypto HOM_CRYPTO_STATE "$_cs"
+reg_set crypto HOM_CRYPTO_TYPE "$_ct"
 
 # dm-crypt / dm-verity device-mapper table (reveals encryption algorithm, key size — NOT the key)
 if command -v dmsetup >/dev/null 2>&1; then
