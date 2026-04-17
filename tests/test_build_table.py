@@ -78,7 +78,7 @@ class BuildTableTests(unittest.TestCase):
                         "           CPU0       CPU1",
                         "42:        10         20   msm_gpio",
                         "NMI:       1          1    ignored",
-                        "43:        5          not_a_count   uart",
+                        "43:        5          malformed_counter   uart",
                     ]
                 ),
                 encoding="utf-8",
@@ -102,7 +102,7 @@ class BuildTableTests(unittest.TestCase):
         cur.execute("SELECT irq_num, count, cpu_counts, name FROM irq_entry WHERE run_id=? ORDER BY irq_num", (run_id,))
         irq_rows = cur.fetchall()
         self.assertEqual(irq_rows[0], (42, 30, json.dumps([10, 20]), "msm_gpio"))
-        self.assertEqual(irq_rows[1], (43, 5, json.dumps([5]), "not_a_count uart"))
+        self.assertEqual(irq_rows[1], (43, 5, json.dumps([5]), "malformed_counter uart"))
 
         self.assertEqual(mod_inserted, 2)
         cur.execute("SELECT name, size, use_count, used_by FROM kernel_module WHERE run_id=? ORDER BY name", (run_id,))
