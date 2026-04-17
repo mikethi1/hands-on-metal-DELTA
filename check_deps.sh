@@ -60,7 +60,6 @@ if [ "$_hom_env_type" != "unknown" ]; then
 fi
 
 # ── Required tools ────────────────────────────────────────────
-_hom_require git       "Cloning the repo and running fetch_all_deps.sh"
 _hom_require zip       "Building flashable ZIPs (build_offline_zip.sh, fetch_all_deps.sh)"
 _hom_require unzip     "Extracting Magisk APK (fetch_all_deps.sh)"
 _hom_require curl      "Downloading Magisk APK and busybox binary (fetch_all_deps.sh)"
@@ -75,6 +74,7 @@ if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1
 fi
 
 # ── Optional tools ────────────────────────────────────────────
+_hom_optional git      "Cloning the repo and bundle creation via git archive (fetch_all_deps.sh)"
 _hom_optional adb      "Pushing ZIPs to device / pulling logs (Android Platform Tools)"
 _hom_optional file     "Verifying ELF binary types after download"
 _hom_optional nm       "Analysing vendor library symbols (parse_symbols.py)"
