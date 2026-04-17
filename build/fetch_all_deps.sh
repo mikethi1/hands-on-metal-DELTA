@@ -71,6 +71,10 @@ else
     exit 1
 fi
 
+# ── portable temp directory (Termux sets $TMPDIR; /tmp may not exist) ─
+_TMP="${TMPDIR:-/tmp}"
+mkdir -p "$_TMP"
+
 # ── helpers ───────────────────────────────────────────────────
 step() { echo ""; echo "──────────────────────────────────────────"; echo " $*"; echo "──────────────────────────────────────────"; }
 ok()   { echo "  ✓  $*"; }
@@ -153,7 +157,7 @@ else
 
     step "2/5  Fetching Magisk ${MAGISK_VERSION} binaries..."
     MAGISK_APK_URL="https://github.com/topjohnwu/Magisk/releases/download/${MAGISK_VERSION}/Magisk-${MAGISK_VERSION}.apk"
-    MAGISK_APK="/tmp/hands-on-metal-magisk-${MAGISK_VERSION}.apk"
+    MAGISK_APK="$_TMP/hands-on-metal-magisk-${MAGISK_VERSION}.apk"
 
     all_magisk_present=true
     for t in magisk64 magisk32 magiskinit64; do
@@ -174,16 +178,16 @@ else
             'lib/arm64-v8a/libmagisk64.so' \
             'lib/armeabi-v7a/libmagisk32.so' \
             'lib/arm64-v8a/libmagiskinit.so' \
-            -d /tmp/ 2>/dev/null || {
+            -d "$_TMP/" 2>/dev/null || {
                 fail "Extraction failed — APK may not contain expected library paths."
                 fail "Check the Magisk release at: $MAGISK_APK_URL"
                 exit 1
             }
 
-        cp /tmp/libmagisk64.so   "$TOOLS_DIR/magisk64"   && chmod +x "$TOOLS_DIR/magisk64"
-        cp /tmp/libmagisk32.so   "$TOOLS_DIR/magisk32"   && chmod +x "$TOOLS_DIR/magisk32"
-        cp /tmp/libmagiskinit.so "$TOOLS_DIR/magiskinit64" && chmod +x "$TOOLS_DIR/magiskinit64"
-        rm -f /tmp/libmagisk64.so /tmp/libmagisk32.so /tmp/libmagiskinit.so
+        cp "$_TMP/libmagisk64.so"   "$TOOLS_DIR/magisk64"   && chmod +x "$TOOLS_DIR/magisk64"
+        cp "$_TMP/libmagisk32.so"   "$TOOLS_DIR/magisk32"   && chmod +x "$TOOLS_DIR/magisk32"
+        cp "$_TMP/libmagiskinit.so" "$TOOLS_DIR/magiskinit64" && chmod +x "$TOOLS_DIR/magiskinit64"
+        rm -f "$_TMP/libmagisk64.so" "$_TMP/libmagisk32.so" "$_TMP/libmagiskinit.so"
 
         ok "magisk64, magisk32, magiskinit64 → $TOOLS_DIR/"
 

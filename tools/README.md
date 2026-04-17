@@ -34,18 +34,19 @@ chmod +x tools/busybox-arm64
 
 # 2. Magisk binaries — extract from the official APK
 MAGISK_VER="v30.7"
-curl -L -o /tmp/magisk.apk \
+_TMP="${TMPDIR:-/tmp}"
+curl -L -o "$_TMP/magisk.apk" \
   "https://github.com/topjohnwu/Magisk/releases/download/${MAGISK_VER}/Magisk-${MAGISK_VER}.apk"
 
-unzip -j /tmp/magisk.apk 'lib/arm64-v8a/libmagisk64.so'   -d /tmp/
-unzip -j /tmp/magisk.apk 'lib/armeabi-v7a/libmagisk32.so' -d /tmp/
-unzip -j /tmp/magisk.apk 'lib/arm64-v8a/libmagiskinit.so' -d /tmp/
+unzip -j "$_TMP/magisk.apk" 'lib/arm64-v8a/libmagisk64.so'   -d "$_TMP/"
+unzip -j "$_TMP/magisk.apk" 'lib/armeabi-v7a/libmagisk32.so' -d "$_TMP/"
+unzip -j "$_TMP/magisk.apk" 'lib/arm64-v8a/libmagiskinit.so' -d "$_TMP/"
 
-cp /tmp/libmagisk64.so   tools/magisk64   && chmod +x tools/magisk64
-cp /tmp/libmagisk32.so   tools/magisk32   && chmod +x tools/magisk32
-cp /tmp/libmagiskinit.so tools/magiskinit64 && chmod +x tools/magiskinit64
+cp "$_TMP/libmagisk64.so"   tools/magisk64   && chmod +x tools/magisk64
+cp "$_TMP/libmagisk32.so"   tools/magisk32   && chmod +x tools/magisk32
+cp "$_TMP/libmagiskinit.so" tools/magiskinit64 && chmod +x tools/magiskinit64
 
-rm /tmp/magisk.apk /tmp/lib*.so
+rm "$_TMP/magisk.apk" "$_TMP"/lib*.so
 ```
 
 > **Legal**: Magisk is GPL-3.0 licensed. By distributing binaries you must also make the source available.
