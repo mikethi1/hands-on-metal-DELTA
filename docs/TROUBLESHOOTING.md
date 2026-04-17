@@ -75,9 +75,9 @@ python pipeline/failure_analysis.py \
 
 | Android version | Partition to patch | Why |
 |----------------|-------------------|-----|
-| API ≤ 32 (Android 12L and below) | `boot` | init_boot does not exist |
-| API 33+ (Android 13+) with init_boot | `init_boot` | Kernel stays in boot; Magisk patches init ramdisk only |
-| API 33+ without init_boot partition | `boot` | Some upgraded devices lack init_boot; use boot as fallback |
+| API ≤ 32 (Android 12L and below) | `boot` | `init_boot` does not exist |
+| API 33+ (Android 13+) with `init_boot` | `init_boot` | Kernel stays in `boot`; Magisk patches init ramdisk only |
+| API 33+ without `init_boot` partition | `boot` | Some upgraded devices lack `init_boot`; use `boot` as fallback |
 
 The installer reads `HOM_DEV_BOOT_PART` (set by `device_profile.sh`) and targets the
 correct partition automatically.  If the factory image is downloaded and the requested

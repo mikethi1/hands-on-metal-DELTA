@@ -198,6 +198,8 @@ _is_google_device_supported() {
     grep -q "\"${codename}\"" "$PARTITION_INDEX" 2>/dev/null || return 1
     # Double-check it is inside the factory_image_sources section
     # (matches only codename strings under supported_codenames).
+    # NOTE: This sed range depends on "factory_image_sources" appearing
+    # before "pre_run_condition_checks" in partition_index.json.
     local in_section
     in_section=$(sed -n '/"factory_image_sources"/,/"pre_run_condition_checks"/p' \
         "$PARTITION_INDEX" 2>/dev/null | grep -c "\"${codename}\"" || echo 0)
@@ -226,18 +228,21 @@ _download_factory_boot_image() {
     ux_print "  URL: $factory_url"
     log_info "Factory image download: $factory_url → $factory_zip"
 
+    local curl_log="$_TMP/hom_factory_curl.log"
     if ! curl -fSL --retry 3 --retry-delay 2 \
             --connect-timeout 30 --max-time 600 \
-            -o "$factory_zip" "$factory_url" 2>/dev/null; then
+            -o "$factory_zip" "$factory_url" 2>"$curl_log"; then
         log_warn "Factory image download failed (HTTP error or network issue)"
+        log_warn "curl output: $(cat "$curl_log" 2>/dev/null || true)"
         ux_print "  ✗  Download failed.  The build ID may not match an available"
         ux_print "     factory image, or the device may not be a Google Pixel."
         ux_print "     URL tried: $factory_url"
-        rm -f "$factory_zip"
+        rm -f "$factory_zip" "$curl_log"
         return 1
     fi
 
     ux_print "  ✓  Downloaded factory ZIP"
+    rm -f "$curl_log"
 
     # Google factory ZIPs are ZIP-in-ZIP:
     #   outer: {codename}-{build_id}/image-{codename}-{build_id}.zip
@@ -249,7 +254,13 @@ _download_factory_boot_image() {
     # Step 1: extract the inner image-*.zip from the outer ZIP
     local inner_zip
     inner_zip=$(unzip -l "$factory_zip" 2>/dev/null \
-        | grep -o '[^ ]*image-[^ ]*\.zip' | head -1 || true)
+        | grep -o "[^ ]*image-${codename}-[^ ]*\\.zip" | head -1 || true)
+
+    # Broader fallback if codename-specific pattern did not match
+    if [ -z "$inner_zip" ]; then
+        inner_zip=$(unzip -l "$factory_zip" 2>/dev/null \
+            | grep -o '[^ ]*image-[^ ]*\.zip' | head -1 || true)
+    fi
 
     if [ -z "$inner_zip" ]; then
         # Some factory ZIPs place boot.img directly at the top level
