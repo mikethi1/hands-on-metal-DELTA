@@ -1,0 +1,6 @@
+name=hands-on-metal-collector
+version=v1.0.0
+versionCode=1
+author=hands-on-metal
+description=Collects hardware intelligence data for Halium porting (read-only, no system partition writes)
+minMagisk=25000
