@@ -103,7 +103,7 @@ python pipeline/failure_analysis.py \
    YES → Magisk MUST use PATCHVBMETAFLAG=true.
          anti_rollback.sh sets HOM_ARB_REQUIRE_MAY2026_FLAGS=true automatically.
          magisk_patch.sh reads this and adjusts flags.
-         If you're building manually, ensure your Magisk is >= 27.0.
+         If you're building manually, ensure your Magisk is >= 30.7.
 ```
 
 **How to get the correct boot image:**
@@ -242,7 +242,7 @@ dd if=/sdcard/hands-on-metal/boot_work/boot_original.img \
    chcon u:object_r:adb_data_file:s0 /data/local/tmp
    ```
 2. Boot image is encrypted or corrupted — re-acquire from the partition.
-3. Magisk version too old — upgrade to 27.0+ for init_boot support.
+3. Magisk version too old — upgrade to 30.7+ for init_boot support.
 4. Init_boot too small — some devices have <8MB init_boot; this is unusual.
 
 **Per-script log:**
@@ -443,7 +443,7 @@ accurate and actionable in all environments.
 
 - Global ROM and CN ROM have different partition layouts on some models.
 - MIUI may prevent flashing from the Magisk app; use recovery path.
-- HyperOS (MIUI 15+) strengthens AVB — ensure Magisk 27.0+.
+- HyperOS (MIUI 15+) strengthens AVB — ensure Magisk 30.7+.
 
 ### OnePlus
 

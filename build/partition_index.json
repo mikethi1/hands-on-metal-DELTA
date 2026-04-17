@@ -799,11 +799,13 @@
   "magisk_versions": {
     "minimum_supported": 25000,
     "minimum_supported_str": "25.0",
-    "recommended": 27001,
-    "recommended_str": "27.0",
+    "recommended": 30700,
+    "recommended_str": "30.7",
     "init_boot_support_min": 25000,
-    "may_2026_policy_min": 27000,
-    "notes": "Magisk 27+ supports init_boot patching and the May-2026 anti-rollback policy."
+    "may_2026_policy_min": 30700,
+    "may_2026_policy_min_str": "30.7",
+    "may_2026_policy_date": "2026-05-07",
+    "notes": "After May 7 2026, Magisk 30.7+ is required for anti-rollback policy compliance and Android 16 QPR2 support."
   },
   "pre_run_condition_checks": {
     "description": "Conditions evaluated before the install begins to determine feasibility",

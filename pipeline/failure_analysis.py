@@ -135,12 +135,12 @@ SIGNATURES: list[Signature] = [
         probable_cause=(
             "The device SPL is >= 2026-05-01. Magisk must be built with "
             "PATCHVBMETAFLAG=true for this policy. "
-            "The installer sets this automatically when Magisk >= 27.0 is used."
+            "The installer sets this automatically when Magisk >= 30.7 is used."
         ),
         remediation=[
-            "Upgrade Magisk to version 27.0 or newer.",
+            "Upgrade Magisk to version 30.7 or newer.",
             "The anti_rollback.sh script sets PATCHVBMETAFLAG automatically "
-            "for Magisk >= 27.0 — ensure the bundled magisk64 is up to date.",
+            "for Magisk >= 30.7 — ensure the bundled magisk64 is up to date.",
             "Re-build the offline ZIP with a current Magisk binary (see MAINTAINER.md).",
         ],
         docs_link="docs/TROUBLESHOOTING.md#anti-rollback-check-fails",
@@ -180,10 +180,11 @@ SIGNATURES: list[Signature] = [
         base_confidence=0.8,
         probable_cause=(
             "The installed Magisk version is below the minimum required (25.0 / 25000). "
-            "Old versions lack init_boot support and May-2026 AVB policy handling."
+            "Old versions lack init_boot support and May-2026 AVB policy handling. "
+            "After May 7 2026, Magisk 30.7+ is required."
         ),
         remediation=[
-            "Download Magisk 27.0+ from https://github.com/topjohnwu/Magisk/releases",
+            "Download Magisk 30.7+ from https://github.com/topjohnwu/Magisk/releases",
             "Install via the Magisk app: Modules → Direct Install → select APK",
             "Or flash the updated recovery ZIP with the newer bundled magisk64.",
         ],

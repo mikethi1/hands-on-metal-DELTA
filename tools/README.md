@@ -33,7 +33,7 @@ curl -L -o tools/busybox-arm64 \
 chmod +x tools/busybox-arm64
 
 # 2. Magisk binaries — extract from the official APK
-MAGISK_VER="v27.0"
+MAGISK_VER="v30.7"
 curl -L -o /tmp/magisk.apk \
   "https://github.com/topjohnwu/Magisk/releases/download/${MAGISK_VER}/Magisk-${MAGISK_VER}.apk"
 

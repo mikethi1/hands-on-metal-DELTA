@@ -166,7 +166,7 @@ bash build/fetch_all_deps.sh
 `fetch_all_deps.sh` will:
 
 1. Download `busybox-arm64` (static, arm64) from busybox.net
-2. Download the Magisk v27.0 APK and extract `magisk64`, `magisk32`, and `magiskinit64`
+2. Download the Magisk v30.7 APK and extract `magisk64`, `magisk32`, and `magiskinit64`
 3. Build both flashable ZIPs (`dist/hands-on-metal-magisk-module-<ver>.zip` and `dist/hands-on-metal-recovery-<ver>.zip`)
 4. Create `dist/hands-on-metal-full-bundle-<ver>.zip` — a single ZIP containing the complete repo snapshot, all tools, both flashable ZIPs, and SHA-256 checksums
 
@@ -270,9 +270,9 @@ All dependencies are pulled by `build/fetch_all_deps.sh`.
 | Binary | Version | Source | License |
 |--------|---------|--------|---------|
 | `busybox-arm64` | 1.35.0 | [busybox.net/downloads/binaries/](https://busybox.net/downloads/binaries/) | GPL-2.0 |
-| `magisk64` | v27.0 | [github.com/topjohnwu/Magisk releases](https://github.com/topjohnwu/Magisk/releases) | GPL-3.0 |
-| `magisk32` | v27.0 | [github.com/topjohnwu/Magisk releases](https://github.com/topjohnwu/Magisk/releases) | GPL-3.0 |
-| `magiskinit64` | v27.0 | [github.com/topjohnwu/Magisk releases](https://github.com/topjohnwu/Magisk/releases) | GPL-3.0 |
+| `magisk64` | v30.7 | [github.com/topjohnwu/Magisk releases](https://github.com/topjohnwu/Magisk/releases) | GPL-3.0 |
+| `magisk32` | v30.7 | [github.com/topjohnwu/Magisk releases](https://github.com/topjohnwu/Magisk/releases) | GPL-3.0 |
+| `magiskinit64` | v30.7 | [github.com/topjohnwu/Magisk releases](https://github.com/topjohnwu/Magisk/releases) | GPL-3.0 |
 
 ### Python (host-side pipeline — stdlib only)
 

@@ -18,7 +18,7 @@
 #
 # Usage:
 #   bash build/fetch_all_deps.sh
-#   bash build/fetch_all_deps.sh --magisk-version v27.0
+#   bash build/fetch_all_deps.sh --magisk-version v30.7
 #   bash build/fetch_all_deps.sh --busybox-version 1.35.0
 #   bash build/fetch_all_deps.sh --skip-binaries   (repo + ZIPs only)
 #   bash build/fetch_all_deps.sh --version 2.1.0   (override module version)
@@ -35,7 +35,7 @@ DIST_DIR="$REPO_ROOT/dist"
 BUILD_DIR="$REPO_ROOT/build"
 
 # ── defaults ──────────────────────────────────────────────────
-MAGISK_VERSION="v27.0"
+MAGISK_VERSION="v30.7"
 BUSYBOX_VERSION="1.35.0"
 SKIP_BINARIES=false
 MODULE_VERSION=""   # empty → read from module.prop
