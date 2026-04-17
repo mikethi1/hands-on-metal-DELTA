@@ -36,15 +36,18 @@ if [ -f "check_deps.sh" ] && [ -d "build" ] && [ -f "build/fetch_all_deps.sh" ];
 else
     if [ -d "hands-on-metal" ]; then
         echo "Directory 'hands-on-metal' already exists — pulling latest..."
-        git -C hands-on-metal pull --ff-only || true
+        if ! git -C hands-on-metal pull --ff-only 2>/dev/null; then
+            echo "  ⚠  Could not update existing clone (network or merge issue)." >&2
+            echo "     Continuing with the current version." >&2
+        fi
     else
         git clone https://github.com/mikethi/hands-on-metal.git
     fi
     cd hands-on-metal
 fi
 
-# ── Verify host tools (optional — fetch_all_deps.sh runs it too) ─
-bash check_deps.sh
-
-# ── Fetch binaries + build flashable ZIPs ─────────────────────
+# ── Verify host tools then fetch binaries + build ZIPs ────────
+# check_deps.sh sets HOM_DEPS_CHECKED=1 so fetch_all_deps.sh
+# skips the redundant re-check automatically.
+source check_deps.sh
 bash build/fetch_all_deps.sh
