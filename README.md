@@ -157,7 +157,7 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 
 ### 1 — Clone and fetch all dependencies
 
-**One-liner** (requires `curl` and `git`):
+**One-liner** (requires `curl`; `git` is auto-installed if missing):
 
 ```bash
 cat <<'EOF' > /tmp/hands-on-metal-setup.sh
@@ -184,8 +184,10 @@ chmod +x /tmp/hands-on-metal-setup.sh
 /tmp/hands-on-metal-setup.sh
 ```
 
-If `git` is not installed the script prints platform-specific install
-instructions (Debian/Ubuntu, Termux, Fedora, Arch/Manjaro, macOS) and exits.
+If `git` is not installed the script attempts to install it automatically
+using the system package manager (`apt-get`, `pkg`, `dnf`, `pacman`, or
+`brew` / `xcode-select`). If automatic installation fails, it prints
+platform-specific manual install instructions and exits.
 The script is safe to re-run — it skips steps that are already complete.
 
 `fetch_all_deps.sh` will:

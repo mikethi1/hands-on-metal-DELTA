@@ -19,15 +19,48 @@
 
 set -e
 
-# ── git is needed to clone — check before anything else ──────
+# ── git is needed to clone — auto-install if missing ─────────
 if ! command -v git >/dev/null 2>&1; then
-    echo "ERROR: git is not installed." >&2
-    echo "  Debian / Ubuntu : sudo apt install git" >&2
-    echo "  Termux          : pkg install git"      >&2
-    echo "  Fedora          : sudo dnf install git"  >&2
-    echo "  Arch / Manjaro  : sudo pacman -S git"    >&2
-    echo "  macOS           : xcode-select --install" >&2
-    exit 1
+    echo "git is not installed — attempting automatic install..."
+
+    _installed=false
+
+    if [ -d "/data/data/com.termux/files/usr" ] || [ -n "${TERMUX_VERSION:-}" ]; then
+        # Termux on Android
+        pkg install -y git && _installed=true
+    elif command -v apt-get >/dev/null 2>&1; then
+        # Debian / Ubuntu
+        sudo apt-get update -qq && sudo apt-get install -y -qq git && _installed=true
+    elif command -v dnf >/dev/null 2>&1; then
+        # Fedora
+        sudo dnf install -y git && _installed=true
+    elif command -v pacman >/dev/null 2>&1; then
+        # Arch / Manjaro
+        sudo pacman -S --noconfirm git && _installed=true
+    elif command -v brew >/dev/null 2>&1; then
+        # macOS with Homebrew
+        brew install git && _installed=true
+    elif [ "$(uname)" = "Darwin" ]; then
+        # macOS without Homebrew — xcode-select triggers the CLT installer
+        echo "Installing Xcode Command Line Tools (includes git)..."
+        xcode-select --install 2>/dev/null || true
+        echo "Follow the on-screen dialog, then re-run this script." >&2
+        exit 1
+    fi
+
+    if [ "$_installed" = false ] || ! command -v git >/dev/null 2>&1; then
+        echo "ERROR: Could not auto-install git." >&2
+        echo "  Please install it manually and re-run this script:" >&2
+        echo "    Debian / Ubuntu : sudo apt install git" >&2
+        echo "    Termux          : pkg install git"      >&2
+        echo "    Fedora          : sudo dnf install git"  >&2
+        echo "    Arch / Manjaro  : sudo pacman -S git"    >&2
+        echo "    macOS           : xcode-select --install" >&2
+        exit 1
+    fi
+
+    unset _installed
+    echo "git installed successfully."
 fi
 
 # ── If we are already inside the repo, use it in-place ────────
