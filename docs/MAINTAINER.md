@@ -74,7 +74,7 @@ mkdir -p tools/
 
 # Busybox (static arm64 — required for recovery path)
 curl -L -o tools/busybox-arm64 \
-  https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox_ARM64
+  https://busybox.net/downloads/binaries/1.31.0-defconfig-multiarch-musl/busybox-armv8l
 chmod +x tools/busybox-arm64
 
 # Magisk binaries (download the Magisk apk and extract)

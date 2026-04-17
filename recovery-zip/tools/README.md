@@ -22,7 +22,7 @@ This downloads busybox, the Magisk binaries, and builds everything in one step.
 
 ```bash
 curl -L -o recovery-zip/tools/busybox-arm64 \
-  https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox_ARM64
+  https://busybox.net/downloads/binaries/1.31.0-defconfig-multiarch-musl/busybox-armv8l
 chmod +x recovery-zip/tools/busybox-arm64
 ```
 

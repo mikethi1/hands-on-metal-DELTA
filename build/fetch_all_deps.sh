@@ -19,7 +19,7 @@
 # Usage:
 #   bash build/fetch_all_deps.sh
 #   bash build/fetch_all_deps.sh --magisk-version v30.7
-#   bash build/fetch_all_deps.sh --busybox-version 1.35.0
+#   bash build/fetch_all_deps.sh --busybox-version 1.31.0
 #   bash build/fetch_all_deps.sh --skip-binaries   (repo + ZIPs only)
 #   bash build/fetch_all_deps.sh --version 2.1.0   (override module version)
 #
@@ -36,7 +36,7 @@ BUILD_DIR="$REPO_ROOT/build"
 
 # ── defaults ──────────────────────────────────────────────────
 MAGISK_VERSION="v30.7"
-BUSYBOX_VERSION="1.35.0"
+BUSYBOX_VERSION="1.31.0"
 SKIP_BINARIES=false
 MODULE_VERSION=""   # empty → read from module.prop
 
@@ -133,7 +133,7 @@ if [ "$SKIP_BINARIES" = true ]; then
     warn "Skipping binary downloads (--skip-binaries)"
 else
     step "2/5  Fetching busybox-arm64 (static, ARM64)..."
-    BUSYBOX_URL="https://busybox.net/downloads/binaries/${BUSYBOX_VERSION}-x86_64-linux-musl/busybox_ARM64"
+    BUSYBOX_URL="https://busybox.net/downloads/binaries/${BUSYBOX_VERSION}-defconfig-multiarch-musl/busybox-armv8l"
     BUSYBOX_DEST="$TOOLS_DIR/busybox-arm64"
     if [ -f "$BUSYBOX_DEST" ]; then
         ok "Already present: $BUSYBOX_DEST (delete to re-download)"

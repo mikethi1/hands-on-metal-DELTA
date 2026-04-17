@@ -269,7 +269,7 @@ All dependencies are pulled by `build/fetch_all_deps.sh`.
 
 | Binary | Version | Source | License |
 |--------|---------|--------|---------|
-| `busybox-arm64` | 1.35.0 | [busybox.net/downloads/binaries/](https://busybox.net/downloads/binaries/) | GPL-2.0 |
+| `busybox-arm64` | 1.31.0 | [busybox.net/downloads/binaries/](https://busybox.net/downloads/binaries/) | GPL-2.0 |
 | `magisk64` | v30.7 | [github.com/topjohnwu/Magisk releases](https://github.com/topjohnwu/Magisk/releases) | GPL-3.0 |
 | `magisk32` | v30.7 | [github.com/topjohnwu/Magisk releases](https://github.com/topjohnwu/Magisk/releases) | GPL-3.0 |
 | `magiskinit64` | v30.7 | [github.com/topjohnwu/Magisk releases](https://github.com/topjohnwu/Magisk/releases) | GPL-3.0 |

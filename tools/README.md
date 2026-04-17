@@ -29,7 +29,7 @@ This single command handles all the steps below automatically.
 ```bash
 # 1. busybox (static arm64)
 curl -L -o tools/busybox-arm64 \
-  https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox_ARM64
+  https://busybox.net/downloads/binaries/1.31.0-defconfig-multiarch-musl/busybox-armv8l
 chmod +x tools/busybox-arm64
 
 # 2. Magisk binaries — extract from the official APK
