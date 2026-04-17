@@ -126,14 +126,14 @@ SIGNATURES: list[Signature] = [
         id="MAY2026_FLAGS",
         name="May-2026 AVB policy requires PATCHVBMETAFLAG",
         error_keywords=["patchvbmetaflag", "may-2026", "may 2026",
-                        "2026-05-01", "avb policy"],
+                        "2026-05-07", "avb policy"],
         var_indicators=[
             ("HOM_ARB_MAY2026_ACTIVE", "true"),
             ("HOM_ARB_REQUIRE_MAY2026_FLAGS", "true"),
         ],
         base_confidence=0.85,
         probable_cause=(
-            "The device SPL is >= 2026-05-01. Magisk must be built with "
+            "The device SPL is >= 2026-05-07. Magisk must be built with "
             "PATCHVBMETAFLAG=true for this policy. "
             "The installer sets this automatically when Magisk >= 30.7 is used."
         ),
@@ -297,7 +297,7 @@ SIGNATURES: list[Signature] = [
         remediation=[
             "Check /data/local/tmp is writable: ls -la /data/local/tmp",
             "Re-acquire the boot image from the partition (it may have been corrupted).",
-            "Upgrade to Magisk 27.0+ for init_boot compatibility.",
+            "Upgrade to Magisk 30.7+ for init_boot compatibility.",
             "Check the magisk_patch log: cat /sdcard/hands-on-metal/logs/magisk_patch_*.log",
         ],
         docs_link="docs/TROUBLESHOOTING.md#magisk-patch-fails",

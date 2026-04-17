@@ -235,9 +235,9 @@ manifest_step "my_step_name" "OK" "optional note"
 
 ## Anti-rollback policy notes (May 2026)
 
-Starting with security patch level 2026-05-01, Android's AVB anti-rollback protection becomes more strictly enforced and Magisk adopted a policy update to match. The relevant Magisk patch flags are:
+Starting with security patch level 2026-05-07, Android's AVB anti-rollback protection becomes more strictly enforced and Magisk adopted a policy update to match. The relevant Magisk patch flags are:
 
-- `PATCHVBMETAFLAG=true` — patches the vbmeta flag byte in the boot image header, which is required for the device to boot the patched image without failing AVB verification on SPL >= 2026-05-01.
+- `PATCHVBMETAFLAG=true` — patches the vbmeta flag byte in the boot image header, which is required for the device to boot the patched image without failing AVB verification on SPL >= 2026-05-07.
 - `KEEPVERITY=true` — for A/B devices, must not strip dm-verity signatures.
 - `KEEPFORCEENCRYPT=true` — preserves the `forceencrypt` flag so /data remains encrypted.
 

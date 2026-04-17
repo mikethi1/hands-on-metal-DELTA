@@ -321,8 +321,8 @@
       "patch_target": "init_boot",
       "keepverity_default": true,
       "keepforceencrypt_default": true,
-      "patchvbmetaflag_required_from_spl": "2026-05-01",
-      "notes": "May-2026 AVB anti-rollback policy active for SPL >= 2026-05-01; PATCHVBMETAFLAG required",
+      "patchvbmetaflag_required_from_spl": "2026-05-07",
+      "notes": "May-2026 AVB anti-rollback policy active for SPL >= 2026-05-07; PATCHVBMETAFLAG required",
       "support_tier": "supported"
     },
     "api_36_plus": {
@@ -340,7 +340,7 @@
       "patch_target": "init_boot",
       "keepverity_default": true,
       "keepforceencrypt_default": true,
-      "patchvbmetaflag_required_from_spl": "2026-05-01",
+      "patchvbmetaflag_required_from_spl": "2026-05-07",
       "notes": "Future Android version - candidate entry auto-created; best-effort install",
       "support_tier": "unknown"
     }
@@ -788,8 +788,8 @@
     }
   },
   "anti_rollback": {
-    "may_2026_policy_spl": "2026-05-01",
-    "description": "Devices with security patch level >= 2026-05-01 require Magisk to be built with May-2026 anti-rollback compatibility. The PATCHVBMETAFLAG must be set to true when patching.",
+    "may_2026_policy_spl": "2026-05-07",
+    "description": "Devices with security patch level >= 2026-05-07 require Magisk to be built with May-2026 anti-rollback compatibility. The PATCHVBMETAFLAG must be set to true when patching.",
     "magisk_flags_required": {
       "PATCHVBMETAFLAG": true,
       "KEEPVERITY": "device-dependent (true for A/B)",

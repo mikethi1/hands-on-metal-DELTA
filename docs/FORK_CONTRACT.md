@@ -59,7 +59,7 @@ as `KEY="VALUE"  # cat:<category>`.
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `HOM_ARB_MAY2026_ACTIVE` | bool | SPL >= 2026-05-01 |
+| `HOM_ARB_MAY2026_ACTIVE` | bool | SPL >= 2026-05-07 |
 | `HOM_ARB_IMG_SPL` | YYYY-MM-DD or UNKNOWN | SPL in image header |
 | `HOM_ARB_ROLLBACK_RISK` | bool | Image SPL < device SPL |
 | `HOM_ARB_DEV_ROLLBACK_IDX` | int or UNKNOWN | AVB rollback index |

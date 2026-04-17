@@ -33,7 +33,11 @@ OUT="${OUT:-/sdcard/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 
 # The SPL from which Magisk's May-2026 anti-rollback policy activates.
-MAY_2026_SPL="2026-05-01"
+MAY_2026_SPL="2026-05-07"
+
+# Minimum Magisk version code required when May-2026 policy is active.
+MAY_2026_MAGISK_MIN=30700
+MAY_2026_MAGISK_STR="30.7"
 
 # ── helpers ───────────────────────────────────────────────────
 
@@ -134,7 +138,7 @@ permanently brick the device via AVB fuse-burning — this check prevents that"
 
     _reg_set avb HOM_ARB_MAY2026_ACTIVE "$may2026_active"
     log_var "HOM_ARB_MAY2026_ACTIVE" "$may2026_active" \
-        "true when device SPL >= 2026-05-01 (activates Magisk May-2026 policy)"
+        "true when device SPL >= 2026-05-07 (activates Magisk May-2026 policy)"
 
     # ── 2. Extract image SPL ──────────────────────────────────
 
@@ -199,6 +203,36 @@ permanently brick the device via AVB fuse-burning — this check prevents that"
         require_may2026_flags="true"
         ux_print "  Magisk MUST use May-2026 compatible patch flags."
         ux_print "  (magisk_patch.sh will apply --patch-vbmeta-flag and rollback_index preservation)"
+
+        # ── Magisk version gate ───────────────────────────────
+        # When the May-2026 policy is active, Magisk must be at
+        # least v30.7 (30700).  Older versions do not support
+        # PATCHVBMETAFLAG correctly and would produce an image
+        # that fails AVB verification — bricking the device.
+        local magisk_ver_code
+        magisk_ver_code=$(_reg_get HOM_MAGISK_VER_CODE)
+        if [ -n "$magisk_ver_code" ] && [ "$magisk_ver_code" != "UNKNOWN" ]; then
+            if [ "$magisk_ver_code" -lt "$MAY_2026_MAGISK_MIN" ] 2>/dev/null; then
+                ux_print ""
+                ux_print "  ╔═══════════════════════════════════════════╗"
+                ux_print "  ║  MAGISK VERSION TOO OLD FOR MAY-2026      ║"
+                ux_print "  ║  Installed: $magisk_ver_code (need ≥ $MAY_2026_MAGISK_MIN)    ║"
+                ux_print "  ║  Upgrade to Magisk $MAY_2026_MAGISK_STR+ before proceeding.   ║"
+                ux_print "  ╚═══════════════════════════════════════════╝"
+                ux_print ""
+                _reg_set avb HOM_ARB_MAGISK_ADEQUATE "false"
+                manifest_step "anti_rollback_magisk_version" "FAIL" \
+                    "need>=$MAY_2026_MAGISK_MIN got=$magisk_ver_code"
+                ux_abort "Magisk $magisk_ver_code cannot safely handle May-2026 anti-rollback policy. Upgrade to $MAY_2026_MAGISK_STR+."
+            else
+                _reg_set avb HOM_ARB_MAGISK_ADEQUATE "true"
+                ux_print "  Magisk version $magisk_ver_code ≥ $MAY_2026_MAGISK_MIN — OK for May-2026 policy"
+            fi
+        else
+            # Version unknown — warn but allow (offline bundle case)
+            ux_print "  WARNING: Magisk version not yet known — magisk_patch.sh will re-check."
+            _reg_set avb HOM_ARB_MAGISK_ADEQUATE "unknown"
+        fi
     fi
 
     _reg_set avb HOM_ARB_REQUIRE_MAY2026_FLAGS "$require_may2026_flags"

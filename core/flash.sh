@@ -115,6 +115,21 @@ run_flash_magisk_path() {
         "Writes the Magisk-patched boot image directly to the boot partition" \
         "This permanently installs Magisk root to the active boot slot"
 
+    # ── Anti-rollback final gate ─────────────────────────────
+    # Re-verify the anti-rollback result one last time before the
+    # irreversible dd write.  This catches any race or state-file
+    # corruption between the check step and flash step.
+    local arb_risk arb_magisk_ok
+    arb_risk=$(_reg_get HOM_ARB_ROLLBACK_RISK)
+    arb_magisk_ok=$(_reg_get HOM_ARB_MAGISK_ADEQUATE)
+
+    if [ "$arb_risk" = "true" ]; then
+        ux_abort "FLASH BLOCKED: Anti-rollback risk detected (HOM_ARB_ROLLBACK_RISK=true). Cannot flash safely."
+    fi
+    if [ "$arb_magisk_ok" = "false" ]; then
+        ux_abort "FLASH BLOCKED: Magisk version inadequate for May-2026 policy (HOM_ARB_MAGISK_ADEQUATE=false). Upgrade Magisk."
+    fi
+
     local patched_img boot_part is_ab slot_suffix patched_sha256
     patched_img=$(_reg_get HOM_PATCHED_IMG_PATH)
     boot_part=$(_reg_get HOM_DEV_BOOT_PART)
@@ -195,6 +210,18 @@ run_flash_recovery_path() {
     ux_step_info "Flash + Install Magisk (Recovery)" \
         "Flashes the patched boot image, installs the Magisk module ZIP, and reboots" \
         "This brings a non-rooted device from TWRP to fully rooted system in one step"
+
+    # ── Anti-rollback final gate ─────────────────────────────
+    local arb_risk arb_magisk_ok
+    arb_risk=$(_reg_get HOM_ARB_ROLLBACK_RISK)
+    arb_magisk_ok=$(_reg_get HOM_ARB_MAGISK_ADEQUATE)
+
+    if [ "$arb_risk" = "true" ]; then
+        ux_abort "FLASH BLOCKED: Anti-rollback risk detected. Cannot flash safely."
+    fi
+    if [ "$arb_magisk_ok" = "false" ]; then
+        ux_abort "FLASH BLOCKED: Magisk version inadequate for May-2026 policy. Upgrade Magisk."
+    fi
 
     local patched_img boot_part is_ab slot_suffix patched_sha256 zipfile
     patched_img=$(_reg_get HOM_PATCHED_IMG_PATH)

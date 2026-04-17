@@ -166,6 +166,18 @@ passing AVB verification through the correct flags"
     ux_print "  Magisk binary: $magisk_bin"
     ux_print "  Magisk version: $magisk_ver (code: $magisk_ver_code)"
 
+    # ── May-2026 Magisk version gate (re-check) ──────────────
+    # anti_rollback.sh may have set HOM_ARB_REQUIRE_MAY2026_FLAGS
+    # before the Magisk binary was located.  Now that we know the
+    # real version code, enforce the minimum again.
+    if [ "$may2026_flags" = "true" ]; then
+        local min_code=30700
+        if [ "$magisk_ver_code" -lt "$min_code" ] 2>/dev/null; then
+            ux_abort "Magisk $magisk_ver_code too old for May-2026 anti-rollback policy (need >= $min_code / v30.7). Upgrade Magisk before proceeding."
+        fi
+        log_info "Magisk version $magisk_ver_code >= $min_code — OK for May-2026 policy"
+    fi
+
     # ── 3. Build patch flags ──────────────────────────────────
 
     # MAGISK_PATCH_FLAGS environment variables control magisk --boot-patch.
@@ -193,7 +205,7 @@ passing AVB verification through the correct flags"
     if [ "$may2026_flags" = "true" ]; then
         PATCHVBMETAFLAG="true"
         log_info "May-2026 policy active: PATCHVBMETAFLAG=true"
-        ux_print "  May-2026 flag: PATCHVBMETAFLAG=true (required for SPL >= 2026-05-01)"
+        ux_print "  May-2026 flag: PATCHVBMETAFLAG=true (required for SPL >= 2026-05-07)"
     fi
 
     # Force-encrypt: keep it enabled so /data stays encrypted after root

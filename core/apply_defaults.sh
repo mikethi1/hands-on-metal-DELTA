@@ -178,8 +178,8 @@ run_apply_defaults() {
     if [ "$pvmf" = "spl_dependent" ]; then
         local spl
         spl=$(_reg_get HOM_DEV_SPL)
-        # Compare SPL to 2026-05-01
-        if [ -n "$spl" ] && [ "$spl" \> "2026-04-30" ] 2>/dev/null; then
+        # Compare SPL to 2026-05-07
+        if [ -n "$spl" ] && [ "$spl" \> "2026-05-06" ] 2>/dev/null; then
             pvmf="true"
         else
             pvmf="false"

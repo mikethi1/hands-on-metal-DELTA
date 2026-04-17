@@ -99,7 +99,7 @@ python pipeline/failure_analysis.py \
    → Provided manually?
       Get the boot.img from the full firmware matching your current SPL.
 
-3. Device SPL >= 2026-05-01 (May-2026 policy)?
+3. Device SPL >= 2026-05-07 (May-2026 policy)?
    YES → Magisk MUST use PATCHVBMETAFLAG=true.
          anti_rollback.sh sets HOM_ARB_REQUIRE_MAY2026_FLAGS=true automatically.
          magisk_patch.sh reads this and adjusts flags.
