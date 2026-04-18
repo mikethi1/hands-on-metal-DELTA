@@ -136,6 +136,38 @@ _validate_boot_magic() {
     esac
 }
 
+# Heuristic: detect whether a boot/init_boot image already contains
+# Kali NetHunter (or another Kali chroot) init artifacts in its
+# ramdisk.  A positive result means the user has previously customised
+# this image; Magisk patching is safe (magiskboot overlays on top of
+# the existing ramdisk and preserves arbitrary additions), but we want
+# the user to know we are about to patch their custom image — not a
+# stock one — so the NetHunter chroot keeps booting after flash.
+#
+# Echoes "yes" if NetHunter-style markers are found, "no" otherwise.
+# Uses only `grep -a` so it works under busybox / toybox without
+# requiring an unpacked ramdisk.
+_detect_kali_nethunter_in_image() {
+    local file="$1"
+    if [ ! -f "$file" ] || [ ! -s "$file" ]; then
+        echo "no"
+        return 0
+    fi
+    # Markers that don't appear in stock AOSP boot/init_boot images
+    # but do appear in NetHunter-modified ramdisks (chroot launcher,
+    # custom init.rc, kernel cmdline references).
+    if grep -a -E -q \
+            -e 'init\.nethunter\.rc' \
+            -e '/data/local/nhsystem' \
+            -e 'kalifs' \
+            -e 'NetHunter' \
+            "$file" 2>/dev/null; then
+        echo "yes"
+        return 0
+    fi
+    echo "no"
+}
+
 # Return 0 if we are running as root (uid 0).
 _have_root() {
     local uid
@@ -443,6 +475,177 @@ _offer_gki_download() {
     return 1
 }
 
+# ── User-supplied local file (boot.img / init_boot.img / factory ZIP) ──
+# Looks in the user's downloads directory for a usable file the user
+# may already have placed there manually.  Accepts any of:
+#   • ${boot_part}.img  (preferred — boot.img or init_boot.img)
+#   • boot.img / init_boot.img (other partition; will be flagged)
+#   • <codename>-<build>-factory*.zip  (Google factory archive)
+# Echoes the resolved path on stdout, or empty if the user skipped /
+# nothing was confirmed.  Always returns 0.
+_default_downloads_dir() {
+    # Prefer Termux user-storage symlink when it actually resolves to
+    # a directory (created by `termux-setup-storage`); else fall back
+    # to the standard /sdcard/Download path used everywhere else in
+    # this script.
+    if [ -n "$HOME" ] && [ -d "$HOME/storage/downloads" ]; then
+        echo "$HOME/storage/downloads"
+    elif [ -d "/sdcard/Download" ]; then
+        echo "/sdcard/Download"
+    else
+        echo "/sdcard/Download"
+    fi
+}
+
+_autodetect_local_image() {
+    # $1 = search dir, $2 = boot_part, $3 = codename, $4 = build_id_lower
+    local dir="$1" bp="$2" cn="$3" bid="$4"
+    local cand
+
+    # 1. Exact partition image match wins
+    if [ -f "$dir/${bp}.img" ] && [ -s "$dir/${bp}.img" ]; then
+        echo "$dir/${bp}.img"; return 0
+    fi
+
+    # 2. Matching factory ZIP for this device + build
+    if [ -n "$cn" ] && [ -n "$bid" ]; then
+        for cand in "$dir/${cn}-${bid}-factory"*.zip; do
+            [ -f "$cand" ] && [ -s "$cand" ] && { echo "$cand"; return 0; }
+        done
+    fi
+
+    # 3. Any factory ZIP for this codename (different build still useful)
+    if [ -n "$cn" ]; then
+        for cand in "$dir/${cn}-"*-factory*.zip; do
+            [ -f "$cand" ] && [ -s "$cand" ] && { echo "$cand"; return 0; }
+        done
+    fi
+
+    # 4. The "other" boot partition image — still a candidate, the
+    #    caller will warn if it is not the right partition type.
+    if [ "$bp" = "init_boot" ] && [ -f "$dir/boot.img" ] && [ -s "$dir/boot.img" ]; then
+        echo "$dir/boot.img"; return 0
+    fi
+    if [ "$bp" = "boot" ] && [ -f "$dir/init_boot.img" ] && [ -s "$dir/init_boot.img" ]; then
+        echo "$dir/init_boot.img"; return 0
+    fi
+
+    echo ""
+}
+
+_classify_local_image() {
+    # Echoes "zip" or "img" or "unknown" based on file extension /
+    # magic.  Used so the caller can route the file to the factory
+    # extractor or treat it as a raw image.
+    local f="$1"
+    case "$f" in
+        *.zip|*.ZIP) echo "zip"; return 0 ;;
+        *.img|*.IMG) echo "img"; return 0 ;;
+    esac
+    # Magic-byte sniff — first 4 bytes
+    local head
+    head=$(dd if="$f" bs=4 count=1 2>/dev/null | od -An -c 2>/dev/null | tr -d ' \n')
+    case "$head" in
+        PK*)         echo "zip" ;;   # ZIP local file header
+        ANDROID*)    echo "img" ;;
+        *)           echo "unknown" ;;
+    esac
+}
+
+_confirm_yn() {
+    # $1 = prompt text.  Returns 0 for yes (empty / Y / y / yes), 1 otherwise.
+    local prompt="$1" answer=""
+    if [ -t 0 ]; then
+        printf '\n%s [Y/n]: ' "$prompt" >&2
+        read -r answer </dev/tty 2>/dev/null || answer=""
+    else
+        answer="Y"
+    fi
+    case "$answer" in
+        ''|y|Y|yes|YES|Yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_prompt_local_user_image() {
+    # $1=boot_part, $2=codename, $3=build_id_lower
+    # Echoes resolved path (or empty) on stdout.
+    local boot_part="$1" codename="$2" build_id_lower="$3"
+    local search_dir auto user_input candidate
+    search_dir=$(_default_downloads_dir)
+    auto=$(_autodetect_local_image "$search_dir" "$boot_part" "$codename" "$build_id_lower")
+
+    ux_print ""
+    ux_print "  ── Local image / factory ZIP ──────────────────"
+    ux_print "  You can supply any of these and the script will"
+    ux_print "  figure out the rest:"
+    ux_print "    • ${boot_part}.img   (preferred for this device)"
+    if [ "$boot_part" = "init_boot" ]; then
+        ux_print "    • boot.img        (will warn — wrong partition)"
+    else
+        ux_print "    • init_boot.img   (will warn — wrong partition)"
+    fi
+    if [ -n "$codename" ] && [ -n "$build_id_lower" ]; then
+        ux_print "    • ${codename}-${build_id_lower}-factory*.zip  (factory archive)"
+    else
+        ux_print "    • <codename>-<build>-factory*.zip  (factory archive)"
+    fi
+    ux_print "  Default search directory: $search_dir"
+    if [ -n "$auto" ]; then
+        ux_print "  Auto-detected: $auto"
+        ux_print "  PRESS ENTER FOR DEFAULT (the auto-detected file above)"
+    else
+        ux_print "  No matching file auto-detected in $search_dir"
+        ux_print "  PRESS ENTER to skip and use the online factory download"
+    fi
+    ux_print "  Or type a filename (relative to the directory above)"
+    ux_print "  or an absolute path."
+
+    # Non-interactive: just take the auto-detected value (or none).
+    if [ ! -t 0 ]; then
+        if [ -n "$auto" ]; then
+            log_info "Non-interactive: using auto-detected local image $auto"
+            echo "$auto"
+        fi
+        return 0
+    fi
+
+    ux_prompt user_input "  Filename or path" ""
+
+    if [ -z "$user_input" ]; then
+        # Blank → use the default if we have one
+        if [ -z "$auto" ]; then
+            log_info "User pressed ENTER with no auto-detected default — skipping local file"
+            return 0
+        fi
+        if _confirm_yn "Continue with auto-detected file: $auto ?"; then
+            echo "$auto"
+        else
+            log_info "User declined auto-detected default $auto"
+        fi
+        return 0
+    fi
+
+    # Resolve relative paths against the default search dir
+    case "$user_input" in
+        /*) candidate="$user_input" ;;
+        *)  candidate="$search_dir/$user_input" ;;
+    esac
+
+    if [ ! -f "$candidate" ] || [ ! -s "$candidate" ]; then
+        ux_print "  ✗  File not found or empty: $candidate"
+        log_warn "User-supplied path does not exist: $candidate"
+        return 0
+    fi
+
+    if _confirm_yn "Use this file: $candidate ?"; then
+        echo "$candidate"
+    else
+        log_info "User declined supplied file $candidate"
+    fi
+    return 0
+}
+
 # ── Google factory image download ────────────────────────────
 # For supported Pixel codenames, downloads the factory image ZIP,
 # extracts the inner image-*.zip, and pulls boot.img or
@@ -468,12 +671,11 @@ _is_google_device_supported() {
 }
 
 _download_factory_boot_image() {
-    local codename="$1" boot_part="$2" build_id="$3"
+    local codename="$1" boot_part="$2" build_id="$3" local_zip="${4:-}"
 
-    _has_cmd curl  || { log_warn "curl not available — cannot download factory image"; return 1; }
     _has_cmd unzip || { log_warn "unzip not available — cannot extract factory image"; return 1; }
 
-    # Build ID is required so we download the exact matching firmware.
+    # Build ID is required so we know which firmware to expect.
     if [ -z "$build_id" ]; then
         log_warn "Build ID not available — cannot determine factory image URL"
         return 1
@@ -482,28 +684,41 @@ _download_factory_boot_image() {
     local build_id_lower
     build_id_lower=$(echo "$build_id" | tr '[:upper:]' '[:lower:]')
 
-    local factory_url="https://dl.google.com/dl/android/aosp/${codename}-${build_id_lower}-factory.zip"
-    local factory_zip="$_TMP/hom_factory_${codename}_${build_id_lower}.zip"
+    local factory_zip
+    local downloaded_here=0
 
-    ux_print "  Downloading Google factory image..."
-    ux_print "  URL: $factory_url"
-    log_info "Factory image download: $factory_url → $factory_zip"
+    if [ -n "$local_zip" ] && [ -f "$local_zip" ] && [ -s "$local_zip" ]; then
+        # User-supplied (or auto-detected) local factory ZIP — no download.
+        factory_zip="$local_zip"
+        log_info "Using local factory ZIP: $factory_zip"
+        ux_print "  Using local factory ZIP: $factory_zip"
+    else
+        _has_cmd curl || { log_warn "curl not available — cannot download factory image"; return 1; }
 
-    local curl_log="$_TMP/hom_factory_curl.log"
-    if ! curl -fSL --retry 3 --retry-delay 2 \
-            --connect-timeout 30 --max-time 600 \
-            -o "$factory_zip" "$factory_url" 2>"$curl_log"; then
-        log_warn "Factory image download failed (HTTP error or network issue)"
-        log_warn "curl output: $(cat "$curl_log" 2>/dev/null || true)"
-        ux_print "  ✗  Download failed.  The build ID may not match an available"
-        ux_print "     factory image, or the device may not be a Google Pixel."
-        ux_print "     URL tried: $factory_url"
-        rm -f "$factory_zip" "$curl_log"
-        return 1
+        local factory_url="https://dl.google.com/dl/android/aosp/${codename}-${build_id_lower}-factory.zip"
+        factory_zip="$_TMP/hom_factory_${codename}_${build_id_lower}.zip"
+        downloaded_here=1
+
+        ux_print "  Downloading Google factory image..."
+        ux_print "  URL: $factory_url"
+        log_info "Factory image download: $factory_url → $factory_zip"
+
+        local curl_log="$_TMP/hom_factory_curl.log"
+        if ! curl -fSL --retry 3 --retry-delay 2 \
+                --connect-timeout 30 --max-time 600 \
+                -o "$factory_zip" "$factory_url" 2>"$curl_log"; then
+            log_warn "Factory image download failed (HTTP error or network issue)"
+            log_warn "curl output: $(cat "$curl_log" 2>/dev/null || true)"
+            ux_print "  ✗  Download failed.  The build ID may not match an available"
+            ux_print "     factory image, or the device may not be a Google Pixel."
+            ux_print "     URL tried: $factory_url"
+            rm -f "$factory_zip" "$curl_log"
+            return 1
+        fi
+
+        ux_print "  ✓  Downloaded factory ZIP"
+        rm -f "$curl_log"
     fi
-
-    ux_print "  ✓  Downloaded factory ZIP"
-    rm -f "$curl_log"
 
     # Google factory ZIPs are ZIP-in-ZIP:
     #   outer: {codename}-{build_id}/image-{codename}-{build_id}.zip
@@ -531,20 +746,55 @@ _download_factory_boot_image() {
             local found="$extract_dir/${boot_part}.img"
             if [ -f "$found" ] && [ -s "$found" ]; then
                 echo "$found"
-                rm -f "$factory_zip"
+                [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
                 return 0
             fi
         fi
         log_warn "Could not locate ${boot_part}.img inside factory ZIP"
-        rm -f "$factory_zip"
+        [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
         rm -rf "$extract_dir"
         return 1
     fi
 
     log_info "Extracting inner ZIP: $inner_zip"
+
+    # Verify the inner ZIP's embedded build ID matches the device's
+    # current build, so the extracted ${boot_part}.img is partition-
+    # compatible (vbmeta digest, kernel ABI, ramdisk layout).  A
+    # mismatch is the #1 cause of failed Magisk patches and
+    # anti-rollback bricks.
+    local inner_build
+    inner_build=$(echo "$inner_zip" \
+        | sed -n "s|.*image-${codename}-\\([^./]*\\)\\.zip.*|\\1|p" \
+        | tr '[:upper:]' '[:lower:]')
+    if [ -n "$inner_build" ] && [ "$inner_build" != "$build_id_lower" ]; then
+        log_warn "Factory ZIP build mismatch: device=$build_id_lower zip=$inner_build"
+        ux_print "  ⚠  Build mismatch detected!"
+        ux_print "       Device build : $build_id_lower"
+        ux_print "       Factory ZIP  : $inner_build"
+        ux_print "     Patching with a mismatched ${boot_part}.img can brick the"
+        ux_print "     device (anti-rollback / vbmeta digest mismatch)."
+        if [ -t 0 ] 2>/dev/null; then
+            if ! _confirm_yn "Continue with mismatched factory ZIP anyway?"; then
+                log_warn "User aborted due to factory ZIP build mismatch"
+                [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
+                rm -rf "$extract_dir"
+                return 1
+            fi
+        else
+            log_warn "Non-interactive: refusing mismatched factory ZIP"
+            [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
+            rm -rf "$extract_dir"
+            return 1
+        fi
+    elif [ -n "$inner_build" ]; then
+        log_info "Factory ZIP build matches device: $build_id_lower"
+        ux_print "  ✓  Build match: $inner_build"
+    fi
+
     unzip -jo "$factory_zip" "$inner_zip" -d "$extract_dir" 2>/dev/null || {
         log_warn "Failed to extract inner ZIP from factory image"
-        rm -f "$factory_zip"
+        [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
         rm -rf "$extract_dir"
         return 1
     }
@@ -559,7 +809,8 @@ _download_factory_boot_image() {
         if [ -f "$target_img" ] && [ -s "$target_img" ]; then
             ux_print "  ✓  Extracted ${boot_part}.img from factory image"
             echo "$target_img"
-            rm -f "$factory_zip" "$inner_zip_path"
+            [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
+            rm -f "$inner_zip_path"
             return 0
         fi
     fi
@@ -577,14 +828,16 @@ _download_factory_boot_image() {
             if [ -f "$fallback_img" ] && [ -s "$fallback_img" ]; then
                 ux_print "  ✓  Extracted boot.img as fallback"
                 echo "$fallback_img"
-                rm -f "$factory_zip" "$inner_zip_path"
+                [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
+                rm -f "$inner_zip_path"
                 return 0
             fi
         fi
     fi
 
     log_warn "Failed to extract ${boot_part}.img from factory image"
-    rm -f "$factory_zip" "$inner_zip_path"
+    [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
+    rm -f "$inner_zip_path"
     rm -rf "$extract_dir"
     return 1
 }
@@ -753,52 +1006,132 @@ run_boot_image_acquire() {
         fi
     fi
 
-    # ── 3. Google factory image download (Pixel devices) ──────
+    # ── 3. Local user file (boot.img / init_boot.img / factory ZIP)
+    #       or Google factory image download (Pixel devices) ──────
 
     if [ -z "$acquire_method" ]; then
-        local codename build_id
+        local codename build_id build_id_lower=""
         codename=$(_reg_get HOM_DEV_DEVICE)
         build_id=$(_reg_get HOM_DEV_BUILD_ID)
         # Fallback: try reading build ID from system properties directly
         if [ -z "$build_id" ]; then
             build_id=$(getprop ro.build.id 2>/dev/null || true)
         fi
+        if [ -n "$build_id" ]; then
+            build_id_lower=$(echo "$build_id" | tr '[:upper:]' '[:lower:]')
+        fi
 
-        if [ -n "$codename" ] && _is_google_device_supported "$codename"; then
+        # ── 3a. Ask the user for a local file first (img or zip) ──
+        local user_path=""
+        user_path=$(_prompt_local_user_image "$boot_part" "$codename" "$build_id_lower")
+
+        if [ -n "$user_path" ]; then
+            local kind
+            kind=$(_classify_local_image "$user_path")
+            log_info "User-supplied local file: $user_path (classified as $kind)"
+            ux_print "  Detected file type: $kind"
+
+            case "$kind" in
+                zip)
+                    if [ -z "$build_id" ]; then
+                        log_warn "Build ID not known — factory ZIP extraction may fail"
+                    fi
+                    local extracted_img=""
+                    extracted_img=$(_download_factory_boot_image \
+                        "$codename" "$boot_part" "$build_id" "$user_path" || true)
+                    if [ -n "$extracted_img" ] && [ -f "$extracted_img" ] && [ -s "$extracted_img" ]; then
+                        cp "$extracted_img" "$out_img"
+                        rm -f "$extracted_img"
+                        boot_dev="local_factory_zip:$user_path"
+                        acquire_method="local_factory_zip"
+                        ux_print "  ✓  Extracted ${boot_part}.img from local factory ZIP"
+                    else
+                        log_warn "Failed to extract ${boot_part}.img from local ZIP $user_path"
+                        ux_print "  ✗  Could not extract ${boot_part}.img from $user_path"
+                    fi
+                    ;;
+                img)
+                    case "$user_path" in
+                        *"${boot_part}".img|*"${boot_part}".IMG) : ;;
+                        *)
+                            ux_print "  ⚠  This file does not look like ${boot_part}.img."
+                            ux_print "     Magisk on this device should patch ${boot_part}.img."
+                            if ! _confirm_yn "Use it anyway?"; then
+                                user_path=""
+                            fi
+                            ;;
+                    esac
+                    if [ -n "$user_path" ]; then
+                        log_exec "cp_local_user_image" cp "$user_path" "$out_img"
+                        if [ -f "$out_img" ] && [ -s "$out_img" ]; then
+                            boot_dev="local_user_image:$user_path"
+                            acquire_method="local_user_image"
+                            ux_print "  ✓  Copied $user_path to $out_img"
+                        else
+                            log_warn "Copy of $user_path failed"
+                            ux_print "  ✗  Copy failed."
+                        fi
+                    fi
+                    ;;
+                *)
+                    log_warn "Unrecognised file type for $user_path — neither ZIP nor Android boot image"
+                    ux_print "  ✗  Unrecognised file type — expected .img or .zip."
+                    ;;
+            esac
+        fi
+
+        # ── 3b. Fall through to Google factory download if needed ──
+        if [ -z "$acquire_method" ] && [ -n "$codename" ] && _is_google_device_supported "$codename"; then
+            local android_release android_sdk
+            android_release=$(_reg_get HOM_DEV_ANDROID_VER)
+            [ -z "$android_release" ] && android_release=$(getprop ro.build.version.release 2>/dev/null || true)
+            android_sdk=$(_reg_get HOM_DEV_SDK_INT)
+            [ -z "$android_sdk" ] && android_sdk=$(getprop ro.build.version.sdk 2>/dev/null || true)
+
             ux_print ""
             ux_print "  This looks like a Google Pixel device ($codename)."
             ux_print "  A factory image can be downloaded to extract ${boot_part}.img."
+            ux_print "  Match target — these MUST equal what the device is running:"
+            ux_print "    Codename     : $codename"
+            ux_print "    Build ID     : ${build_id:-<unknown>}"
+            ux_print "    Android      : ${android_release:-?} (API ${android_sdk:-?})"
+            ux_print "  Google URL    : https://dl.google.com/dl/android/aosp/${codename}-${build_id_lower}-factory.zip"
 
-            if [ -n "$build_id" ]; then
-                ux_print "  Build ID: $build_id"
-            fi
-
-            local do_download="yes"
-            # In interactive mode, ask confirmation
-            if [ -t 0 ] 2>/dev/null; then
-                ux_prompt do_download \
-                    "Download factory image for $codename (build $build_id)? [yes/no]" \
-                    "yes"
-            fi
-
-            if [ "$do_download" = "yes" ] || [ "$do_download" = "y" ]; then
-                local extracted_img
-                extracted_img=$(_download_factory_boot_image "$codename" "$boot_part" "$build_id" || true)
-
-                if [ -n "$extracted_img" ] && [ -f "$extracted_img" ] && [ -s "$extracted_img" ]; then
-                    cp "$extracted_img" "$out_img"
-                    rm -f "$extracted_img"
-                    boot_dev="factory:${codename}/${build_id}"
-                    acquire_method="factory_download"
-                    ux_print "  ✓  Factory image acquired successfully"
-                else
-                    log_warn "Factory image download/extraction did not produce a valid image"
-                    ux_print "  ✗  Factory image acquisition failed."
-                fi
+            if [ -z "$build_id" ]; then
+                ux_print "  ⚠  Build ID could not be read — download URL cannot be"
+                ux_print "     constructed reliably.  Aborting fallback download."
             else
-                ux_print "  Skipping factory download (user declined)."
+                local do_download="yes"
+                # In interactive mode, ask confirmation
+                if [ -t 0 ] 2>/dev/null; then
+                    ux_prompt do_download \
+                        "Download factory image matching build $build_id (Android ${android_release:-?})? [yes/no]" \
+                        "yes"
+                fi
+
+                if [ "$do_download" = "yes" ] || [ "$do_download" = "y" ]; then
+                    local extracted_img
+                    extracted_img=$(_download_factory_boot_image "$codename" "$boot_part" "$build_id" || true)
+
+                    if [ -n "$extracted_img" ] && [ -f "$extracted_img" ] && [ -s "$extracted_img" ]; then
+                        cp "$extracted_img" "$out_img"
+                        rm -f "$extracted_img"
+                        boot_dev="factory:${codename}/${build_id}"
+                        acquire_method="factory_download"
+                        ux_print "  ✓  Factory image acquired successfully (build $build_id)"
+                    else
+                        log_warn "Factory image download/extraction did not produce a valid image"
+                        ux_print "  ✗  Factory image acquisition failed."
+                        ux_print "     The build $build_id may not be hosted by Google"
+                        ux_print "     (e.g. beta/preview/developer build).  Provide the"
+                        ux_print "     matching ${codename}-${build_id_lower}-factory.zip"
+                        ux_print "     manually and re-run this option."
+                    fi
+                else
+                    ux_print "  Skipping factory download (user declined)."
+                fi
             fi
-        else
+        elif [ -z "$acquire_method" ]; then
             if [ -n "$codename" ]; then
                 log_info "Device codename '$codename' not in Google factory image index"
             fi
@@ -982,6 +1315,47 @@ run_boot_image_acquire() {
     else
         ux_step_result "Boot image magic check" "OK"
         manifest_step "boot_img_magic_check" "OK"
+    fi
+
+    # ── 5b. Detect Kali NetHunter / custom init in ramdisk ────
+    # Magisk's patcher overlays its own changes on top of the
+    # existing ramdisk and preserves arbitrary 3rd-party additions
+    # (init.<x>.rc, chroot launchers, kernel modules under /lib/
+    # modules, etc.).  We just need to make sure the *acquired*
+    # image is the user's customised one — not a stock factory
+    # image silently substituted in — so the NetHunter chroot keeps
+    # booting after the Magisk-patched image is flashed.
+
+    local has_nethunter
+    has_nethunter=$(_detect_kali_nethunter_in_image "$out_img")
+    _reg_set boot HOM_BOOT_IMG_NETHUNTER "$has_nethunter"
+    log_var "HOM_BOOT_IMG_NETHUNTER" "$has_nethunter" \
+        "Kali NetHunter init artifacts detected in acquired ${boot_part}.img"
+
+    if [ "$has_nethunter" = "yes" ]; then
+        ux_print ""
+        ux_print "  ℹ  Kali NetHunter init artifacts detected in this ${boot_part}.img."
+        ux_print "     Magisk will patch on top and PRESERVE them — your NetHunter"
+        ux_print "     chroot should keep booting after the patched image is flashed."
+        ux_print "     (acquisition source: ${acquire_method:-unknown})"
+        case "$acquire_method" in
+            factory_download)
+                # Implausible but loud — a stock Google factory ZIP
+                # should never contain NetHunter strings.
+                log_warn "NetHunter strings found in a stock factory image — investigate"
+                ux_print "  ⚠  Unexpected: stock factory image contains NetHunter strings."
+                ;;
+        esac
+    elif [ "$acquire_method" = "factory_download" ]; then
+        # Stock image acquired via fallback download — make sure the
+        # user knows their NetHunter install (if any was on the live
+        # partition) is NOT in this image.
+        ux_print ""
+        ux_print "  ℹ  Acquired via stock Google factory download."
+        ux_print "     If this device previously had Kali NetHunter installed,"
+        ux_print "     that ramdisk customisation is NOT in this image and will"
+        ux_print "     not survive flashing.  To preserve NetHunter, supply your"
+        ux_print "     existing ${boot_part}.img instead and re-run option 5."
     fi
 
     # ── 6. SHA-256 pre-patch checksum ─────────────────────────
