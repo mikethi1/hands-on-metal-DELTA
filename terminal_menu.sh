@@ -412,6 +412,18 @@ refresh_status() {
     ITEM_STATUS=()
     MISSING_INFO=()
 
+    # Re-source the persisted env registry written by core/* scripts via
+    # _reg_set (lines like  HOM_DEV_MODEL="Pixel 8"  # cat:device …).
+    # Scripts run in a subshell so their exports do not survive back into
+    # the menu — but they do persist these vars to env_registry.sh.
+    # Sourcing it here lets is_already_done / check_prereq see the state
+    # set by previously-run scripts (e.g. HOM_DEV_MODEL after option 4).
+    local _reg="${ENV_REGISTRY:-${OUT:-/sdcard/hands-on-metal}/env_registry.sh}"
+    if [ -f "$_reg" ]; then
+        # shellcheck source=/dev/null
+        . "$_reg" 2>/dev/null || true
+    fi
+
     local i rel prereqs prereq
     for i in "${!SCRIPT_LABELS[@]}"; do
         rel="${SCRIPT_LABELS[$i]}"
