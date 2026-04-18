@@ -45,14 +45,22 @@ _reg_set() {
 
 _find_block() {
     local name="$1"
-    for try in \
-        "/dev/block/bootdevice/by-name/$name" \
-        "/dev/block/by-name/$name"; do
-        [ -b "$try" ] && { echo "$try"; return 0; }
-    done
-    for g in /dev/block/platform/*/by-name/"$name" \
-             /dev/block/platform/*/*/by-name/"$name"; do
-        [ -b "$g" ] && { echo "$g"; return 0; }
+    local slot="${HOM_DEV_SLOT_SUFFIX:-$(_prop ro.boot.slot_suffix)}"
+    # Try names in priority order: with slot suffix first (A/B devices
+    # only have <name>_a/<name>_b symlinks, no plain <name>), then the
+    # bare name (A-only devices).
+    local n
+    for n in "${name}${slot}" "$name"; do
+        [ -n "$n" ] || continue
+        for try in \
+            "/dev/block/bootdevice/by-name/$n" \
+            "/dev/block/by-name/$n"; do
+            [ -b "$try" ] && { echo "$try"; return 0; }
+        done
+        for g in /dev/block/platform/*/by-name/"$n" \
+                 /dev/block/platform/*/*/by-name/"$n"; do
+            [ -b "$g" ] && { echo "$g"; return 0; }
+        done
     done
     return 1
 }
@@ -200,52 +208,101 @@ partition naming, and boot security configuration"
     # ── 8. Partition naming — which boot image to patch ───────
     # Priority: init_boot (API 33+) > boot
     # vendor_boot is always separate; we note it but don't patch it.
+    #
+    # Without root (e.g. when the script runs from Termux on a locked
+    # userdebug/user build) the /dev/block/by-name symlinks are not
+    # readable, so _find_block returns nothing even when the partition
+    # exists.  In that case we fall back to inference from
+    # ro.product.first_api_level so the user isn't told "not found"
+    # for partitions that the device demonstrably has.
 
     local boot_part="boot"
     local boot_part_source="default"
     local init_boot_dev vendor_boot_dev boot_dev
+    local init_boot_source="block_device"
+    local vendor_boot_source="block_device"
+    local boot_dev_source="block_device"
 
     init_boot_dev=$(_find_block init_boot 2>/dev/null || true)
     vendor_boot_dev=$(_find_block vendor_boot 2>/dev/null || true)
     boot_dev=$(_find_block boot 2>/dev/null || true)
 
+    # Helper: is first_api_level numeric and >= N ?
+    _api_ge() {
+        case "$api_level" in
+            ''|*[!0-9]*) return 1 ;;
+            *) [ "$api_level" -ge "$1" ] ;;
+        esac
+    }
+
     if [ -b "$init_boot_dev" ]; then
         boot_part="init_boot"
         boot_part_source="block_device"
     else
-        # Fallback: without root the by-name block paths are not
-        # readable (e.g. Termux), so _find_block can't see init_boot
-        # even when the device has it.  Devices that *launched* on
-        # Android 13 (API 33) or later always ship with an init_boot
-        # partition and Magisk patches init_boot on those devices.
+        # Devices that *launched* on Android 13 (API 33) or later
+        # always ship with an init_boot partition and Magisk patches
+        # init_boot on those devices.
         # See https://source.android.com/docs/core/architecture/partitions/generic-boot
-        case "$api_level" in
-            ''|*[!0-9]*) : ;;  # unknown / non-numeric → keep default
-            *)
-                if [ "$api_level" -ge 33 ]; then
-                    boot_part="init_boot"
-                    boot_part_source="first_api_level=$api_level"
-                    log_info "init_boot block device not visible (likely no root); inferring init_boot from first_api_level=$api_level"
-                fi
-                ;;
-        esac
+        if _api_ge 33; then
+            boot_part="init_boot"
+            boot_part_source="first_api_level=$api_level"
+            init_boot_source="inferred:first_api_level=$api_level"
+            log_info "init_boot block device not visible (likely no root); inferring init_boot from first_api_level=$api_level"
+        else
+            init_boot_source="not_found"
+        fi
     fi
 
-    _reg_set device HOM_DEV_BOOT_PART        "$boot_part"
-    _reg_set device HOM_DEV_BOOT_PART_SOURCE "$boot_part_source"
-    _reg_set device HOM_DEV_BOOT_DEV         "${boot_dev:-MISSING}"
-    _reg_set device HOM_DEV_INIT_BOOT_DEV    "${init_boot_dev:-MISSING}"
-    _reg_set device HOM_DEV_VENDOR_BOOT_DEV  "${vendor_boot_dev:-MISSING}"
+    if [ ! -b "$vendor_boot_dev" ]; then
+        # GKI devices launched on Android 12 (API 31) or later ship a
+        # separate vendor_boot partition.  When we can't see the block
+        # path we infer presence from first_api_level.
+        if _api_ge 31; then
+            vendor_boot_source="inferred:first_api_level=$api_level"
+        else
+            vendor_boot_source="not_found"
+        fi
+    fi
 
-    log_var "HOM_DEV_BOOT_PART"        "$boot_part"          "partition to patch with Magisk (boot or init_boot)"
-    log_var "HOM_DEV_BOOT_PART_SOURCE" "$boot_part_source"   "how HOM_DEV_BOOT_PART was determined (block_device | first_api_level=N | default)"
-    log_var "HOM_DEV_BOOT_DEV"         "${boot_dev:-MISSING}" "block device path for boot partition"
-    log_var "HOM_DEV_INIT_BOOT_DEV"    "${init_boot_dev:-MISSING}" "block device path for init_boot partition"
-    log_var "HOM_DEV_VENDOR_BOOT_DEV"  "${vendor_boot_dev:-MISSING}" "block device path for vendor_boot partition"
+    [ -b "$boot_dev" ] || boot_dev_source="not_visible"
 
-    ux_print "  Boot part  : $boot_part  (device: ${boot_dev:-not found})"
-    ux_print "  init_boot  : ${init_boot_dev:-not found}"
-    ux_print "  vendor_boot: ${vendor_boot_dev:-not found}"
+    _reg_set device HOM_DEV_BOOT_PART              "$boot_part"
+    _reg_set device HOM_DEV_BOOT_PART_SOURCE       "$boot_part_source"
+    _reg_set device HOM_DEV_BOOT_DEV               "${boot_dev:-MISSING}"
+    _reg_set device HOM_DEV_BOOT_DEV_SOURCE        "$boot_dev_source"
+    _reg_set device HOM_DEV_INIT_BOOT_DEV          "${init_boot_dev:-MISSING}"
+    _reg_set device HOM_DEV_INIT_BOOT_DEV_SOURCE   "$init_boot_source"
+    _reg_set device HOM_DEV_VENDOR_BOOT_DEV        "${vendor_boot_dev:-MISSING}"
+    _reg_set device HOM_DEV_VENDOR_BOOT_DEV_SOURCE "$vendor_boot_source"
+
+    log_var "HOM_DEV_BOOT_PART"              "$boot_part"          "partition to patch with Magisk (boot or init_boot)"
+    log_var "HOM_DEV_BOOT_PART_SOURCE"       "$boot_part_source"   "how HOM_DEV_BOOT_PART was determined (block_device | first_api_level=N | default)"
+    log_var "HOM_DEV_BOOT_DEV"               "${boot_dev:-MISSING}" "block device path for boot partition"
+    log_var "HOM_DEV_BOOT_DEV_SOURCE"        "$boot_dev_source"    "block_device | not_visible (no root)"
+    log_var "HOM_DEV_INIT_BOOT_DEV"          "${init_boot_dev:-MISSING}" "block device path for init_boot partition"
+    log_var "HOM_DEV_INIT_BOOT_DEV_SOURCE"   "$init_boot_source"   "block_device | inferred:first_api_level=N | not_found"
+    log_var "HOM_DEV_VENDOR_BOOT_DEV"        "${vendor_boot_dev:-MISSING}" "block device path for vendor_boot partition"
+    log_var "HOM_DEV_VENDOR_BOOT_DEV_SOURCE" "$vendor_boot_source" "block_device | inferred:first_api_level=N | not_found"
+
+    # User-visible lines — distinguish "absent" from "present but
+    # block path not readable".
+    _fmt_dev() {
+        # $1 = device path (may be empty), $2 = source tag
+        local dev="$1" src="$2"
+        if [ -n "$dev" ]; then
+            printf '%s' "$dev"
+        else
+            case "$src" in
+                inferred:*) printf 'present (%s)' "$src" ;;
+                not_visible) printf 'no root — block path not readable' ;;
+                *)          printf 'not found' ;;
+            esac
+        fi
+    }
+
+    ux_print "  Boot part  : $boot_part  (device: $(_fmt_dev "$boot_dev" "$boot_dev_source"))"
+    ux_print "  init_boot  : $(_fmt_dev "$init_boot_dev" "$init_boot_source")"
+    ux_print "  vendor_boot: $(_fmt_dev "$vendor_boot_dev" "$vendor_boot_source")"
 
     # ── 9. SoC / chipset identity ─────────────────────────────
 
@@ -283,10 +340,10 @@ partition naming, and boot security configuration"
         echo "Dynamic parts  : $dyn_parts"
         echo "Treble         : $treble_enabled (VNDK $treble_vintf_version)"
         echo "AVB            : v$avb_version state=$avb_state"
-        echo "Boot partition : $boot_part"
-        echo "  boot dev     : ${boot_dev:-NOT FOUND}"
-        echo "  init_boot    : ${init_boot_dev:-NOT FOUND}"
-        echo "  vendor_boot  : ${vendor_boot_dev:-NOT FOUND}"
+        echo "Boot partition : $boot_part  (source: $boot_part_source)"
+        echo "  boot dev     : $(_fmt_dev "$boot_dev" "$boot_dev_source")"
+        echo "  init_boot    : $(_fmt_dev "$init_boot_dev" "$init_boot_source")"
+        echo "  vendor_boot  : $(_fmt_dev "$vendor_boot_dev" "$vendor_boot_source")"
         echo "SoC            : $soc_mfr $soc_model ($platform / $hardware)"
     } > "$PROFILE_REPORT"
 
