@@ -1242,12 +1242,13 @@ startup_scan() {
         fi
     done
 
-    # Source the env registry if it exists (from a previous env_detect run)
-    if [ -f "/sdcard/hands-on-metal/env_registry.sh" ] 2>/dev/null; then
+    # Check the env registry if it exists (from a previous env_detect run)
+    local _env_reg="/sdcard/hands-on-metal/env_registry.sh"
+    if [ -f "$_env_reg" ]; then
         echo
-        echo "  Environment registry found: /sdcard/hands-on-metal/env_registry.sh"
+        echo "  Environment registry found: $_env_reg"
         local reg_count
-        reg_count=$(grep -c '=' "/sdcard/hands-on-metal/env_registry.sh" 2>/dev/null || echo 0)
+        reg_count=$(grep -c '=' "$_env_reg" 2>/dev/null || echo 0)
         printf "  %s%d entries detected%s\n" "$CLR_DARK_GREEN" "$reg_count" "$CLR_RESET"
     fi
 
