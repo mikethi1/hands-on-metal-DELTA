@@ -11,13 +11,13 @@ The easiest way to populate this directory (and build both flashable ZIPs) is to
 run the full dependency fetcher from the repository root:
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-fetch-deps.sh
+cat <<'EOF' > ~/hands-on-metal-fetch-deps.sh
 #!/usr/bin/env bash
 set -e
 bash build/fetch_all_deps.sh
 EOF
-chmod +x /tmp/hands-on-metal-fetch-deps.sh
-/tmp/hands-on-metal-fetch-deps.sh
+chmod +x ~/hands-on-metal-fetch-deps.sh
+~/hands-on-metal-fetch-deps.sh
 ```
 
 This downloads busybox, the Magisk binaries, and builds everything in one step.
@@ -27,21 +27,21 @@ This downloads busybox, the Magisk binaries, and builds everything in one step.
 **Option 1 — Download a pre-built binary (recommended):**
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-download-busybox.sh
+cat <<'EOF' > ~/hands-on-metal-download-busybox.sh
 #!/usr/bin/env bash
 set -e
 curl -L -o recovery-zip/tools/busybox-arm64 \
   https://busybox.net/downloads/binaries/1.31.0-defconfig-multiarch-musl/busybox-armv8l
 chmod +x recovery-zip/tools/busybox-arm64
 EOF
-chmod +x /tmp/hands-on-metal-download-busybox.sh
-/tmp/hands-on-metal-download-busybox.sh
+chmod +x ~/hands-on-metal-download-busybox.sh
+~/hands-on-metal-download-busybox.sh
 ```
 
 **Option 2 — Cross-compile from source:**
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-cross-compile.sh
+cat <<'EOF' > ~/hands-on-metal-cross-compile.sh
 #!/usr/bin/env bash
 set -e
 # Requires an aarch64 cross-toolchain (e.g. aarch64-linux-gnu-gcc)
@@ -52,8 +52,8 @@ make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 cp busybox ../recovery-zip/tools/busybox-arm64
 EOF
-chmod +x /tmp/hands-on-metal-cross-compile.sh
-/tmp/hands-on-metal-cross-compile.sh
+chmod +x ~/hands-on-metal-cross-compile.sh
+~/hands-on-metal-cross-compile.sh
 ```
 
 ## Building the flashable ZIP
@@ -63,26 +63,26 @@ After placing `busybox-arm64` in this directory, you can build either way:
 **Using the build script (recommended):**
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-build-recovery.sh
+cat <<'EOF' > ~/hands-on-metal-build-recovery.sh
 #!/usr/bin/env bash
 set -e
 bash build/build_offline_zip.sh
 EOF
-chmod +x /tmp/hands-on-metal-build-recovery.sh
-/tmp/hands-on-metal-build-recovery.sh
+chmod +x ~/hands-on-metal-build-recovery.sh
+~/hands-on-metal-build-recovery.sh
 ```
 
 **Manually:**
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-manual-build.sh
+cat <<'EOF' > ~/hands-on-metal-manual-build.sh
 #!/usr/bin/env bash
 set -e
 cd recovery-zip/
 zip -r ../hands-on-metal-recovery.zip META-INF/ tools/
 EOF
-chmod +x /tmp/hands-on-metal-manual-build.sh
-/tmp/hands-on-metal-manual-build.sh
+chmod +x ~/hands-on-metal-manual-build.sh
+~/hands-on-metal-manual-build.sh
 ```
 
 Flash `hands-on-metal-recovery.zip` via OrangeFox or TWRP:

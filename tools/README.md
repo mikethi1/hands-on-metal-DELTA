@@ -10,13 +10,13 @@ from the repository root. It downloads everything, builds both flashable ZIPs,
 and creates a single offline bundle:
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-fetch-deps.sh
+cat <<'EOF' > ~/hands-on-metal-fetch-deps.sh
 #!/usr/bin/env bash
 set -e
 bash build/fetch_all_deps.sh
 EOF
-chmod +x /tmp/hands-on-metal-fetch-deps.sh
-/tmp/hands-on-metal-fetch-deps.sh
+chmod +x ~/hands-on-metal-fetch-deps.sh
+~/hands-on-metal-fetch-deps.sh
 ```
 
 ## Required binaries
@@ -31,7 +31,7 @@ chmod +x /tmp/hands-on-metal-fetch-deps.sh
 ## Manual setup (if not using fetch_all_deps.sh)
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-manual-setup.sh
+cat <<'EOF' > ~/hands-on-metal-manual-setup.sh
 #!/usr/bin/env bash
 set -e
 
@@ -57,8 +57,8 @@ cp "$_TMP/libmagiskinit.so" tools/magiskinit64 && chmod +x tools/magiskinit64
 
 rm "$_TMP/magisk.apk" "$_TMP"/lib*.so
 EOF
-chmod +x /tmp/hands-on-metal-manual-setup.sh
-/tmp/hands-on-metal-manual-setup.sh
+chmod +x ~/hands-on-metal-manual-setup.sh
+~/hands-on-metal-manual-setup.sh
 ```
 
 > **Legal**: Magisk is GPL-3.0 licensed. By distributing binaries you must also make the source available.
@@ -67,7 +67,7 @@ chmod +x /tmp/hands-on-metal-manual-setup.sh
 ## Verifying binaries
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-verify-bins.sh
+cat <<'EOF' > ~/hands-on-metal-verify-bins.sh
 #!/usr/bin/env bash
 set -e
 # Busybox
@@ -77,20 +77,21 @@ file tools/busybox-arm64   # should say "ELF 64-bit LSB executable, ARM aarch64"
 file tools/magisk64         # should say "ELF 64-bit LSB executable, ARM aarch64"
 file tools/magisk32         # should say "ELF 32-bit LSB executable, ARM"
 EOF
-chmod +x /tmp/hands-on-metal-verify-bins.sh
-/tmp/hands-on-metal-verify-bins.sh
+chmod +x ~/hands-on-metal-verify-bins.sh
+~/hands-on-metal-verify-bins.sh
 ```
 
 ## Building without bundled tools
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-build-no-tools.sh
+cat <<'EOF' > ~/hands-on-metal-build-no-tools.sh
 #!/usr/bin/env bash
 set -e
+cd ~/hands-on-metal
 bash build/build_offline_zip.sh --no-tools
 EOF
-chmod +x /tmp/hands-on-metal-build-no-tools.sh
-/tmp/hands-on-metal-build-no-tools.sh
+chmod +x ~/hands-on-metal-build-no-tools.sh
+~/hands-on-metal-build-no-tools.sh
 ```
 
 The ZIPs will still work — they use whatever is already on the device (system

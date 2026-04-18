@@ -164,28 +164,28 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 **One-liner** (requires `curl`; `git` is auto-installed if missing):
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-setup.sh
+cat <<'EOF' > ~/hands-on-metal-setup.sh
 #!/usr/bin/env bash
 set -e
 curl -fsSL https://raw.githubusercontent.com/mikethi/hands-on-metal/main/setup.sh | bash
 EOF
-chmod +x /tmp/hands-on-metal-setup.sh
-/tmp/hands-on-metal-setup.sh
-cd hands-on-metal               # enter the repo after setup
+chmod +x ~/hands-on-metal-setup.sh
+~/hands-on-metal-setup.sh
+cd ~/hands-on-metal               # enter the repo after setup
 ```
 
 **Or clone first**, then run the setup script locally:
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-setup.sh
+cat <<'EOF' > ~/hands-on-metal-setup.sh
 #!/usr/bin/env bash
 set -e
-git clone https://github.com/mikethi/hands-on-metal.git
-cd hands-on-metal
+git clone https://github.com/mikethi/hands-on-metal.git ~/hands-on-metal
+cd ~/hands-on-metal
 bash setup.sh
 EOF
-chmod +x /tmp/hands-on-metal-setup.sh
-/tmp/hands-on-metal-setup.sh
+chmod +x ~/hands-on-metal-setup.sh
+~/hands-on-metal-setup.sh
 ```
 
 If `git` is not installed the script attempts to install it automatically
@@ -206,29 +206,29 @@ The script is safe to re-run — it skips steps that are already complete.
 If you already have the binaries in `tools/` or want device-side binaries:
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-build.sh
+cat <<'EOF' > ~/hands-on-metal-build.sh
 #!/usr/bin/env bash
 set -e
-cd hands-on-metal
+cd ~/hands-on-metal
 source check_deps.sh
 bash build/build_offline_zip.sh
 EOF
-chmod +x /tmp/hands-on-metal-build.sh
-/tmp/hands-on-metal-build.sh
+chmod +x ~/hands-on-metal-build.sh
+~/hands-on-metal-build.sh
 ```
 
 To build without bundled tools (rely on what's already on the device):
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-build-no-tools.sh
+cat <<'EOF' > ~/hands-on-metal-build-no-tools.sh
 #!/usr/bin/env bash
 set -e
-cd hands-on-metal
+cd ~/hands-on-metal
 source check_deps.sh
 bash build/build_offline_zip.sh --no-tools
 EOF
-chmod +x /tmp/hands-on-metal-build-no-tools.sh
-/tmp/hands-on-metal-build-no-tools.sh
+chmod +x ~/hands-on-metal-build-no-tools.sh
+~/hands-on-metal-build-no-tools.sh
 ```
 
 ### 3 — Flash to your device
@@ -236,10 +236,10 @@ chmod +x /tmp/hands-on-metal-build-no-tools.sh
 **Mode A — Magisk already installed:**
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-flash-magisk.sh
+cat <<'EOF' > ~/hands-on-metal-flash-magisk.sh
 #!/usr/bin/env bash
 set -e
-cd hands-on-metal
+cd ~/hands-on-metal
 source check_deps.sh
 # Push the ZIP to the device
 adb push dist/hands-on-metal-magisk-module-v2.0.0.zip /sdcard/
@@ -247,17 +247,17 @@ adb push dist/hands-on-metal-magisk-module-v2.0.0.zip /sdcard/
 # Then on the device:
 # Magisk app → Modules → Install from storage → select the ZIP → reboot
 EOF
-chmod +x /tmp/hands-on-metal-flash-magisk.sh
-/tmp/hands-on-metal-flash-magisk.sh
+chmod +x ~/hands-on-metal-flash-magisk.sh
+~/hands-on-metal-flash-magisk.sh
 ```
 
 **Mode B — no Magisk yet (flash from TWRP / OrangeFox):**
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-flash-recovery.sh
+cat <<'EOF' > ~/hands-on-metal-flash-recovery.sh
 #!/usr/bin/env bash
 set -e
-cd hands-on-metal
+cd ~/hands-on-metal
 source check_deps.sh
 # Push the ZIP to the device
 adb push dist/hands-on-metal-recovery-v2.0.0.zip /sdcard/
@@ -265,8 +265,8 @@ adb push dist/hands-on-metal-recovery-v2.0.0.zip /sdcard/
 # Then on the device:
 # Boot into TWRP/OrangeFox → Install → select the ZIP → swipe to confirm → reboot
 EOF
-chmod +x /tmp/hands-on-metal-flash-recovery.sh
-/tmp/hands-on-metal-flash-recovery.sh
+chmod +x ~/hands-on-metal-flash-recovery.sh
+~/hands-on-metal-flash-recovery.sh
 ```
 
 ### 4 — Run the host-side pipeline after collection
@@ -275,10 +275,10 @@ After your device has booted and collected hardware data, pull the logs and
 run the pipeline on your PC:
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-pipeline.sh
+cat <<'EOF' > ~/hands-on-metal-pipeline.sh
 #!/usr/bin/env bash
 set -e
-cd hands-on-metal
+cd ~/hands-on-metal
 source check_deps.sh
 RUN_ID="${1:?Usage: hands-on-metal-pipeline.sh <RUN_ID>}"
 
@@ -306,22 +306,22 @@ python pipeline/build_table.py \
 # Generate a human-readable report
 python pipeline/report.py --db hardware_map.sqlite
 EOF
-chmod +x /tmp/hands-on-metal-pipeline.sh
-/tmp/hands-on-metal-pipeline.sh 20250417_143022   # ← replace with your actual RUN_ID
+chmod +x ~/hands-on-metal-pipeline.sh
+~/hands-on-metal-pipeline.sh 20250417_143022   # ← replace with your actual RUN_ID
 ```
 
 ### 5 — Run the unit tests
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-test.sh
+cat <<'EOF' > ~/hands-on-metal-test.sh
 #!/usr/bin/env bash
 set -e
-cd hands-on-metal
+cd ~/hands-on-metal
 source check_deps.sh
 python -m pytest tests/
 EOF
-chmod +x /tmp/hands-on-metal-test.sh
-/tmp/hands-on-metal-test.sh
+chmod +x ~/hands-on-metal-test.sh
+~/hands-on-metal-test.sh
 ```
 
 ### 6 — Interactive terminal menu (optional)
@@ -330,15 +330,15 @@ Launch a single interactive menu that lists every script in the project and
 lets you run any of them with arguments:
 
 ```bash
-cat <<'EOF' > /tmp/hands-on-metal-menu.sh
+cat <<'EOF' > ~/hands-on-metal-menu.sh
 #!/usr/bin/env bash
 set -e
-cd hands-on-metal
+cd ~/hands-on-metal
 source check_deps.sh
 bash terminal_menu.sh
 EOF
-chmod +x /tmp/hands-on-metal-menu.sh
-/tmp/hands-on-metal-menu.sh
+chmod +x ~/hands-on-metal-menu.sh
+~/hands-on-metal-menu.sh
 ```
 
 The menu lists all shell scripts (`build/`, `core/`, `magisk-module/`,
