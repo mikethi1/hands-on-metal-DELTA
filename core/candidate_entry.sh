@@ -23,7 +23,12 @@ SCRIPT_NAME="${SCRIPT_NAME:-candidate_entry}"
 OUT="${OUT:-/sdcard/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 CANDIDATE_DIR="$OUT/candidates"
-PARTITION_INDEX="${PARTITION_INDEX:-$(dirname "$0")/../build/partition_index.json}"
+_HOM_BASE_ROOT="${REPO_ROOT:-${MODPATH:-}}"
+if [ -n "$_HOM_BASE_ROOT" ]; then
+    PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_BASE_ROOT/build/partition_index.json}"
+else
+    PARTITION_INDEX="${PARTITION_INDEX:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)/build/partition_index.json}"
+fi
 
 # ── helpers ───────────────────────────────────────────────────
 
