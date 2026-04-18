@@ -28,10 +28,10 @@ if [ -n "$_HOM_RESOLVED_ROOT" ]; then
     PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_RESOLVED_ROOT/build/partition_index.json}"
 else
     case "$0" in
-        */*) _HOM_REPO_ROOT_FALLBACK="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)" ;;
-        *)   _HOM_REPO_ROOT_FALLBACK="${PWD:-.}" ;;
+        */*) _HOM_SCRIPT_RESOLVED_ROOT="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)" ;;
+        *)   _HOM_SCRIPT_RESOLVED_ROOT="${PWD:-.}" ;;
     esac
-    PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_REPO_ROOT_FALLBACK/build/partition_index.json}"
+    PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_SCRIPT_RESOLVED_ROOT/build/partition_index.json}"
 fi
 
 # ── helpers ───────────────────────────────────────────────────
