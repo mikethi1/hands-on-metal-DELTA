@@ -31,6 +31,14 @@ _reg_get() {
         cut -d= -f2- | sed 's/^"//;s/"[[:space:]].*//'
 }
 
+_reg_set() {
+    local cat="$1" key="$2" val="$3"
+    local tmp="${ENV_REGISTRY}.tmp"
+    grep -v "^${key}=" "$ENV_REGISTRY" > "$tmp" 2>/dev/null || true
+    printf '%s="%s"  # cat:%s\n' "$key" "$val" "$cat" >> "$tmp"
+    mv "$tmp" "$ENV_REGISTRY"
+}
+
 _json_str() {
     # Escape a string for JSON output
     local s="$1"
@@ -133,6 +141,9 @@ run_candidate_entry() {
 
     log_var "HOM_CANDIDATE_FAMILY_MATCHED" "$matched_family" \
         "device_family entry matched in partition_index.json (none = unknown)"
+
+    # Persist to env_registry so apply_defaults.sh can read it
+    _reg_set candidate HOM_CANDIDATE_FAMILY_MATCHED "$matched_family"
 
     if [ "$matched_family" != "none" ]; then
         ux_print "  Device family matched: $matched_family"

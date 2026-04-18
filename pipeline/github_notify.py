@@ -245,7 +245,13 @@ def main() -> None:
 
     token = args.token or os.environ.get("GITHUB_TOKEN", "")
     if not token and not args.dry_run:
-        ap.error("GITHUB_TOKEN is required (set env var or use --token)")
+        # No token and no --dry-run: default to dry-run mode
+        print(
+            "No GITHUB_TOKEN provided — running in dry-run mode.\n"
+            "To post to GitHub, set GITHUB_TOKEN or re-run with --token.\n",
+            file=sys.stderr,
+        )
+        args.dry_run = True
 
     # Load analysis
     analysis = json.loads(Path(args.analysis).read_text(encoding="utf-8"))
