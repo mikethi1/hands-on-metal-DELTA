@@ -407,8 +407,8 @@ partition naming, and boot security configuration"
                         case "$boot_part_source" in
                             first_api_level=*)
                                 boot_part="boot"
-                                boot_part_source="$_ftag(no init_boot.img)"
-                                log_info "Factory ZIP has no init_boot.img; init ramdisk is inside vendor_boot.img — patching boot instead"
+                                boot_part_source="$_ftag(no init_boot)"
+                                log_info "Factory ZIP has no init_boot image; init ramdisk is inside vendor_boot — patching boot instead"
                                 ;;
                         esac
                     else
@@ -487,7 +487,7 @@ partition naming, and boot security configuration"
         else
             case "$src" in
                 factory_zip:*)         printf 'present (confirmed by %s)' "${src#factory_zip:}" ;;
-                in_vendor_boot:*)      printf 'inside vendor_boot.img — no separate init_boot partition (per %s)' "${src#in_vendor_boot:}" ;;
+                in_vendor_boot:*)      printf 'inside vendor_boot — no separate init_boot partition (per %s)' "${src#in_vendor_boot:}" ;;
                 inferred:*)            printf 'present (%s)' "$src" ;;
                 absent_in_factory_zip) printf 'absent (per local factory ZIP)' ;;
                 not_visible)           printf 'no root — block path not readable' ;;
