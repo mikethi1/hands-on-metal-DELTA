@@ -241,7 +241,168 @@ permanently brick the device via AVB fuse-burning — this check prevents that"
     log_var "HOM_ARB_REQUIRE_MAY2026_FLAGS" "$require_may2026_flags" \
         "true when magisk_patch.sh must apply May-2026 policy-compatible patch options"
 
-    # ── 6. Final verdict ─────────────────────────────────────
+    # ── 6. Tensor Pixel bootloader / radio ARB check ─────────
+    # Background: starting with the May 2025 OTAs Google bumped the
+    # bootloader anti-rollback (ARB) version on Tensor Pixels
+    # (Pixel 6 / 6 Pro / 6a / 8 / 8 Pro / 8a).  Once the new
+    # bootloader is installed and the device boots once, the ARB
+    # counter is fused.  Flashing an older bootloader.img or
+    # radio.img after that point is a PERMANENT BRICK — the device
+    # will refuse to start and Google has no recovery path.
+    #
+    # See: https://xdaforums.com/t/4735780/  (May 2025 / and newer
+    #     beware of permanent bricks if you don't handle the
+    #     anti-rollback bootloader correctly on all Pixel 6/6 Pro/
+    #     6a/8/8 Pro/8a)
+    #
+    # Strategy here:
+    #   • If we know the device's current bootloader / baseband
+    #     versions and a local factory ZIP is present, compare
+    #     them against the factory's `require version-bootloader=`
+    #     / `require version-baseband=` (already parsed by
+    #     core/device_profile.sh into HOM_DEV_FACTORY_REQUIRED_…).
+    #   • A *downgrade* on a Tensor device is unrecoverable; we
+    #     refuse to proceed and add `bootloader`/`radio` to a
+    #     `HOM_ARB_DO_NOT_FLASH` list that downstream flash
+    #     tooling MUST honour.
+    #   • An *upgrade* will fuse-bump the ARB; we warn loudly so
+    #     the user understands they cannot revert.
+
+    _arb_bl_compare() {
+        # Compare two Pixel bootloader version strings of the form
+        # "<codename>-<major>.<minor>-<build>" (e.g.
+        # "husky-1.5-12345678").  Echoes:
+        #   "older"    if $1 is older than $2
+        #   "newer"    if $1 is newer than $2
+        #   "equal"    if they are identical
+        #   "unknown"  if either is empty / unparseable
+        local a="$1" b="$2"
+        [ -z "$a" ] || [ -z "$b" ] && { echo "unknown"; return; }
+        [ "$a" = "$b" ] && { echo "equal"; return; }
+        # Strip the leading "<codename>-" — same on both sides for a
+        # given device.  Then compare lexicographically: Pixel
+        # bootloader version strings sort correctly that way because
+        # both the major.minor and the date-encoded build tail are
+        # zero-padded by Google.
+        local av bv
+        av=$(printf '%s' "$a" | sed 's/^[^-]*-//')
+        bv=$(printf '%s' "$b" | sed 's/^[^-]*-//')
+        [ -z "$av" ] || [ -z "$bv" ] && { echo "unknown"; return; }
+        if [ "$av" = "$bv" ]; then echo "equal"
+        else
+            # POSIX "smaller string sorts first" check
+            local first
+            first=$(printf '%s\n%s\n' "$av" "$bv" | sort | head -1)
+            if [ "$first" = "$av" ]; then echo "older"; else echo "newer"; fi
+        fi
+    }
+
+    local tensor_affected dev_bl dev_bb fact_bl fact_bb fact_zip
+    tensor_affected=$(_reg_get HOM_DEV_TENSOR_ARB_AFFECTED)
+    dev_bl=$(_reg_get HOM_DEV_BOOTLOADER)
+    dev_bb=$(_reg_get HOM_DEV_BASEBAND)
+    fact_bl=$(_reg_get HOM_DEV_FACTORY_REQUIRED_BOOTLOADER)
+    fact_bb=$(_reg_get HOM_DEV_FACTORY_REQUIRED_BASEBAND)
+    fact_zip=$(_reg_get HOM_DEV_FACTORY_ZIP)
+
+    log_var "tensor_affected" "$tensor_affected" "device flagged as Tensor ARB-affected by device_profile"
+    log_var "dev_bl"  "$dev_bl"  "device current bootloader version"
+    log_var "dev_bb"  "$dev_bb"  "device current baseband version"
+    log_var "fact_bl" "$fact_bl" "factory-required bootloader version (from android-info.txt)"
+    log_var "fact_bb" "$fact_bb" "factory-required baseband version (from android-info.txt)"
+
+    local bl_cmp="unknown" bb_cmp="unknown"
+    local bootloader_downgrade="false"
+    local bootloader_upgrade_will_fuse="false"
+    local baseband_downgrade="false"
+    local do_not_flash=""
+
+    if [ -n "$fact_zip" ]; then
+        bl_cmp=$(_arb_bl_compare "$fact_bl" "$dev_bl")
+        bb_cmp=$(_arb_bl_compare "$fact_bb" "$dev_bb")
+        ux_sep
+        ux_print "  Bootloader / Radio ARB cross-check (vs $(basename "$fact_zip"))"
+        ux_print "    device bootloader  : ${dev_bl:-unknown}"
+        ux_print "    factory bootloader : ${fact_bl:-unknown}   →  $bl_cmp"
+        ux_print "    device baseband    : ${dev_bb:-unknown}"
+        ux_print "    factory baseband   : ${fact_bb:-unknown}   →  $bb_cmp"
+
+        case "$bl_cmp" in
+            older) bootloader_downgrade="true";   do_not_flash="$do_not_flash bootloader" ;;
+            newer) bootloader_upgrade_will_fuse="true" ;;
+        esac
+        case "$bb_cmp" in
+            older) baseband_downgrade="true";     do_not_flash="$do_not_flash radio" ;;
+        esac
+    else
+        ux_print "  Bootloader/Radio ARB cross-check: skipped (no local factory ZIP found)"
+    fi
+
+    # Trim leading space.
+    do_not_flash="${do_not_flash# }"
+
+    _reg_set avb HOM_ARB_BL_COMPARE                  "$bl_cmp"
+    _reg_set avb HOM_ARB_BB_COMPARE                  "$bb_cmp"
+    _reg_set avb HOM_ARB_BOOTLOADER_DOWNGRADE        "$bootloader_downgrade"
+    _reg_set avb HOM_ARB_BOOTLOADER_UPGRADE_WILL_FUSE "$bootloader_upgrade_will_fuse"
+    _reg_set avb HOM_ARB_BASEBAND_DOWNGRADE          "$baseband_downgrade"
+    _reg_set avb HOM_ARB_DO_NOT_FLASH                "$do_not_flash"
+
+    log_var "HOM_ARB_BL_COMPARE"                   "$bl_cmp"                    "factory bootloader vs device (older|newer|equal|unknown)"
+    log_var "HOM_ARB_BB_COMPARE"                   "$bb_cmp"                    "factory baseband vs device (older|newer|equal|unknown)"
+    log_var "HOM_ARB_BOOTLOADER_DOWNGRADE"         "$bootloader_downgrade"      "true if factory ZIP would downgrade bootloader (BRICK RISK on Tensor)"
+    log_var "HOM_ARB_BOOTLOADER_UPGRADE_WILL_FUSE" "$bootloader_upgrade_will_fuse" "true if factory ZIP would bump bootloader ARB fuses (irreversible)"
+    log_var "HOM_ARB_BASEBAND_DOWNGRADE"           "$baseband_downgrade"        "true if factory ZIP would downgrade radio (BRICK RISK on Tensor)"
+    log_var "HOM_ARB_DO_NOT_FLASH"                 "$do_not_flash"              "space-separated list of partitions downstream tooling MUST refuse to flash"
+
+    # Loud warnings — only escalate to abort on Tensor (where the
+    # XDA-documented brick is real); on other devices we still warn
+    # but allow the user to proceed.
+    if [ "$bootloader_downgrade" = "true" ] || [ "$baseband_downgrade" = "true" ]; then
+        ux_print ""
+        ux_print "  ╔════════════════════════════════════════════════════════════╗"
+        ux_print "  ║  PERMANENT BRICK RISK — bootloader/radio DOWNGRADE         ║"
+        ux_print "  ╠════════════════════════════════════════════════════════════╣"
+        ux_print "  ║  The local factory ZIP would write OLDER bootloader/radio  ║"
+        ux_print "  ║  than what is currently fused on this device:              ║"
+        [ "$bootloader_downgrade" = "true" ] && \
+            ux_print "  ║    bootloader: device='${dev_bl}' factory='${fact_bl}'"
+        [ "$baseband_downgrade" = "true" ] && \
+            ux_print "  ║    radio    : device='${dev_bb}' factory='${fact_bb}'"
+        ux_print "  ║                                                            ║"
+        ux_print "  ║  On Tensor Pixels (6/6 Pro/6a/8/8 Pro/8a) the May-2025+    ║"
+        ux_print "  ║  ARB fuse bump makes this UNRECOVERABLE — the device       ║"
+        ux_print "  ║  will refuse to boot and Google has no recovery path.      ║"
+        ux_print "  ║  Reference: XDA thread 4735780                             ║"
+        ux_print "  ║                                                            ║"
+        ux_print "  ║  SAFE PARTITIONS to flash from this ZIP (skip the rest):   ║"
+        ux_print "  ║    boot, init_boot, vendor_boot, dtbo, vbmeta,             ║"
+        ux_print "  ║    system, system_ext, product, vendor, vendor_dlkm,       ║"
+        ux_print "  ║    odm, odm_dlkm                                           ║"
+        ux_print "  ║                                                            ║"
+        ux_print "  ║  DO NOT FLASH:  ${do_not_flash}"
+        ux_print "  ╚════════════════════════════════════════════════════════════╝"
+        ux_print ""
+        if [ "$tensor_affected" = "true" ]; then
+            ux_step_result "Anti-Rollback Check" "FAIL" \
+                "bootloader/radio downgrade would brick a Tensor Pixel (XDA 4735780)"
+            manifest_step "anti_rollback_check" "FAIL" \
+                "tensor_arb_brick_risk do_not_flash=$do_not_flash"
+            ux_abort "Refusing to proceed: this would PERMANENTLY brick the device. Use a factory ZIP whose bootloader/radio versions match (or are newer than) the device, or flash only the safe partitions listed above."
+        else
+            ux_print "  (Device not flagged as Tensor — continuing, but you have been warned.)"
+        fi
+    elif [ "$bootloader_upgrade_will_fuse" = "true" ] && [ "$tensor_affected" = "true" ]; then
+        ux_print ""
+        ux_print "  ⚠  This factory ZIP will UPGRADE the bootloader on a Tensor"
+        ux_print "     Pixel.  Once the new bootloader boots, the anti-rollback"
+        ux_print "     fuses are bumped IRREVERSIBLY.  After that you must never"
+        ux_print "     flash an older bootloader/radio (e.g. an older factory"
+        ux_print "     image), or the device will be permanently bricked."
+        ux_print ""
+    fi
+
+    # ── 7. Final verdict ─────────────────────────────────────
 
     if [ "$rollback_risk" = "true" ]; then
         ux_step_result "Anti-Rollback Check" "FAIL" \
