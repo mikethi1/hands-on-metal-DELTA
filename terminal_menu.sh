@@ -20,6 +20,10 @@ set -eu
 # interactive `read` calls work.
 if [ ! -t 0 ] && [ -e /dev/tty ]; then
     exec < /dev/tty
+elif [ ! -t 0 ]; then
+    echo "Error: no interactive terminal available (stdin is not a tty)." >&2
+    echo "Run 'bash terminal_menu.sh' from an interactive terminal session." >&2
+    exit 1
 fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -120,5 +120,5 @@ if [ -e /dev/tty ]; then
     exec bash terminal_menu.sh </dev/tty
 else
     echo "No interactive terminal available."
-    echo "Run 'bash terminal_menu.sh' interactively to continue."
+    echo "Run 'bash terminal_menu.sh' from an interactive terminal session to continue."
 fi
