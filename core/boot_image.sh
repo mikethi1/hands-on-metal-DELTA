@@ -9,14 +9,32 @@
 #      root access (uid 0) and the target partition's block
 #      device is reachable, DD-copy the live partition image.
 #
-#   2. **Pre-placed image file** — scan well-known locations on
-#      /sdcard/Download and the boot_work directory for an
-#      already-extracted boot.img / init_boot.img.
+#   2. **Pre-placed / backup image** — scan well-known locations:
+#      - boot_work directory and /sdcard/Download
+#      - Magisk stock boot backup (/data/adb/magisk/stock_boot.img)
+#        NOTE: The Magisk GitHub repo does NOT host factory images.
+#        Magisk saves the original unpatched boot image here when
+#        it patches.  This is the best source for re-patching or
+#        recovering root if live patching fails.
+#      - TWRP / OrangeFox / PBRP / SHRP / RedWolf Nandroid backups
+#        (.emmc.win raw dumps, including .gz and .lz4 compressed)
+#      - CWM / Nandroid backup directories
 #
 #   3. **Google factory image download** — for Google Pixel
 #      devices whose codename is in the partition index, offer
 #      to download the factory image ZIP and extract the
 #      matching boot.img or init_boot.img automatically.
+#
+#   3b. **GKI generic boot image** (Android 12+ / API 31+) —
+#       for ANY device using the Generic Kernel Image (GKI) format,
+#       Google publishes prebuilt generic boot images at ci.android.com.
+#       The device's kernel version is matched to the correct AOSP
+#       GKI branch (5.10, 5.15, 6.1, 6.6, 6.12).
+#       Ref: https://source.android.com/docs/core/architecture/partitions/generic-boot
+#
+#   3c. **OEM-specific guidance** — for non-Google devices, show
+#       download links for OEM firmware (Samsung/Xiaomi/OnePlus/
+#       Motorola/ASUS/Sony) and payload.bin extraction instructions.
 #
 #   4. **User-guided manual path** — prompt the user to supply
 #      a path to a block device or image file.
@@ -42,7 +60,9 @@
 #   HOM_BOOT_IMG_SHA256     — SHA-256 of the unpatched image
 #   HOM_BOOT_PART_SRC       — source the image was obtained from
 #   HOM_BOOT_IMG_METHOD     — how the image was acquired
-#                              (root_dd | pre_placed | factory_download | user_prompt)
+#                              (root_dd | magisk_stock_backup | recovery_backup |
+#                               nandroid_backup | pre_placed | factory_download |
+#                               gki_download | user_prompt)
 # ============================================================
 
 SCRIPT_NAME="boot_image"
@@ -159,14 +179,29 @@ _boot_image_check_deps() {
 }
 
 # ── pre-placed image scanner ─────────────────────────────────
-# Scans well-known download / working directories for an image
-# file whose name matches the target partition.  Returns the
-# first match found.
+# Scans well-known download, working, and backup directories for
+# an image file whose name matches the target partition.
+#
+# Search order (first match wins):
+#   1. Boot work directory and standard download locations
+#   2. Magisk stock boot backup (/data/adb/magisk/stock_boot*.img)
+#      NOTE: The Magisk GitHub repo (topjohnwu/Magisk) does NOT
+#      host factory boot images — only the Magisk app and tools.
+#      However, when Magisk patches a boot image it saves the
+#      original unpatched copy at /data/adb/magisk/stock_boot.img.
+#      This requires root to read /data/adb/.
+#   3. TWRP / OrangeFox / PBRP / SHRP / RedWolf backup folders
+#      (.emmc.win files are raw dd dumps — same format as .img)
+#   4. CWM / Nandroid backup folders
+#
+# TWRP compressed backups (.win.gz / .win.lz4) are also found.
+# Decompression is handled by the caller in run_boot_image_acquire.
 
 _find_pre_placed_image() {
     local boot_part="$1"
     local candidate
 
+    # ── Direct image files in standard locations ──────────────
     for candidate in \
         "$BOOT_WORK_DIR/${boot_part}_original.img" \
         "$BOOT_WORK_DIR/${boot_part}.img" \
@@ -179,6 +214,230 @@ _find_pre_placed_image() {
             return 0
         fi
     done
+
+    # ── Magisk stock boot backup ──────────────────────────────
+    # Magisk saves the original unpatched boot image when it patches.
+    # This is the BEST source for re-patching or recovery if a live
+    # Magisk patch fails — you can patch this backup offline and
+    # flash it via fastboot (Mode C2) to regain root.
+    for candidate in \
+        "/data/adb/magisk/stock_boot.img" \
+        "/data/adb/magisk/stock_boot_${boot_part}.img"; do
+        if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+            log_info "Found Magisk stock boot backup: $candidate"
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    # ── TWRP / OrangeFox / PBRP / SHRP / RedWolf backups ─────
+    # Custom recovery Nandroid backups store raw partition dumps.
+    # TWRP naming: BACKUPS/<serial>/<YYYY-MM-DD--HH-MM-SS>/<part>.emmc.win
+    # The .win files are raw dd dumps (identical to .img).
+    # May be compressed: .win.gz (gzip) or .win.lz4 (lz4).
+    #
+    # These backup images can be used to RECOVER ROOT ACCESS even
+    # if live patching fails: extract stock boot → patch with Magisk
+    # on another device or PC → flash via fastboot (Mode C2).
+    local bdir
+    for bdir in \
+        /sdcard/TWRP/BACKUPS \
+        /sdcard/Fox/BACKUPS \
+        /sdcard/OrangeFox/BACKUPS \
+        /sdcard/PBRP/BACKUPS \
+        /sdcard/SHRP/BACKUPS \
+        /sdcard/RedWolf/BACKUPS; do
+        [ -d "$bdir" ] 2>/dev/null || continue
+        # Uncompressed .win (preferred)
+        for candidate in "$bdir"/*/*/"${boot_part}.emmc.win"; do
+            if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                log_info "Found TWRP backup boot image: $candidate"
+                echo "$candidate"
+                return 0
+            fi
+        done
+        # Gzip compressed .win.gz
+        for candidate in "$bdir"/*/*/"${boot_part}.emmc.win.gz"; do
+            if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                log_info "Found compressed TWRP backup: $candidate (gzip)"
+                echo "$candidate"
+                return 0
+            fi
+        done
+        # LZ4 compressed .win.lz4
+        for candidate in "$bdir"/*/*/"${boot_part}.emmc.win.lz4"; do
+            if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                log_info "Found compressed TWRP backup: $candidate (lz4)"
+                echo "$candidate"
+                return 0
+            fi
+        done
+        # Some recoveries use plain .img naming
+        for candidate in "$bdir"/*/*/"${boot_part}.img"; do
+            if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                log_info "Found recovery backup boot image: $candidate"
+                echo "$candidate"
+                return 0
+            fi
+        done
+    done
+
+    # ── CWM / Nandroid backup folders ─────────────────────────
+    for bdir in \
+        /sdcard/clockworkmod/backup \
+        /sdcard/nandroid; do
+        [ -d "$bdir" ] 2>/dev/null || continue
+        for candidate in "$bdir"/*/"${boot_part}.img"; do
+            if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                log_info "Found CWM/Nandroid backup: $candidate"
+                echo "$candidate"
+                return 0
+            fi
+        done
+    done
+
+    return 1
+}
+
+# ── GKI (Generic Kernel Image) detection ─────────────────────
+# Android 12+ devices with GKI use a standardized boot image
+# format.  Google publishes prebuilt GKI boot images at
+# ci.android.com for every kernel version (5.10, 5.15, 6.1, 6.6,
+# 6.12).  These can be used on ANY GKI-compatible device —
+# not just Pixels.
+#
+# Reference: https://source.android.com/docs/core/architecture/partitions/generic-boot
+#
+# GKI version mapping:
+#   Android 12 (API 31) → kernel 5.10
+#   Android 13 (API 33) → kernel 5.10 or 5.15, init_boot partition introduced
+#   Android 14 (API 34) → kernel 5.15 or 6.1
+#   Android 15 (API 35) → kernel 6.1 or 6.6
+#   Android 16 (API 36) → kernel 6.6 or 6.12
+#
+# When GKI is in use, the boot partition contains only the
+# standardized kernel (no vendor ramdisk), so a generic boot.img
+# matching the kernel branch can serve as a base for Magisk
+# patching.  For devices with init_boot (API 33+), the generic
+# ramdisk is in init_boot and that is what Magisk patches.
+
+_is_gki_device() {
+    local api_level
+    api_level=$(getprop ro.build.version.sdk 2>/dev/null || echo 0)
+    # GKI was introduced with Android 12 (API 31)
+    [ "$api_level" -ge 31 ] 2>/dev/null
+}
+
+# Determine the GKI kernel branch for the running device.
+# Returns the ci.android.com branch name, e.g. "aosp_kernel-common-android14-6.1"
+_gki_branch_for_device() {
+    local api_level kernel_ver branch=""
+    api_level=$(getprop ro.build.version.sdk 2>/dev/null || echo 0)
+    kernel_ver=$(uname -r 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || echo "")
+
+    # Map kernel version to the correct AOSP GKI branch
+    case "$kernel_ver" in
+        5.10)
+            if [ "$api_level" -ge 33 ]; then
+                branch="aosp_kernel-common-android13-5.10"
+            else
+                branch="aosp_kernel-common-android12-5.10"
+            fi
+            ;;
+        5.15)
+            if [ "$api_level" -ge 34 ]; then
+                branch="aosp_kernel-common-android14-5.15"
+            else
+                branch="aosp_kernel-common-android13-5.15"
+            fi
+            ;;
+        6.1)  branch="aosp_kernel-common-android14-6.1" ;;
+        6.6)  branch="aosp_kernel-common-android15-6.6" ;;
+        6.12) branch="aosp_kernel-common-android16-6.12" ;;
+        *)
+            # Unknown kernel version — cannot determine GKI branch
+            log_info "Kernel version $kernel_ver does not map to a known GKI branch"
+            return 1
+            ;;
+    esac
+
+    echo "$branch"
+}
+
+# Download a GKI boot image from ci.android.com.
+# This works for ANY Android 12+ device using GKI — not just Pixels.
+#
+# ci.android.com artifact URL pattern:
+#   https://ci.android.com/builds/submitted/<build_id>/<target>/latest/boot.img
+#
+# Since the CI build IDs change with each release, this function
+# provides the user with the correct branch URL and instructions
+# to download the matching boot.img artifact manually.  For
+# automated download, the AOSP download_from_ci script can be used:
+#   https://android.googlesource.com/kernel/build/+/refs/heads/main/gki/download_from_ci
+
+_offer_gki_download() {
+    local boot_part="$1" branch="$2"
+
+    ux_print ""
+    ux_print "  ┌──────────────────────────────────────────────────────┐"
+    ux_print "  │  GKI Generic Boot Image — works on any GKI device   │"
+    ux_print "  └──────────────────────────────────────────────────────┘"
+    ux_print ""
+    ux_print "  This device runs a GKI-compatible kernel."
+    ux_print "  Google publishes prebuilt generic boot images for every"
+    ux_print "  GKI kernel version.  These work on ANY device using GKI"
+    ux_print "  — not just Pixels."
+    ux_print ""
+    ux_print "  GKI branch for this device: $branch"
+    ux_print "  Kernel:  $(uname -r 2>/dev/null || echo unknown)"
+    ux_print "  Android: $(getprop ro.build.version.release 2>/dev/null || echo unknown) (API $(getprop ro.build.version.sdk 2>/dev/null || echo unknown))"
+    ux_print ""
+    ux_print "  Download the matching boot.img from:"
+    ux_print "    https://ci.android.com/builds/branches/$branch/grid"
+    ux_print ""
+    ux_print "  Steps:"
+    ux_print "    1. Open the URL above in a browser"
+    ux_print "    2. Click the latest green build → Artifacts tab"
+    ux_print "    3. Download boot.img (or boot-gz.img)"
+    ux_print "    4. Push to device:"
+    ux_print "       adb push boot.img /sdcard/Download/"
+    ux_print "    5. Re-run this script"
+    ux_print ""
+
+    if [ "$boot_part" = "init_boot" ]; then
+        ux_print "  NOTE: This device uses init_boot (Android 13+)."
+        ux_print "  Download init_boot.img instead of boot.img from the artifacts."
+        ux_print ""
+    fi
+
+    ux_print "  For automated download, use AOSP's download_from_ci script:"
+    ux_print "    https://android.googlesource.com/kernel/build/+/refs/heads/main/gki/download_from_ci"
+    ux_print ""
+
+    # If curl is available, try to let the user paste a direct URL
+    if _has_cmd curl && [ -t 0 ] 2>/dev/null; then
+        ux_print "  Or paste a direct download URL for boot.img / init_boot.img:"
+        local gki_url=""
+        ux_prompt gki_url \
+            "GKI boot image URL (or press Enter to skip)" \
+            ""
+        if [ -n "$gki_url" ]; then
+            local gki_out="$_TMP/hom_gki_${boot_part}.img"
+            ux_print "  Downloading GKI image..."
+            if curl -fSL --retry 3 --connect-timeout 30 --max-time 300 \
+                    -o "$gki_out" "$gki_url" 2>/dev/null; then
+                if [ -f "$gki_out" ] && [ -s "$gki_out" ]; then
+                    ux_print "  ✓  Downloaded GKI image"
+                    echo "$gki_out"
+                    return 0
+                fi
+            fi
+            ux_print "  ✗  Download failed.  Place the image manually and re-run."
+            rm -f "$gki_out"
+        fi
+    fi
+
     return 1
 }
 
@@ -400,29 +659,94 @@ run_boot_image_acquire() {
     fi
 
     # ── 2. Pre-placed image file ──────────────────────────────
+    # Scans: boot_work dir, /sdcard/Download, Magisk stock backup,
+    # TWRP/OrangeFox/PBRP/SHRP/RedWolf/CWM/Nandroid backup folders.
+    #
+    # TWRP .emmc.win files are raw dd dumps (same as .img).
+    # Compressed backups (.win.gz, .win.lz4) are decompressed here.
+    #
+    # If a backup boot image is found, it can also be used as a
+    # FALLBACK TO RECOVER ROOT if live Magisk patching fails:
+    #   backup boot.img → Magisk patch → fastboot flash → root.
 
     if [ -z "$acquire_method" ]; then
-        ux_print "  Scanning for pre-placed image files..."
+        ux_print "  Scanning for pre-placed and backup images..."
+        ux_print "    (boot_work, /sdcard/Download, Magisk stock backup,"
+        ux_print "     TWRP, OrangeFox, PBRP, SHRP, RedWolf, CWM, Nandroid)"
 
         local pre_placed
         pre_placed=$(_find_pre_placed_image "$boot_part" 2>/dev/null || true)
 
         if [ -n "$pre_placed" ]; then
-            ux_print "  ✓  Found pre-placed image: $pre_placed"
-            log_info "Pre-placed image found: $pre_placed"
+            ux_print "  ✓  Found image: $pre_placed"
+            log_info "Pre-placed/backup image found: $pre_placed"
 
-            if [ "$pre_placed" != "$out_img" ]; then
-                log_exec "cp_boot_image" cp "$pre_placed" "$out_img"
-            fi
+            # Handle TWRP compressed backups
+            case "$pre_placed" in
+                *.win.gz)
+                    ux_print "  Decompressing gzip TWRP backup..."
+                    if _has_cmd gzip; then
+                        gzip -dc "$pre_placed" > "$out_img" 2>/dev/null
+                        log_info "Decompressed gzip backup: $pre_placed → $out_img"
+                    else
+                        log_warn "gzip not available — cannot decompress $pre_placed"
+                        ux_print "  ✗  gzip not available to decompress backup"
+                        pre_placed=""
+                    fi
+                    ;;
+                *.win.lz4)
+                    ux_print "  Decompressing lz4 TWRP backup..."
+                    if _has_cmd lz4; then
+                        lz4 -dc "$pre_placed" > "$out_img" 2>/dev/null
+                        log_info "Decompressed lz4 backup: $pre_placed → $out_img"
+                    else
+                        log_warn "lz4 not available — cannot decompress $pre_placed"
+                        ux_print "  ✗  lz4 not available to decompress backup"
+                        ux_print "     Install: apt install lz4 (host) / pkg install lz4 (Termux)"
+                        pre_placed=""
+                    fi
+                    ;;
+                *)
+                    # Uncompressed — direct copy (.img or .emmc.win)
+                    if [ "$pre_placed" != "$out_img" ]; then
+                        log_exec "cp_boot_image" cp "$pre_placed" "$out_img"
+                    fi
+                    ;;
+            esac
 
-            if [ -f "$out_img" ] && [ -s "$out_img" ]; then
+            if [ -n "$pre_placed" ] && [ -f "$out_img" ] && [ -s "$out_img" ]; then
                 boot_dev="$pre_placed"
-                acquire_method="pre_placed"
+                # Classify the source for logging
+                case "$pre_placed" in
+                    /data/adb/magisk/*)  acquire_method="magisk_stock_backup" ;;
+                    *TWRP*|*Fox*|*OrangeFox*|*PBRP*|*SHRP*|*RedWolf*)
+                                         acquire_method="recovery_backup" ;;
+                    *clockworkmod*|*nandroid*)
+                                         acquire_method="nandroid_backup" ;;
+                    *)                   acquire_method="pre_placed" ;;
+                esac
+
+                ux_print "  ✓  Acquired via: $acquire_method"
+
+                # If from a backup, note the recovery-from-backup path
+                case "$acquire_method" in
+                    magisk_stock_backup|recovery_backup|nandroid_backup)
+                        ux_print ""
+                        ux_print "  ℹ  This image came from a backup."
+                        ux_print "     If live Magisk patching fails, you can use this as a"
+                        ux_print "     FALLBACK TO RECOVER ROOT:"
+                        ux_print "       1. Transfer this image to another device with Magisk"
+                        ux_print "       2. Magisk app → Install → Patch a File → select image"
+                        ux_print "       3. Transfer patched image back to HOST"
+                        ux_print "       4. fastboot flash ${boot_part} magisk_patched-*.img"
+                        ux_print "     See Mode C2 in docs/ADB_FASTBOOT_INSTALL.md"
+                        ;;
+                esac
             else
-                log_warn "Copy of pre-placed image failed"
+                log_warn "Copy/decompress of pre-placed image failed"
             fi
         else
-            ux_print "  No pre-placed ${boot_part}.img found in common locations."
+            ux_print "  No pre-placed or backup ${boot_part}.img found."
         fi
     fi
 
@@ -478,6 +802,113 @@ run_boot_image_acquire() {
         fi
     fi
 
+    # ── 3b. GKI Generic Boot Image (Android 12+ / API 31+) ──────
+    # For ANY device using GKI (Generic Kernel Image), Google publishes
+    # prebuilt generic boot images at ci.android.com.
+    # Reference: https://source.android.com/docs/core/architecture/partitions/generic-boot
+    #
+    # This works on any GKI-compatible device — not just Pixels.
+    # The TARGET device must be running Android 12+ with a GKI kernel.
+
+    if [ -z "$acquire_method" ] && _is_gki_device; then
+        local gki_branch
+        gki_branch=$(_gki_branch_for_device 2>/dev/null || true)
+
+        if [ -n "$gki_branch" ]; then
+            ux_print ""
+            ux_print "  This device uses GKI (Android 12+ Generic Kernel Image)."
+            ux_print "  Kernel: $(uname -r 2>/dev/null || echo unknown) → branch: $gki_branch"
+
+            local do_gki="yes"
+            if [ -t 0 ] 2>/dev/null; then
+                ux_prompt do_gki \
+                    "Try GKI generic boot image for this kernel? [yes/no]" \
+                    "yes"
+            fi
+
+            if [ "$do_gki" = "yes" ] || [ "$do_gki" = "y" ]; then
+                local gki_img
+                gki_img=$(_offer_gki_download "$boot_part" "$gki_branch" || true)
+
+                if [ -n "$gki_img" ] && [ -f "$gki_img" ] && [ -s "$gki_img" ]; then
+                    cp "$gki_img" "$out_img"
+                    rm -f "$gki_img"
+                    boot_dev="gki:$gki_branch"
+                    acquire_method="gki_download"
+                    ux_print "  ✓  GKI generic boot image acquired"
+                fi
+            fi
+        fi
+    fi
+
+    # ── 3c. OEM-specific factory image sources ────────────────
+    # NOTE: The Magisk GitHub repository (topjohnwu/Magisk) does NOT
+    # host factory boot images.  Magisk is a rooting tool only.
+    # However, Magisk saves the original stock boot image when patching
+    # — this is checked in the backup scanner above (step 2).
+    #
+    # For non-Google, non-GKI devices, the boot image must come from
+    # the OEM's firmware package.  Show OEM-specific guidance.
+
+    if [ -z "$acquire_method" ]; then
+        local manufacturer
+        manufacturer=$(getprop ro.product.manufacturer 2>/dev/null | tr 'A-Z' 'a-z' || true)
+
+        if [ -n "$manufacturer" ]; then
+            ux_print ""
+            ux_print "  OEM-specific boot image sources for this device:"
+            ux_print ""
+            case "$manufacturer" in
+                samsung|sec)
+                    ux_print "    Samsung firmware sources:"
+                    ux_print "      • SamFw:      https://samfw.com/"
+                    ux_print "      • SamMobile:   https://www.sammobile.com/firmware/"
+                    ux_print "      • Frija (PC):  Windows tool for direct Samsung server download"
+                    ux_print "    Extract: AP_*.tar.md5 → boot.img.lz4 → lz4 -d boot.img.lz4 boot.img"
+                    ;;
+                xiaomi|redmi|poco)
+                    ux_print "    Xiaomi / Redmi / POCO firmware sources:"
+                    ux_print "      • XiaomiFirmwareUpdater: https://xiaomifirmwareupdater.com/"
+                    ux_print "      • MIUI Downloads:        https://new.c.mi.com/global/miuidownload/"
+                    ux_print "    Extract: payload.bin → payload-dumper-go -p ${boot_part} payload.bin"
+                    ;;
+                oneplus|oppo|realme)
+                    ux_print "    OnePlus / OPPO / Realme firmware sources:"
+                    ux_print "      • OnePlus:        https://service.oneplus.com/"
+                    ux_print "      • OxygenUpdater:  Google Play / GitHub (automated OTA download)"
+                    ux_print "    Extract: payload.bin → payload-dumper-go -p ${boot_part} payload.bin"
+                    ;;
+                motorola|lenovo)
+                    ux_print "    Motorola / Lenovo firmware sources:"
+                    ux_print "      • Motorola:  https://mirrors.lolinet.com/firmware/moto/"
+                    ux_print "      • Lenovo:    https://support.lenovo.com/"
+                    ux_print "    Extract: ZIP contains ${boot_part}.img directly"
+                    ;;
+                asus)
+                    ux_print "    ASUS firmware: https://www.asus.com/support/ → select model"
+                    ux_print "    Extract: payload.bin → payload-dumper-go -p ${boot_part} payload.bin"
+                    ;;
+                sony)
+                    ux_print "    Sony firmware: XperiFirm desktop tool (XDA)"
+                    ux_print "    Extract: .sin files → flashtool/newflasher → ${boot_part}.img"
+                    ;;
+                nothing)
+                    ux_print "    Nothing firmware: official OTA or XDA community links"
+                    ux_print "    Extract: payload.bin → payload-dumper-go -p ${boot_part} payload.bin"
+                    ;;
+                *)
+                    ux_print "    Check your OEM's support / downloads page for firmware"
+                    ux_print "    XDA Forums: https://xdaforums.com/ — search for your device"
+                    ;;
+            esac
+            ux_print ""
+            ux_print "    Generic extraction for payload.bin OTAs (most modern OEMs):"
+            ux_print "      pip install payload-dumper-go   # or GitHub releases"
+            ux_print "      payload-dumper-go -p ${boot_part} -o . payload.bin"
+            ux_print ""
+        fi
+    fi
+
     # ── 4. User-guided manual path (final fallback) ───────────
 
     if [ -z "$acquire_method" ]; then
@@ -488,12 +919,18 @@ run_boot_image_acquire() {
             "You can provide the image in one of these ways:" \
             "" \
             "  a) Place ${boot_part}.img in /sdcard/Download/ and re-run" \
-            "  b) Extract it from a factory image ZIP on your PC and push:" \
+            "  b) Extract it from a factory/OTA image on your PC and push:" \
             "       adb push ${boot_part}.img /sdcard/Download/" \
             "  c) Enter a block device path if you know it:" \
             "       /dev/block/bootdevice/by-name/$boot_part" \
             "       /dev/block/by-name/$boot_part" \
             "       /dev/block/platform/<soc>/by-name/$boot_part" \
+            "" \
+            "  d) For GKI devices (Android 12+): download from ci.android.com" \
+            "     See the GKI guidance shown above" \
+            "" \
+            "  e) Use a backup image to RECOVER ROOT if live patching fails:" \
+            "     TWRP backup → Magisk patch on another device → fastboot flash" \
             "" \
             "Run:  ls /dev/block/bootdevice/by-name/  to list partition names."
 
@@ -501,7 +938,7 @@ run_boot_image_acquire() {
             ux_print ""
             ux_print "  NOTE: This device uses init_boot (Android 13+)."
             ux_print "  Make sure you extract init_boot.img (not boot.img)"
-            ux_print "  from the factory image."
+            ux_print "  from the factory/GKI image."
         fi
 
         ux_prompt boot_dev \

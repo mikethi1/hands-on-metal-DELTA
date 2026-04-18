@@ -47,6 +47,13 @@ get_prereqs_for_script() {
     case "$rel" in
         build/build_offline_zip.sh)           echo "cmd:zip partition_index" ;;
         build/fetch_all_deps.sh)              echo "cmd:git cmd:curl cmd:unzip network" ;;
+        build/host_flash.sh)                  echo "cmd:adb" ;;
+        build/host_flash.sh:c1)               echo "cmd:adb cmd:fastboot" ;;
+        build/host_flash.sh:c2)               echo "cmd:adb cmd:fastboot" ;;
+        build/host_flash.sh:c3)               echo "cmd:adb" ;;
+        build/host_flash.sh:wifi-setup)       echo "cmd:adb" ;;
+        build/host_flash.sh:dump)             echo "cmd:adb" ;;
+        build/host_flash.sh:elevated-setup)   echo "cmd:adb" ;;
         core/anti_rollback.sh)                echo "boot_image" ;;
         core/apply_defaults.sh)               echo "device_profile partition_index" ;;
         core/boot_image.sh)                   echo "android_device" ;;
@@ -85,7 +92,7 @@ prereq_label() {
     case "$prereq" in
         root)             echo "root (superuser) access" ;;
         network)          echo "network / internet access" ;;
-        boot_image)       echo "boot image file (HOM_BOOT_IMG_PATH)" ;;
+        boot_image)       echo "boot image (root DD / backup / GKI / factory / manual)" ;;
         magisk_binary)    echo "Magisk binary" ;;
         device_profile)   echo "device profile (core/device_profile.sh)" ;;
         env_registry)     echo "environment registry (/sdcard/hands-on-metal/env_registry.sh)" ;;
@@ -93,9 +100,83 @@ prereq_label() {
         partition_index)  echo "partition index (build/partition_index.json)" ;;
         schema)           echo "database schema (schema/hardware_map.sql)" ;;
         env_github_token) echo "GITHUB_TOKEN environment variable" ;;
+        target_device)    echo "TARGET device connected via USB, OTG, or wireless ADB" ;;
+        target_shizuku)   echo "Shizuku running on TARGET (elevated ADB shell access)" ;;
+        target_ladb)      echo "LADB installed on TARGET (on-device ADB shell)" ;;
         cmd:*)            echo "command: ${prereq#cmd:}" ;;
         *)                echo "$prereq" ;;
     esac
+}
+
+# Check if a boot image file is available or can be obtained.
+# Returns 0 (prereq met / obtainable) when ANY of:
+#   1. HOM_BOOT_IMG_PATH is set and file exists (already acquired)
+#   2. Root access available (can dd dump from live block device)
+#   3. Magisk stock boot backup exists (/data/adb/magisk/stock_boot*.img)
+#      NOTE: The Magisk GitHub repo (topjohnwu/Magisk) does NOT host
+#      factory boot images.  Magisk is a rooting tool only.  However,
+#      when Magisk patches a boot image it saves the original here.
+#   4. Image found in TWRP / OrangeFox / PBRP / SHRP / RedWolf /
+#      CWM / Nandroid backup folders
+#   5. Image pre-placed in Download / boot_work / tmp directories
+_boot_image_obtainable() {
+    # 1. Already acquired
+    [ -n "${HOM_BOOT_IMG_PATH:-}" ] \
+        && [ -f "${HOM_BOOT_IMG_PATH:-/nonexistent}" ] && return 0
+
+    # 2. Root available → can dd the live partition
+    [ "$(id -u 2>/dev/null || echo 1)" -eq 0 ] 2>/dev/null && return 0
+
+    # 3. Magisk stock boot backup (saved when Magisk patches)
+    for _bpi in /data/adb/magisk/stock_boot.img /data/adb/magisk/stock_boot_*.img; do
+        [ -f "$_bpi" ] 2>/dev/null && return 0
+    done
+
+    # 4. Pre-placed images in standard locations
+    local _bpd
+    for _bpd in \
+        /sdcard/hands-on-metal/boot_work \
+        /sdcard/Download \
+        /sdcard \
+        /data/local/tmp; do
+        for _bpn in boot.img init_boot.img boot_original.img init_boot_original.img; do
+            [ -f "$_bpd/$_bpn" ] 2>/dev/null && return 0
+        done
+    done
+
+    # 5. TWRP / custom recovery Nandroid backup folders
+    #    TWRP naming: BACKUPS/<serial>/<date>/<part>.emmc.win
+    #    .win files are raw dd dumps of the partition (same as .img).
+    #    May also be gzip (.win.gz) or lz4 (.win.lz4) compressed.
+    local _bpb
+    for _bpb in \
+        /sdcard/TWRP/BACKUPS \
+        /sdcard/Fox/BACKUPS \
+        /sdcard/OrangeFox/BACKUPS \
+        /sdcard/PBRP/BACKUPS \
+        /sdcard/SHRP/BACKUPS \
+        /sdcard/RedWolf/BACKUPS \
+        /sdcard/clockworkmod/backup \
+        /sdcard/nandroid; do
+        [ -d "$_bpb" ] 2>/dev/null || continue
+        # TWRP-style: BACKUPS/<serial>/<date>/<part>.emmc.win[.gz|.lz4]
+        for _bpg in "$_bpb"/*/*/boot.emmc.win   "$_bpb"/*/*/init_boot.emmc.win \
+                     "$_bpb"/*/*/boot.emmc.win.gz "$_bpb"/*/*/init_boot.emmc.win.gz \
+                     "$_bpb"/*/*/boot.emmc.win.lz4 "$_bpb"/*/*/init_boot.emmc.win.lz4 \
+                     "$_bpb"/*/*/boot.img "$_bpb"/*/*/init_boot.img \
+                     "$_bpb"/*/boot.img "$_bpb"/*/init_boot.img; do
+            [ -f "$_bpg" ] 2>/dev/null && return 0
+        done
+    done
+
+    # 6. GKI device (Android 12+ / API 31+) — generic boot image
+    #    obtainable from ci.android.com for the matching kernel version.
+    #    Reference: https://source.android.com/docs/core/architecture/partitions/generic-boot
+    local _api_level
+    _api_level=$(getprop ro.build.version.sdk 2>/dev/null || echo 0)
+    [ "$_api_level" -ge 31 ] 2>/dev/null && return 0
+
+    return 1
 }
 
 # Check whether a prerequisite is satisfied.  Returns 0 if met.
@@ -109,8 +190,7 @@ check_prereq() {
             curl -s --connect-timeout 2 -o /dev/null https://github.com 2>/dev/null \
                 || ping -c1 -W2 8.8.8.8 >/dev/null 2>&1 ;;
         boot_image)
-            [ -n "${HOM_BOOT_IMG_PATH:-}" ] \
-                && [ -f "${HOM_BOOT_IMG_PATH:-/nonexistent}" ] ;;
+            _boot_image_obtainable ;;
         magisk_binary)
             command -v magisk >/dev/null 2>&1 \
                 || [ -f "/data/adb/magisk/magisk" ] 2>/dev/null ;;
@@ -127,6 +207,20 @@ check_prereq() {
             [ -f "$REPO_ROOT/schema/hardware_map.sql" ] ;;
         env_github_token)
             [ -n "${GITHUB_TOKEN:-}" ] ;;
+        target_device)
+            # Check for any device connected via ADB
+            command -v adb >/dev/null 2>&1 \
+                && adb devices 2>/dev/null | grep -qE '\t(device|recovery|sideload)' ;;
+        target_shizuku)
+            # Shizuku service running on connected device
+            command -v adb >/dev/null 2>&1 \
+                && adb shell "dumpsys activity services moe.shizuku.privileged.api 2>/dev/null" 2>/dev/null \
+                    | grep -q "ServiceRecord" 2>/dev/null ;;
+        target_ladb)
+            # LADB installed on connected device
+            command -v adb >/dev/null 2>&1 \
+                && adb shell "pm list packages 2>/dev/null" 2>/dev/null \
+                    | grep -q "com.draco.ladb" 2>/dev/null ;;
         cmd:*)
             command -v "${prereq#cmd:}" >/dev/null 2>&1 ;;
         *)
@@ -144,6 +238,9 @@ prereq_provider() {
         env_registry)     echo "magisk-module/env_detect.sh" ;;
         partition_index)  echo "build/fetch_all_deps.sh" ;;
         schema)           echo "build/fetch_all_deps.sh" ;;
+        target_device)    echo "build/host_flash.sh:wifi-setup" ;;
+        target_shizuku)   echo "build/host_flash.sh:elevated-setup" ;;
+        target_ladb)      echo "build/host_flash.sh:elevated-setup" ;;
         *)                echo "" ;;
     esac
 }
@@ -154,9 +251,16 @@ script_description() {
     case "$rel" in
         build/build_offline_zip.sh)        echo "Build flashable offline ZIPs (Magisk module + recovery)" ;;
         build/fetch_all_deps.sh)           echo "Download Magisk APK, busybox, and create offline bundle" ;;
+        build/host_flash.sh)               echo "Host-assisted flash: fastboot boot / flash / ADB sideload (Mode C)" ;;
+        build/host_flash.sh:c1)            echo "C1: Temporarily boot TWRP on TARGET via fastboot boot" ;;
+        build/host_flash.sh:c2)            echo "C2: Flash pre-patched boot image to TARGET via fastboot" ;;
+        build/host_flash.sh:c3)            echo "C3: ADB sideload recovery ZIP to TARGET in custom recovery" ;;
+        build/host_flash.sh:wifi-setup)    echo "Pair and connect to TARGET over wireless ADB (no root needed)" ;;
+        build/host_flash.sh:dump)          echo "Collect diagnostic/partition data from TARGET (root-adaptive)" ;;
+        build/host_flash.sh:elevated-setup) echo "Set up Shizuku/LADB on TARGET for elevated ADB access" ;;
         core/anti_rollback.sh)             echo "Check SPL / AVB rollback risk before flashing" ;;
         core/apply_defaults.sh)            echo "Apply device-family defaults from partition index" ;;
-        core/boot_image.sh)                echo "Acquire the boot or init_boot image from the device" ;;
+        core/boot_image.sh)                echo "Acquire boot/init_boot image (root DD, backups, GKI, factory, or manual)" ;;
         core/candidate_entry.sh)           echo "Create a candidate entry for an unknown device" ;;
         core/device_profile.sh)            echo "Detect device model, partitions, AVB, and Treble support" ;;
         core/flash.sh)                     echo "Flash patched boot image to device and verify" ;;
@@ -542,6 +646,11 @@ script_completion_success() {
         build/fetch_all_deps.sh)
             echo "Downloaded all dependencies (Magisk APK, busybox, offline bundle) into build/."
             ;;
+        build/host_flash.sh)
+            echo "Host-assisted flash completed (Mode C)."
+            echo "  • Device was flashed via ADB/fastboot from this PC."
+            echo "  • See docs/ADB_FASTBOOT_INSTALL.md for the full Mode C guide."
+            ;;
         core/anti_rollback.sh)
             echo "Checked the Security Patch Level (SPL) and AVB rollback index."
             echo "  • Anti-rollback risk assessment stored in HOM_ARB_RISK."
@@ -551,8 +660,10 @@ script_completion_success() {
             echo "  • Default patch target set (HOM_DEFAULT_PATCH_TARGET)."
             ;;
         core/boot_image.sh)
-            echo "Acquired the boot (or init_boot) image from the connected device."
+            echo "Acquired the boot (or init_boot) image."
             echo "  • Image path stored in HOM_BOOT_IMG_PATH."
+            echo "  • Sources checked: root DD, Magisk stock backup, TWRP/recovery backups,"
+            echo "    GKI generic image (Android 12+), Google factory, OEM firmware, manual."
             ;;
         core/candidate_entry.sh)
             echo "Created a new candidate entry for this device in the partition index."
@@ -648,6 +759,10 @@ script_completion_failure() {
         build/fetch_all_deps.sh)
             echo "Dependency download failed. Verify network access and that git/curl/unzip are installed."
             ;;
+        build/host_flash.sh)
+            echo "Host-assisted flash failed. Check device connection, bootloader unlock status, and USB cable."
+            echo "  See docs/ADB_FASTBOOT_INSTALL.md for troubleshooting."
+            ;;
         core/anti_rollback.sh)
             echo "Rollback check failed. Ensure the boot image file (HOM_BOOT_IMG_PATH) is valid."
             ;;
@@ -655,7 +770,9 @@ script_completion_failure() {
             echo "Could not apply defaults. Ensure device profile and partition index are available."
             ;;
         core/boot_image.sh)
-            echo "Could not acquire the boot image. Ensure the device is connected and accessible."
+            echo "Could not acquire the boot image."
+            echo "  Options: place boot.img in /sdcard/Download, check TWRP/recovery backups,"
+            echo "  download GKI image from ci.android.com (Android 12+), or get root access."
             ;;
         core/candidate_entry.sh)
             echo "Candidate entry creation failed. Verify device profile and partition index."
@@ -738,6 +855,11 @@ script_next_steps() {
             ;;
         build/fetch_all_deps.sh)
             echo "  → Dependencies are ready. You can now run 'build/build_offline_zip.sh' to build ZIPs."
+            ;;
+        build/host_flash.sh)
+            echo "  → After device reboots: open Magisk app to confirm root."
+            echo "  → If using C2 (direct flash): install the Magisk module ZIP via Magisk app."
+            echo "  → Pull logs: adb pull /sdcard/hands-on-metal/logs/ ./hom-logs/"
             ;;
         core/anti_rollback.sh)
             echo "  → If no rollback risk was found, proceed to flash (core/flash.sh)."

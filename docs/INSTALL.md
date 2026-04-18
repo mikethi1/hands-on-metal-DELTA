@@ -112,6 +112,103 @@ The installer patches the image and flashes it automatically. The device reboots
 
 ---
 
+## Where user input is required
+
+The Magisk-path installer runs inside the Magisk app's module installer.
+**Magisk runs as root (`uid=0`)**, so the installer has full access to block
+devices. In most cases the install completes with no prompts at all — user
+input is only a **fallback** when automatic detection fails.
+
+### Your environment: root ✓, recovery ✗
+
+Mode A always has root (Magisk provides it). This means:
+
+| Capability | Status | Prereq ID¹ |
+|-----------|:---:|---|
+| Root access | ✓ Always available | `root` |
+| Android device | ✓ Running on device | `android_device` |
+| Magisk binary | ✓ Magisk is installed | `magisk_binary` |
+| Recovery | ✗ Not booted into recovery | — |
+| Boot image | Acquired automatically (via root DD) | `boot_image` |
+
+¹ Prereq IDs match `terminal_menu.sh` → `get_prereqs_for_script()`.
+
+### Boot image acquisition — automatic fallback chain
+
+Because root is available, the first method (root DD) almost always succeeds.
+The installer tries each method in order — user input is the **last resort**:
+
+| # | Method | Prereqs | User input? |
+|---|--------|---------|:-:|
+| 1 | **Root DD** — copy live boot partition via `dd` | `root` `android_device` | None — automatic |
+| 2 | **Pre-placed file** — scan `/sdcard/Download/`, `boot_work/` | `android_device` | None — automatic |
+| 3 | **Factory download** — Google Pixel only | `android_device` network `cmd:curl` `cmd:unzip` | Fallback: confirmation |
+| 4 | **Manual path** — ask for block device or file path | `android_device` (+ `root` for block devices) | Fallback: path prompt |
+
+> **In Mode A, method 1 succeeds in the vast majority of cases.** You will
+> only see fallback prompts if the block device can't be auto-discovered
+> (unusual partition layout or missing by-name symlinks).
+
+### Flash path: A (Magisk path)
+
+Flash uses `run_flash_magisk_path()` in `core/flash.sh`:
+- Prereqs: `root` + `boot_image` (both always satisfied in Mode A)
+- DD writes patched image to boot partition
+- SHA-256 verified post-flash
+- Automatic reboot on success
+- **No user input required**
+
+### Required input (always needed)
+
+| When | Where | What you do |
+|------|-------|-------------|
+| **Select ZIP** | Device: Magisk app | **Modules** → **Install from storage** → select the `.zip` |
+| **After reboot** | Device | Open Magisk app → confirm root; open Termux → run `su` |
+
+### Fallback input (only when automatic methods fail)
+
+#### Fallback Prompt 1 — Google Pixel factory download (Pixel only)
+
+**When:** Root DD failed + no pre-placed file + device is a Google Pixel.
+
+```
+Download factory image for shiba (build AP4A.250205.002)? [yes/no] [yes]:
+```
+
+**Your input:** Press **Enter** to accept `yes`, or type `no` + Enter to skip.
+
+#### Fallback Prompt 2 — Manual boot image path (last resort)
+
+**When:** All three automatic methods failed.
+
+```
+Enter full path to boot block device or image file [/sdcard/Download/boot.img]:
+```
+
+**Your input:** Type the path (e.g., `/dev/block/by-name/boot`) and press
+Enter, or just press Enter to use the default.
+
+> **Tip — avoid all fallback prompts:** Push the boot image to the device
+> before flashing. Method 2 (pre-placed file) will find it automatically:
+> ```bash
+> adb push boot.img /sdcard/Download/
+> ```
+
+### What if I have no root and no recovery?
+
+Mode A **requires Magisk to already be installed** — which means root is
+always available. If you have neither root nor recovery, you cannot use
+Mode A. See [ADB_FASTBOOT_INSTALL.md](ADB_FASTBOOT_INSTALL.md) for
+Mode C (fastboot-based install without root or recovery).
+
+### All other steps are automatic
+
+Anti-rollback check, Magisk patch, flash, and SHA-256 verification all run
+without prompts. They either succeed or abort with a clear error and safe
+device state.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Where to look |

@@ -47,14 +47,15 @@ trusted PC.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-There are **two install paths**:
+There are **three install paths**:
 
 | Path | When to use | How |
 |------|-------------|-----|
 | **Mode A — Magisk module** | Magisk is already installed | Flash the module ZIP via the Magisk app |
 | **Mode B — Recovery ZIP** | No Magisk yet; you have TWRP or OrangeFox | Flash the recovery ZIP from recovery |
+| **Mode C — ADB/Fastboot** | No recovery; bootloader unlocked; have a PC | Temporary TWRP boot, ADB sideload, or direct fastboot flash |
 
-Both paths run the same guided state machine. See [docs/INSTALL_HUB.md](docs/INSTALL_HUB.md) for a full decision tree.
+All three paths run the same guided state machine. See [docs/INSTALL_HUB.md](docs/INSTALL_HUB.md) for a full decision tree.
 
 ---
 
@@ -73,8 +74,9 @@ Both paths run the same guided state machine. See [docs/INSTALL_HUB.md](docs/INS
 | **Regulator data sanity check** | Logs the first 10 regulator entries (name + microvolts) and emits `[OK]` / `[WARN]` so you immediately know whether real display-adapter voltages were captured |
 | **Host-side pipeline** | Python scripts parse logs, build a SQLite hardware map, analyse failures, generate reports, and upload a redacted bundle |
 | **Privacy-safe sharing** | All PII stripped by `core/privacy.sh` before any data leaves the device; explicit opt-in for every upload |
-| **Offline ZIP builder** | `build/build_offline_zip.sh` produces self-contained flashable ZIPs for both install paths |
+| **Offline ZIP builder** | `build/build_offline_zip.sh` produces self-contained flashable ZIPs for all install paths |
 | **Full dependency fetcher** | `build/fetch_all_deps.sh` uses `git` + `curl` to pull the repo and every binary, then creates a single offline bundle ZIP |
+| **Host-assisted flash** | `build/host_flash.sh` — Mode C: fastboot boot / flash / ADB sideload for devices with no recovery (see [ADB_FASTBOOT_INSTALL.md](docs/ADB_FASTBOOT_INSTALL.md)) |
 | **Interactive terminal menu** | `terminal_menu.sh` lists all project scripts and lets you run any of them with arguments from a single launcher |
 | **Halium / libhybris shim** | C shim and Makefile for building a compatible userspace bridge from decompiled linker-map data |
 
@@ -145,6 +147,7 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 | [docs/INSTALL_HUB.md](docs/INSTALL_HUB.md) | **Start here** — choose Magisk path vs recovery path based on your device state |
 | [docs/INSTALL.md](docs/INSTALL.md) | Mode A: install via the Magisk app |
 | [docs/RECOVERY_INSTALL.md](docs/RECOVERY_INSTALL.md) | Mode B: install via TWRP / OrangeFox |
+| [docs/ADB_FASTBOOT_INSTALL.md](docs/ADB_FASTBOOT_INSTALL.md) | Mode C: install via ADB sideload / fastboot (no recovery needed) |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Every known failure mode with decision trees and remediation — including sandbox, CI, and Termux environments |
 | [docs/MAINTAINER.md](docs/MAINTAINER.md) | How to obtain optional binaries, cut releases, and manage the partition index |
 | [docs/SUPPORT_POLICY.md](docs/SUPPORT_POLICY.md) | Supported device families and Android versions |

@@ -262,6 +262,68 @@ dd if=/sdcard/hands-on-metal/boot_work/boot_original.img \
 
 ---
 
+## No custom recovery — ADB and fastboot options {#no-recovery}
+
+**Symptoms:**
+- Device has no TWRP / OrangeFox installed
+- No GSI slot available
+- Stock recovery rejects unsigned ZIPs
+
+**Decision tree:**
+```
+1. Is the bootloader unlocked?
+   NO  → Unlock first (see INSTALL_HUB.md).
+   YES → Continue.
+
+2. Do you have a PC with ADB + fastboot?
+   NO  → You need a PC for this path. There is no way to install
+         without either a recovery or a computer.
+   YES → Continue.
+
+3. Does your device support `fastboot boot`?
+   YES → Temporarily boot TWRP: fastboot boot twrp.img
+         Then sideload or flash from TWRP (Mode C1).
+   NO  → Continue to step 4.
+
+4. Can you patch the boot image on a PC?
+   YES → Patch on PC with Magisk, then: fastboot flash boot patched.img
+         (Mode C2 — direct fastboot flash).
+   NO  → Install Magisk app on another device/emulator, patch there,
+         then transfer patched image and use fastboot.
+```
+
+**Full guide:** [ADB_FASTBOOT_INSTALL.md](ADB_FASTBOOT_INSTALL.md)
+
+**Can I use `adb sideload` with stock recovery?**
+
+No. Stock Android recovery only accepts OEM-signed OTA packages. The
+hands-on-metal recovery ZIP is not OEM-signed. You need TWRP or OrangeFox
+for sideloading unsigned ZIPs. Use `fastboot boot twrp.img` to temporarily
+boot TWRP without permanently installing it.
+
+**Quick ADB commands for getting to recovery or fastboot:**
+
+```bash
+# From running Android — reboot to bootloader/fastboot
+adb reboot bootloader
+
+# From running Android — reboot to recovery
+adb reboot recovery
+
+# From fastboot — temporarily boot a TWRP image
+fastboot boot twrp-<device>.img
+
+# From fastboot — permanently install TWRP
+fastboot flash recovery twrp-<device>.img
+fastboot reboot recovery
+
+# From fastboot — directly flash a pre-patched boot image
+fastboot flash boot patched_boot.img
+fastboot reboot
+```
+
+---
+
 ## Magisk patch fails or produces no output {#magisk-patch-fails}
 
 **Symptoms:**

@@ -74,14 +74,38 @@ if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1
 fi
 
 # ── Optional tools ────────────────────────────────────────────
+# Host-side tools (PC / Termux)
 _hom_optional git      "Cloning the repo and bundle creation via git archive (fetch_all_deps.sh)"
-_hom_optional adb      "Pushing ZIPs to device / pulling logs (Android Platform Tools)"
+_hom_optional adb      "Pushing ZIPs to device / pulling logs / Mode C host-assisted flash (Android Platform Tools)"
+_hom_optional fastboot "Mode C host-assisted flash: fastboot boot / fastboot flash (Android Platform Tools)"
 _hom_optional file     "Verifying ELF binary types after download"
 _hom_optional nm       "Analysing vendor library symbols (parse_symbols.py)"
 _hom_optional readelf  "Analysing ELF dynamic sections (parse_symbols.py)"
 _hom_optional c++filt  "Demangling C++ symbol names (parse_symbols.py)"
 _hom_optional openssl  "Fallback SHA-256 hashing on device (core scripts)"
+_hom_optional lz4     "Decompressing LZ4-compressed TWRP Nandroid backups (core/boot_image.sh)"
+_hom_optional gzip    "Decompressing gzip-compressed TWRP Nandroid backups (core/boot_image.sh)"
 
+echo ""
+
+# ── On-TARGET apps (detected at runtime, guidance only) ──────
+echo "  On-TARGET optional apps (install on the Android device being flashed):"
+echo ""
+echo "    Shizuku — Elevated ADB shell-level access without root (Android 11+)"
+echo "              https://shizuku.rikka.app/"
+echo "              Enables: better /proc, /sys reads, full logcat, pm/am commands"
+echo "              Install: Google Play (moe.shizuku.privileged.api) or GitHub releases"
+echo ""
+echo "    LADB    — On-device ADB shell terminal with elevated privileges"
+echo "              https://github.com/tytydraco/LADB"
+echo "              Enables: local ADB shell without PC connection"
+echo "              Install: Google Play (com.draco.ladb) or GitHub releases"
+echo ""
+echo "    Termux  — Linux terminal emulator for Android (for device-to-device flashing)"
+echo "              https://f-droid.org/packages/com.termux/"
+echo "              Provides: adb, fastboot, python3, and other build tools on-device"
+echo "              Install: F-Droid (recommended) or GitHub releases"
+echo "              Deps in Termux: pkg install android-tools python"
 echo ""
 
 if [ "$_hom_dep_ok" = false ]; then
