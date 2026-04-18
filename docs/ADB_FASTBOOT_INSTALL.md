@@ -98,7 +98,8 @@ adb devices
 fastboot devices
 
 # Target a specific device by serial
-bash build/host_flash.sh -s ABC123XYZ --c2 patched_boot.img
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: -s ABC123XYZ --c2 patched_boot.img
 ```
 
 ---
@@ -358,13 +359,17 @@ safest option for TARGET devices with no recovery.
 
 ```bash
 # On HOST — interactive:
-bash build/host_flash.sh --c1
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --c1
+# After completion, press 's' for the suggested next step
 
 # On HOST — with TWRP image path:
-bash build/host_flash.sh --c1 twrp-<device>.img
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --c1 twrp-<device>.img
 
 # On HOST — targeting a specific device:
-bash build/host_flash.sh -s ABC123XYZ --c1 twrp-<device>.img
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: -s ABC123XYZ --c1 twrp-<device>.img
 ```
 
 The script auto-detects HOST OS, finds TARGET, shows a confirmation
@@ -442,13 +447,17 @@ No recovery needed on TARGET.
 
 ```bash
 # On HOST — interactive:
-bash build/host_flash.sh --c2
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --c2
+# After completion, press 's' for the suggested next step
 
 # On HOST — with patched image:
-bash build/host_flash.sh --c2 patched_boot.img
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --c2 patched_boot.img
 
 # On HOST — targeting a specific device:
-bash build/host_flash.sh -s ABC123XYZ --c2 patched_boot.img
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: -s ABC123XYZ --c2 patched_boot.img
 ```
 
 ### Manual steps
@@ -529,13 +538,17 @@ After reboot, on TARGET, install and open the Magisk app to confirm root.
 
 ```bash
 # On HOST — interactive:
-bash build/host_flash.sh --c3
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --c3
+# After completion, press 's' for the suggested next step
 
 # On HOST — with ZIP path:
-bash build/host_flash.sh --c3 dist/hands-on-metal-recovery-v2.0.0.zip
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --c3 dist/hands-on-metal-recovery-v2.0.0.zip
 
 # On HOST — targeting a specific device:
-bash build/host_flash.sh -s ABC123XYZ --c3 recovery.zip
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: -s ABC123XYZ --c3 recovery.zip
 ```
 
 ### Manual steps
@@ -725,7 +738,8 @@ adb devices
 # Should show: 192.168.1.100:42456   device
 
 # Now run any Mode C command:
-bash build/host_flash.sh --c3 recovery.zip
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --c3 recovery.zip
 ```
 
 > **Limitation:** Wireless ADB does not support fastboot. If you need
@@ -792,7 +806,9 @@ if TWRP supports wireless ADB.
 
 ```bash
 # On HOST — interactive WiFi ADB pairing and connection:
-bash build/host_flash.sh --wifi-setup
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --wifi-setup
+# After completion, press 's' for the suggested next step
 
 # Supports:
 # - PC → non-rooted TARGET over WiFi
@@ -818,7 +834,8 @@ No root needed. Useful for:
 
 ```bash
 # On device (Termux):
-bash build/host_flash.sh --wifi-setup
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --wifi-setup
 # Choose option 1 (self-loopback)
 # Follow prompts to pair and connect
 
@@ -879,10 +896,13 @@ ADB-privilege process on-device:
 
 ```bash
 # Interactive Shizuku/LADB setup and detection:
-bash build/host_flash.sh --elevated-setup
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --elevated-setup
+# After completion, press 's' for the suggested next step
 
 # The dump command auto-detects elevated access:
-bash build/host_flash.sh --dump
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --dump
 # → Uses elevated access for better /proc, /sys, logcat collection
 ```
 
@@ -914,13 +934,17 @@ It adapts to what's available — collecting more data when root is present.
 
 ```bash
 # On HOST — dump to default directory:
-bash build/host_flash.sh --dump
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --dump
+# After completion, press 's' for the suggested next step
 
 # On HOST — dump to specific directory:
-bash build/host_flash.sh --dump ./my-device-dump/
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --dump ./my-device-dump/
 
 # On HOST — with WiFi ADB:
-bash build/host_flash.sh -s 192.168.1.100:42456 --dump
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: -s 192.168.1.100:42456 --dump
 ```
 
 ### What the dump collects
@@ -958,8 +982,9 @@ bash build/host_flash.sh -s 192.168.1.100:42456 --dump
 
 ```bash
 # Run failure analysis against the dump
-python pipeline/failure_analysis.py --dump ./hom-dump/ \
-    --index build/partition_index.json
+bash terminal_menu.sh
+# Select option 23 (pipeline/failure_analysis.py), then enter arguments: --dump ./hom-dump/ --index build/partition_index.json
+# After completion, press 's' for the suggested next step: option 24 (pipeline/github_notify.py)
 ```
 
 Checks anti-rollback, partition compatibility, known device issues,
@@ -981,13 +1006,16 @@ adb push ./hom-dump/boot_images/boot.img /sdcard/Download/
 adb pull /sdcard/Download/magisk_patched-*.img ./patched_boot.img
 
 # 3. Flash back to TARGET
-bash build/host_flash.sh --c2 ./patched_boot.img
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh), then enter arguments: --c2 ./patched_boot.img
 ```
 
 **3. Hardware catalog** — build a full SQLite hardware database:
 
 ```bash
-python pipeline/build_table.py --dump ./hom-dump/ --mode C
+bash terminal_menu.sh
+# Select option 22 (pipeline/build_table.py), then enter arguments: --dump ./hom-dump/ --mode C
+# After completion, press 's' for the suggested next step: option 29 (pipeline/report.py)
 # Creates hardware_map.sqlite with:
 #   - iomem address ranges → peripheral names
 #   - IRQ assignments → driver names
@@ -999,7 +1027,9 @@ python pipeline/build_table.py --dump ./hom-dump/ --mode C
 **4. Ramdisk extraction** — inspect init configuration:
 
 ```bash
-python pipeline/unpack_images.py --dump ./hom-dump/ --run-id 1
+bash terminal_menu.sh
+# Select option 30 (pipeline/unpack_images.py), then enter arguments: --dump ./hom-dump/ --run-id 1
+# After completion, press 's' for the suggested next step
 # Extracts from boot.img:
 #   - fstab.*     → partition encryption flags, filesystem types
 #   - init.rc     → service definitions, early boot actions

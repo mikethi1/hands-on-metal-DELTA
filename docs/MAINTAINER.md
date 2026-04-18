@@ -97,7 +97,9 @@ chmod +x tools/magisk32
 ### 3. Run the build script
 
 ```bash
-bash build/build_offline_zip.sh
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh)
+# After completion, press 's' for the suggested next step: option 3 (build/host_flash.sh)
 # Output in dist/:
 #   hands-on-metal-magisk-module-v1.0.0.zip
 #   hands-on-metal-recovery-v1.0.0.zip
@@ -107,13 +109,15 @@ bash build/build_offline_zip.sh
 With a custom version:
 
 ```bash
-bash build/build_offline_zip.sh --version v2.0.0
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh), then enter arguments: --version v2.0.0
 ```
 
 Without tool validation warnings:
 
 ```bash
-bash build/build_offline_zip.sh --no-tools
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh), then enter arguments: --no-tools
 ```
 
 ---
@@ -270,7 +274,7 @@ shellcheck core/*.sh magisk-module/*.sh recovery-zip/collect_recovery.sh
 
 1. Update `magisk-module/module.prop` version.
 2. Update `build/partition_index.json` `_updated` field.
-3. Run `bash build/build_offline_zip.sh --version vX.Y.Z`.
+3. Run `bash terminal_menu.sh` → select option 1 (`build/build_offline_zip.sh`), enter arguments: `--version vX.Y.Z`.
 4. Verify ZIPs: `sha256sum -c dist/checksums-vX.Y.Z.sha256`.
 5. Tag the commit: `git tag vX.Y.Z`.
 6. Upload `dist/*.zip` and `dist/checksums-*.sha256` to the GitHub release.

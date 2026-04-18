@@ -35,7 +35,9 @@ Obtain `hands-on-metal-recovery-<version>.zip` from the [releases page](https://
 
 ```bash
 # On a Linux/macOS host with zip installed
-bash build/build_offline_zip.sh
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh)
+# After completion, press 's' for the suggested next step
 # Output: dist/hands-on-metal-recovery-<version>.zip
 ```
 

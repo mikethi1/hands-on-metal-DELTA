@@ -14,7 +14,9 @@ run the full dependency fetcher from the repository root:
 cat <<'EOF' > ~/hands-on-metal-fetch-deps.sh
 #!/usr/bin/env bash
 set -e
-bash build/fetch_all_deps.sh
+bash terminal_menu.sh
+# Select option 2 (build/fetch_all_deps.sh)
+# After completion, press 's' for the suggested next step: option 1 (build/build_offline_zip.sh)
 EOF
 chmod +x ~/hands-on-metal-fetch-deps.sh
 ~/hands-on-metal-fetch-deps.sh
@@ -66,7 +68,9 @@ After placing `busybox-arm64` in this directory, you can build either way:
 cat <<'EOF' > ~/hands-on-metal-build-recovery.sh
 #!/usr/bin/env bash
 set -e
-bash build/build_offline_zip.sh
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh)
+# After completion, press 's' for the suggested next step
 EOF
 chmod +x ~/hands-on-metal-build-recovery.sh
 ~/hands-on-metal-build-recovery.sh

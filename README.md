@@ -172,6 +172,8 @@ EOF
 chmod +x ~/hands-on-metal-setup.sh
 ~/hands-on-metal-setup.sh
 cd ~/hands-on-metal               # enter the repo after setup
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh) — the next step after setup is complete
 ```
 
 **Or clone first**, then run the setup script locally:
@@ -186,6 +188,9 @@ bash setup.sh
 EOF
 chmod +x ~/hands-on-metal-setup.sh
 ~/hands-on-metal-setup.sh
+cd ~/hands-on-metal
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh) — the next step after setup is complete
 ```
 
 If `git` is not installed the script attempts to install it automatically
@@ -210,8 +215,9 @@ cat <<'EOF' > ~/hands-on-metal-build.sh
 #!/usr/bin/env bash
 set -e
 cd ~/hands-on-metal
-source check_deps.sh
-bash build/build_offline_zip.sh
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh)
+# After completion, press 's' for the suggested next step: option 3 (build/host_flash.sh)
 EOF
 chmod +x ~/hands-on-metal-build.sh
 ~/hands-on-metal-build.sh
@@ -224,8 +230,9 @@ cat <<'EOF' > ~/hands-on-metal-build-no-tools.sh
 #!/usr/bin/env bash
 set -e
 cd ~/hands-on-metal
-source check_deps.sh
-bash build/build_offline_zip.sh --no-tools
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh), then enter arguments: --no-tools
+# After completion, press 's' for the suggested next step
 EOF
 chmod +x ~/hands-on-metal-build-no-tools.sh
 ~/hands-on-metal-build-no-tools.sh
@@ -240,10 +247,10 @@ cat <<'EOF' > ~/hands-on-metal-flash-magisk.sh
 #!/usr/bin/env bash
 set -e
 cd ~/hands-on-metal
-source check_deps.sh
-# Push the ZIP to the device
-adb push dist/hands-on-metal-magisk-module-v2.0.0.zip /sdcard/
-
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh)
+# After completion, press 's' for the suggested next step
+#
 # Then on the device:
 # Magisk app → Modules → Install from storage → select the ZIP → reboot
 EOF
@@ -258,10 +265,10 @@ cat <<'EOF' > ~/hands-on-metal-flash-recovery.sh
 #!/usr/bin/env bash
 set -e
 cd ~/hands-on-metal
-source check_deps.sh
-# Push the ZIP to the device
-adb push dist/hands-on-metal-recovery-v2.0.0.zip /sdcard/
-
+bash terminal_menu.sh
+# Select option 3 (build/host_flash.sh)
+# After completion, press 's' for the suggested next step
+#
 # Then on the device:
 # Boot into TWRP/OrangeFox → Install → select the ZIP → swipe to confirm → reboot
 EOF
@@ -279,35 +286,22 @@ cat <<'EOF' > ~/hands-on-metal-pipeline.sh
 #!/usr/bin/env bash
 set -e
 cd ~/hands-on-metal
-source check_deps.sh
-RUN_ID="${1:?Usage: hands-on-metal-pipeline.sh <RUN_ID>}"
 
 # Pull logs from device to your PC
 adb pull /sdcard/hands-on-metal/logs/ ./logs/
 adb pull /sdcard/hands-on-metal/live_dump/ ./live_dump/
 
-# Parse the master log
-python pipeline/parse_logs.py \
-    --log "./logs/master_${RUN_ID}.log" \
-    --out /tmp/parsed.json
+# Find the RUN_ID from the log filenames (e.g. master_20250417_143022.log → RUN_ID is 20250417_143022)
+# ls ./logs/master_*.log
 
-# Run failure analysis
-python pipeline/failure_analysis.py \
-    --parsed /tmp/parsed.json \
-    --out /tmp/analysis.json
-
-# Build the hardware database
-python pipeline/build_table.py \
-    --db hardware_map.sqlite \
-    --dump ./live_dump \
-    --mode A \
-    --run-id "$RUN_ID"
-
-# Generate a human-readable report
-python pipeline/report.py --db hardware_map.sqlite
+bash terminal_menu.sh
+# Select option 25 (pipeline/parse_logs.py)
+#   Arguments: --log "./logs/master_<RUN_ID>.log" --out /tmp/parsed.json
+#   Replace <RUN_ID> with the timestamp from your log filename
+# After completion, press 's' for the suggested next step: option 22 (pipeline/build_table.py)
 EOF
 chmod +x ~/hands-on-metal-pipeline.sh
-~/hands-on-metal-pipeline.sh 20250417_143022   # ← replace with your actual RUN_ID
+~/hands-on-metal-pipeline.sh
 ```
 
 ### 5 — Run the unit tests
@@ -317,8 +311,10 @@ cat <<'EOF' > ~/hands-on-metal-test.sh
 #!/usr/bin/env bash
 set -e
 cd ~/hands-on-metal
-source check_deps.sh
 python -m pytest tests/
+# After tests pass, launch the terminal menu:
+bash terminal_menu.sh
+# Press 's' for the suggested next step, or select any option by number
 EOF
 chmod +x ~/hands-on-metal-test.sh
 ~/hands-on-metal-test.sh
@@ -334,8 +330,8 @@ cat <<'EOF' > ~/hands-on-metal-menu.sh
 #!/usr/bin/env bash
 set -e
 cd ~/hands-on-metal
-source check_deps.sh
 bash terminal_menu.sh
+# Press 's' for the suggested next step, or select any option by number
 EOF
 chmod +x ~/hands-on-metal-menu.sh
 ~/hands-on-metal-menu.sh

@@ -22,13 +22,15 @@ All logs are written to `/sdcard/hands-on-metal/logs/`.
 Use the host-side pipeline to parse logs automatically:
 
 ```bash
-python pipeline/parse_logs.py \
-    --log /sdcard/hands-on-metal/logs/master_<RUN_ID>.log \
-    --out /tmp/parsed.json
+bash terminal_menu.sh
+# Select option 25 (pipeline/parse_logs.py), then enter arguments:
+#   --log /sdcard/hands-on-metal/logs/master_<RUN_ID>.log --out /tmp/parsed.json
+# After completion, press 's' for the suggested next step: option 22 (pipeline/build_table.py)
 
-python pipeline/failure_analysis.py \
-    --parsed /tmp/parsed.json \
-    --out /tmp/analysis.json
+bash terminal_menu.sh
+# Select option 23 (pipeline/failure_analysis.py), then enter arguments:
+#   --parsed /tmp/parsed.json --out /tmp/analysis.json
+# After completion, press 's' for the suggested next step: option 24 (pipeline/github_notify.py)
 ```
 
 ---
@@ -381,14 +383,16 @@ The host-side Python pipeline can parse logs and generate ranked failure analysi
 adb pull /sdcard/hands-on-metal/logs/ /tmp/hom_logs/
 
 # 2. Parse the master log
-python pipeline/parse_logs.py \
-    --log "/tmp/hom_logs/master_*.log" \
-    --out /tmp/parsed.json
+bash terminal_menu.sh
+# Select option 25 (pipeline/parse_logs.py), then enter arguments:
+#   --log "/tmp/hom_logs/master_*.log" --out /tmp/parsed.json
+# After completion, press 's' for the suggested next step: option 22 (pipeline/build_table.py)
 
 # 3. Run failure analysis
-python pipeline/failure_analysis.py \
-    --parsed /tmp/parsed.json \
-    --out /tmp/analysis.json
+bash terminal_menu.sh
+# Select option 23 (pipeline/failure_analysis.py), then enter arguments:
+#   --parsed /tmp/parsed.json --out /tmp/analysis.json
+# After completion, press 's' for the suggested next step: option 24 (pipeline/github_notify.py)
 
 # 4. View results
 cat /tmp/analysis.json
@@ -411,16 +415,15 @@ To send logs for maintainer review:
 
 ```bash
 # Redacted (default) — safe for public sharing
-python pipeline/upload.py \
-    --log /tmp/hom_logs/ \
-    --analysis /tmp/analysis.json
+bash terminal_menu.sh
+# Select option 31 (pipeline/upload.py), then enter arguments:
+#   --log /tmp/hom_logs/ --analysis /tmp/analysis.json
+# After completion, press 's' for the suggested next step
 
 # Opt-in: include unredacted data (private, maintainer-only)
-python pipeline/upload.py \
-    --log /tmp/hom_logs/ \
-    --analysis /tmp/analysis.json \
-    --private \
-    --token "$GITHUB_TOKEN"
+bash terminal_menu.sh
+# Select option 31 (pipeline/upload.py), then enter arguments:
+#   --log /tmp/hom_logs/ --analysis /tmp/analysis.json --private --token "$GITHUB_TOKEN"
 ```
 
 See [FORK_CONTRACT.md](FORK_CONTRACT.md) §1.9 for privacy variable definitions.

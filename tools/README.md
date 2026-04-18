@@ -13,7 +13,9 @@ and creates a single offline bundle:
 cat <<'EOF' > ~/hands-on-metal-fetch-deps.sh
 #!/usr/bin/env bash
 set -e
-bash build/fetch_all_deps.sh
+bash terminal_menu.sh
+# Select option 2 (build/fetch_all_deps.sh)
+# After completion, press 's' for the suggested next step: option 1 (build/build_offline_zip.sh)
 EOF
 chmod +x ~/hands-on-metal-fetch-deps.sh
 ~/hands-on-metal-fetch-deps.sh
@@ -88,7 +90,9 @@ cat <<'EOF' > ~/hands-on-metal-build-no-tools.sh
 #!/usr/bin/env bash
 set -e
 cd ~/hands-on-metal
-bash build/build_offline_zip.sh --no-tools
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh), then enter arguments: --no-tools
+# After completion, press 's' for the suggested next step
 EOF
 chmod +x ~/hands-on-metal-build-no-tools.sh
 ~/hands-on-metal-build-no-tools.sh

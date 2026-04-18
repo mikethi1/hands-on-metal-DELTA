@@ -21,7 +21,9 @@
 Obtain `hands-on-metal-magisk-module-<version>.zip` from the [releases page](https://github.com/mikethi/hands-on-metal/releases) or build it yourself:
 
 ```bash
-bash build/build_offline_zip.sh
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh)
+# After completion, press 's' for the suggested next step: option 3 (build/host_flash.sh)
 # Output: dist/hands-on-metal-magisk-module-<version>.zip
 ```
 
