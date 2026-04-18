@@ -205,6 +205,8 @@ If you already have the binaries in `tools/` or want device-side binaries:
 cat <<'EOF' > /tmp/hands-on-metal-build.sh
 #!/usr/bin/env bash
 set -e
+cd hands-on-metal
+source check_deps.sh
 bash build/build_offline_zip.sh
 EOF
 chmod +x /tmp/hands-on-metal-build.sh
@@ -217,6 +219,8 @@ To build without bundled tools (rely on what's already on the device):
 cat <<'EOF' > /tmp/hands-on-metal-build-no-tools.sh
 #!/usr/bin/env bash
 set -e
+cd hands-on-metal
+source check_deps.sh
 bash build/build_offline_zip.sh --no-tools
 EOF
 chmod +x /tmp/hands-on-metal-build-no-tools.sh
@@ -231,6 +235,8 @@ chmod +x /tmp/hands-on-metal-build-no-tools.sh
 cat <<'EOF' > /tmp/hands-on-metal-flash-magisk.sh
 #!/usr/bin/env bash
 set -e
+cd hands-on-metal
+source check_deps.sh
 # Push the ZIP to the device
 adb push dist/hands-on-metal-magisk-module-v2.0.0.zip /sdcard/
 
@@ -247,6 +253,8 @@ chmod +x /tmp/hands-on-metal-flash-magisk.sh
 cat <<'EOF' > /tmp/hands-on-metal-flash-recovery.sh
 #!/usr/bin/env bash
 set -e
+cd hands-on-metal
+source check_deps.sh
 # Push the ZIP to the device
 adb push dist/hands-on-metal-recovery-v2.0.0.zip /sdcard/
 
@@ -266,6 +274,8 @@ run the pipeline on your PC:
 cat <<'EOF' > /tmp/hands-on-metal-pipeline.sh
 #!/usr/bin/env bash
 set -e
+cd hands-on-metal
+source check_deps.sh
 RUN_ID="${1:?Usage: hands-on-metal-pipeline.sh <RUN_ID>}"
 
 # Pull logs from device to your PC
@@ -302,6 +312,8 @@ chmod +x /tmp/hands-on-metal-pipeline.sh
 cat <<'EOF' > /tmp/hands-on-metal-test.sh
 #!/usr/bin/env bash
 set -e
+cd hands-on-metal
+source check_deps.sh
 python -m pytest tests/
 EOF
 chmod +x /tmp/hands-on-metal-test.sh
@@ -317,6 +329,8 @@ lets you run any of them with arguments:
 cat <<'EOF' > /tmp/hands-on-metal-menu.sh
 #!/usr/bin/env bash
 set -e
+cd hands-on-metal
+source check_deps.sh
 bash terminal_menu.sh
 EOF
 chmod +x /tmp/hands-on-metal-menu.sh
