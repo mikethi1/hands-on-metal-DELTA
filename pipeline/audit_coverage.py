@@ -243,7 +243,10 @@ def parse_schema_columns(sql: str) -> dict[str, set[str]]:
             line = raw.strip()
             if not line:
                 continue
-            head = line.split()[0]
+            tokens = line.split()
+            if not tokens:
+                continue
+            head = tokens[0]
             head_up = head.upper()
             # Skip table-level constraints
             if head_up in {
@@ -315,7 +318,11 @@ def _matches_collected(parsed: str, collected_paths: set[str]) -> bool:
         # Directory-tree match: any collected path under this prefix counts
         return any(c == n or c.startswith(n + "/") for c in collected_paths)
 
-    # Glob: match the suffix after the last '**' or '*'
+    # Glob: match the suffix after the last '**' or '*'.
+    # We extract the literal segments around the wildcards and consider the
+    # pattern satisfied if some collected path either contains every literal
+    # segment, or sits in a relevant ancestor directory and shares the
+    # pattern's file-extension suffix.
     # e.g. "**/vintf/**/*.xml" → look for any collected path containing
     # "/vintf/" and ending in ".xml" (or a directory likely to contain such).
     suffix = parsed.split("*")[-1]   # e.g. ".xml" or "manifest.xml"
@@ -324,7 +331,7 @@ def _matches_collected(parsed: str, collected_paths: set[str]) -> bool:
         if all(n.strip("/") in c for n in needles):
             return True
         # File-extension fallback for directory trees
-        if suffix and c.endswith("/") is False and c.endswith(suffix):
+        if suffix and not c.endswith("/") and c.endswith(suffix):
             return True
         if needles and any(n.strip("/") in c for n in needles):
             # Directory tree — treat as a satisfying ancestor
