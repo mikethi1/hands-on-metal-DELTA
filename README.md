@@ -167,6 +167,14 @@ Every step below is a **single complete script at the repo root** — paste it
 straight into your terminal (Bash, Zsh, Termux, or any POSIX shell). No
 heredocs, no temp files, no copy-paste pitfalls.
 
+The wrappers are thin pass-throughs that inherit the project's full
+support matrix: any host (Linux / macOS / Windows-WSL / Termux) driving any
+target device on **Android 5.0 – 15 (API 21–35+)** — comfortably covering
+the Android 10+ range and freely interchanging hardware (A-only / A-B,
+System-as-Root, dynamic partitions, `init_boot` / `boot` / `vendor_boot`)
+and Android versions on the same host install. Pick the install mode
+(A / B / C) that matches the device's current state in step 3.
+
 | Step | Command | What it does |
 |------|---------|--------------|
 | Bootstrap | `bash setup.sh` | Clone repo, install host tools, fetch binaries, build ZIPs, drop into the menu |
