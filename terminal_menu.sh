@@ -320,12 +320,14 @@ is_already_done() {
             [ -n "${HOM_BOOT_IMG_PATH:-}" ] \
                 && [ -f "${HOM_BOOT_IMG_PATH:-/nonexistent}" ] ;;
         core/anti_rollback.sh)
-            [ -n "${HOM_ARB_RISK:-}" ] ;;
+            [ -n "${HOM_ARB_ROLLBACK_RISK:-}" ] ;;
+        core/candidate_entry.sh)
+            [ -n "${HOM_CANDIDATE_FAMILY_MATCHED:-}" ] ;;
         core/magisk_patch.sh)
-            [ -n "${HOM_PATCHED_IMG:-}" ] \
-                && [ -f "${HOM_PATCHED_IMG:-/nonexistent}" ] 2>/dev/null ;;
+            [ -n "${HOM_PATCHED_IMG_PATH:-}" ] \
+                && [ -f "${HOM_PATCHED_IMG_PATH:-/nonexistent}" ] 2>/dev/null ;;
         core/flash.sh)
-            [ "${HOM_FLASH_VERIFIED:-}" = "1" ] 2>/dev/null ;;
+            [ "${HOM_FLASH_STATUS:-}" = "OK" ] 2>/dev/null ;;
         magisk-module/env_detect.sh)
             [ -f "/sdcard/hands-on-metal/env_registry.sh" ] 2>/dev/null ;;
         *)
@@ -411,6 +413,18 @@ declare -a MISSING_INFO=()
 refresh_status() {
     ITEM_STATUS=()
     MISSING_INFO=()
+
+    # Re-source the persisted env registry written by core/* scripts via
+    # _reg_set (lines like  HOM_DEV_MODEL="Pixel 8"  # cat:device …).
+    # Scripts run in a subshell so their exports do not survive back into
+    # the menu — but they do persist these vars to env_registry.sh.
+    # Sourcing it here lets is_already_done / check_prereq see the state
+    # set by previously-run scripts (e.g. HOM_DEV_MODEL after option 4).
+    local _reg="${ENV_REGISTRY:-/sdcard/hands-on-metal/env_registry.sh}"
+    if [ -f "$_reg" ]; then
+        # shellcheck source=/dev/null
+        . "$_reg" 2>/dev/null || true
+    fi
 
     local i rel prereqs prereq
     for i in "${!SCRIPT_LABELS[@]}"; do
@@ -1161,12 +1175,99 @@ run_selected() {
     echo
 }
 
+# ── Upload-on-exit hook ──────────────────────────────────────
+# Build a redacted share bundle (core/share.sh::run_share) for the
+# current RUN_ID and feed it to pipeline/upload.py so that, regardless
+# of how the menu exits (q, Ctrl-C, error, scripted EOF), the user
+# always ends up with an uploaded / summarised diagnostic bundle.
+#
+# Best-effort: never aborts the exit, never re-traps itself.
+# Honours $GITHUB_TOKEN when present (real Gist upload), otherwise
+# the upload script prints a local summary (its documented dry-run
+# behaviour) — see pipeline/upload.py header.
+HOM_EXIT_UPLOAD_DONE=0
+run_exit_log_upload() {
+    [ "${HOM_EXIT_UPLOAD_DONE:-0}" = "1" ] && return 0
+    HOM_EXIT_UPLOAD_DONE=1
+
+    # Disable strict mode for the trap; we never want exit-time
+    # housekeeping to abort the script half-way through.
+    set +eu
+
+    local out_dir="${OUT:-/sdcard/hands-on-metal}"
+    local reg="${ENV_REGISTRY:-$out_dir/env_registry.sh}"
+    local upload_py="$REPO_ROOT/pipeline/upload.py"
+
+    # Nothing has been collected yet (e.g. fresh checkout on a
+    # non-Android host) — silently skip rather than emit noise.
+    if [ ! -f "$reg" ] || [ ! -f "$upload_py" ]; then
+        return 0
+    fi
+
+    echo
+    echo "═══════════════════════════════════════════════════════"
+    echo " Uploading session logs before exit…"
+    echo "═══════════════════════════════════════════════════════"
+
+    # 1) Build (or refresh) the share bundle for this RUN_ID.
+    (
+        cd "$REPO_ROOT" || exit 0
+        export SCRIPT_NAME="terminal_menu"
+        # shellcheck source=/dev/null
+        . "$REPO_ROOT/core/logging.sh"   2>/dev/null || exit 0
+        # shellcheck source=/dev/null
+        . "$REPO_ROOT/core/ux.sh"        2>/dev/null || true
+        # shellcheck source=/dev/null
+        . "$REPO_ROOT/core/privacy.sh"   2>/dev/null || true
+        # shellcheck source=/dev/null
+        . "$REPO_ROOT/core/share.sh"     2>/dev/null || exit 0
+        run_share >/dev/null 2>&1 || true
+    ) || true
+
+    # 2) Locate the most recent share bundle and upload it.
+    local share_root="$out_dir/share"
+    local bundle=""
+    if [ -d "$share_root" ]; then
+        # Find the newest subdirectory of share/ without parsing `ls`.
+        local candidate newest=""
+        for candidate in "$share_root"/*/; do
+            [ -d "$candidate" ] || continue
+            if [ -z "$newest" ] || [ "$candidate" -nt "$newest" ]; then
+                newest="$candidate"
+            fi
+        done
+        bundle="${newest%/}"
+    fi
+    if [ -z "$bundle" ] || [ ! -d "$bundle" ]; then
+        echo "  (no share bundle to upload — skipping)"
+        return 0
+    fi
+
+    if command -v python3 >/dev/null 2>&1; then
+        if [ -n "${GITHUB_TOKEN:-}" ]; then
+            python3 "$upload_py" --bundle "$bundle" --token "$GITHUB_TOKEN" \
+                || echo "  (upload failed — bundle preserved at: $bundle)"
+        else
+            python3 "$upload_py" --bundle "$bundle" \
+                || echo "  (summary failed — bundle preserved at: $bundle)"
+            echo "  (no GITHUB_TOKEN set — printed local summary only;"
+            echo "   export GITHUB_TOKEN before launching terminal_menu.sh"
+            echo "   to upload the bundle to a Gist on next exit)"
+        fi
+    else
+        echo "  (python3 not found — bundle preserved at: $bundle)"
+    fi
+}
+
 # ── Main loop ────────────────────────────────────────────────
 main() {
     if [ ! -d "$REPO_ROOT/pipeline" ]; then
         echo "Error: pipeline directory not found in repository." >&2
         exit 1
     fi
+
+    # Always upload session logs on exit, however we got there.
+    trap 'run_exit_log_upload' EXIT
 
     build_script_index
 
