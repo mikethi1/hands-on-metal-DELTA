@@ -639,6 +639,7 @@ print_prereq_submenu() {
     echo " Enter) return to main menu"
     echo
     read -r -p "Choose (s or Enter): " sub_choice
+    echo "  You entered: $sub_choice"
     sub_choice="${sub_choice//[!a-zA-Z0-9]/}"
     case "$sub_choice" in
         s|S)
@@ -990,6 +991,9 @@ run_selected() {
     echo
     echo "Note: enter space-separated arguments (embedded space quoting is not supported)."
     read -r -a args_array -p "Arguments (optional): "
+    if [ "${#args_array[@]}" -gt 0 ]; then
+        echo "  You entered: ${args_array[*]}"
+    fi
 
     echo
     echo "Running..."
@@ -1047,6 +1051,7 @@ main() {
     while true; do
         print_menu
         read -r -p "Choose an option: " choice
+        echo "  You entered: $choice"
         # Strip non-alphanumeric bytes: invisible control characters, Unicode
         # zero-width / formatting chars, trailing CR, ANSI remnants, etc. that
         # some terminal emulators and input methods inject on Android / Termux.
