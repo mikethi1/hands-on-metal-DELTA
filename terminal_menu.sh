@@ -1154,6 +1154,108 @@ run_selected() {
     echo
 }
 
+# ── Startup system scan ──────────────────────────────────────
+# Runs once at launch after check_deps.sh.  Performs a deeper
+# prerequisite probe and reports every HOM_* / project-relevant
+# environment variable so the user has a complete picture before
+# interacting with the menu.
+startup_scan() {
+    echo
+    echo "═══════════════════════════════════════════════════════"
+    echo " System & Environment Scan"
+    echo "═══════════════════════════════════════════════════════"
+
+    # ── 1. Deeper prerequisite check ─────────────────────────
+    echo
+    echo "Checking deeper prerequisites..."
+    echo
+
+    local all_prereqs=""
+    local i rel prereqs prereq
+    for i in "${!SCRIPT_LABELS[@]}"; do
+        rel="${SCRIPT_LABELS[$i]}"
+        prereqs="$(get_prereqs_for_script "$rel")"
+        for prereq in $prereqs; do
+            # Deduplicate: only check each prerequisite once
+            case " $all_prereqs " in
+                *" $prereq "*) ;;
+                *)
+                    all_prereqs="$all_prereqs $prereq"
+                    local lbl
+                    lbl="$(prereq_label "$prereq")"
+                    if check_prereq "$prereq" 2>/dev/null; then
+                        printf "  %s✓%s  %s\n" "$CLR_LIGHT_GREEN" "$CLR_RESET" "$lbl"
+                    else
+                        local provider
+                        provider="$(prereq_provider "$prereq")"
+                        if [ -n "$provider" ]; then
+                            printf "  %s✗%s  %s  → provided by: %s\n" "$CLR_YELLOW" "$CLR_RESET" "$lbl" "$provider"
+                        else
+                            printf "  %s✗%s  %s  → resolve externally\n" "$CLR_YELLOW" "$CLR_RESET" "$lbl"
+                        fi
+                    fi
+                    ;;
+            esac
+        done
+    done
+
+    # ── 2. Environment variable scan ─────────────────────────
+    echo
+    echo "Scanning environment variables..."
+    echo
+
+    # Project-specific HOM_* variables
+    local hom_found=0
+    local var val
+    while IFS='=' read -r var val; do
+        case "$var" in
+            HOM_*)
+                printf "  %s%-30s%s = %s\n" "$CLR_DARK_GREEN" "$var" "$CLR_RESET" "$val"
+                hom_found=$((hom_found + 1))
+                ;;
+        esac
+    done < <(env | sort)
+
+    if [ "$hom_found" -eq 0 ]; then
+        echo "  (no HOM_* variables set)"
+    fi
+
+    # Other project-relevant variables
+    echo
+    echo "  Project-relevant variables:"
+    local relevant_vars="GITHUB_TOKEN ANDROID_HOME ANDROID_SDK_ROOT ANDROID_NDK_ROOT TERMUX_VERSION"
+    for var in $relevant_vars; do
+        val="${!var:-}"
+        if [ -n "$val" ]; then
+            # Mask tokens for security
+            case "$var" in
+                *TOKEN*|*SECRET*|*KEY*)
+                    printf "  %s%-30s%s = %s(set — masked)%s\n" \
+                        "$CLR_DARK_GREEN" "$var" "$CLR_RESET" "$CLR_DARK_GREEN" "$CLR_RESET"
+                    ;;
+                *)
+                    printf "  %s%-30s%s = %s\n" "$CLR_DARK_GREEN" "$var" "$CLR_RESET" "$val"
+                    ;;
+            esac
+        else
+            printf "  %-30s   (not set)\n" "$var"
+        fi
+    done
+
+    # Source the env registry if it exists (from a previous env_detect run)
+    if [ -f "/sdcard/hands-on-metal/env_registry.sh" ] 2>/dev/null; then
+        echo
+        echo "  Environment registry found: /sdcard/hands-on-metal/env_registry.sh"
+        local reg_count
+        reg_count=$(grep -c '=' "/sdcard/hands-on-metal/env_registry.sh" 2>/dev/null || echo 0)
+        printf "  %s%d entries detected%s\n" "$CLR_DARK_GREEN" "$reg_count" "$CLR_RESET"
+    fi
+
+    echo
+    echo "═══════════════════════════════════════════════════════"
+    echo
+}
+
 # ── Main loop ────────────────────────────────────────────────
 main() {
     if [ ! -d "$REPO_ROOT/pipeline" ]; then
@@ -1167,6 +1269,9 @@ main() {
         echo "No scripts found." >&2
         exit 1
     fi
+
+    # Run the startup scan once to gather all available information
+    startup_scan
 
     while true; do
         print_menu
