@@ -191,6 +191,9 @@ The script is safe to re-run — it skips steps that are already complete.
 
 ### 2 — Build the flashable ZIPs only (no binary downloads)
 
+> **Tip:** All examples below assume the repo is at `~/hands-on-metal`. If you
+> cloned it elsewhere, replace `~/hands-on-metal` with the actual path.
+
 If you already have the binaries in `tools/` or want device-side binaries:
 
 ```bash
@@ -206,9 +209,6 @@ cd ~/hands-on-metal
 source check_deps.sh
 bash build/build_offline_zip.sh --no-tools
 ```
-
-> **Tip:** If you cloned the repo to a different location, replace `~/hands-on-metal`
-> with the actual path.
 
 ### 3 — Flash to your device
 
