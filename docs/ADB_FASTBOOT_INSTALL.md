@@ -1,7 +1,7 @@
 # hands-on-metal — ADB Sideload & Fastboot Install Guide (Mode C)
 
 > **Use this guide if the TARGET device has NO custom recovery (no TWRP /
-> OrangeFox) and NO GSI slot.**
+> OrangeFox) and no root access.**
 > If Magisk is already installed on the TARGET, see [INSTALL.md](INSTALL.md).
 > If the TARGET has a custom recovery, see [RECOVERY_INSTALL.md](RECOVERY_INSTALL.md).
 
@@ -1028,7 +1028,7 @@ unsigned ZIPs.
 
 **Yes, Magisk patches the boot image while Android is running.** The workflow:
 
-1. `boot_image.sh` copies the active boot/init\_boot partition via `dd` →
+1. `boot_image.sh` copies the active boot/init_boot partition via `dd` →
    `/sdcard/hands-on-metal/boot_work/boot_original.img` (read-only, no writes).
 2. `magisk_patch.sh` copies that image to `/data/local/tmp` and runs
    `magisk --boot-patch` to inject the Magisk root payload.
@@ -1082,7 +1082,7 @@ LEGACYSAR=true           # Only on legacy System-as-Root devices
 |----------|-----------|------------|
 | Image SPL < device SPL | Blocked by `anti_rollback.sh` | Get a boot image matching your current firmware |
 | Magisk too old for May-2026 | Blocked at two checkpoints | Upgrade to Magisk ≥ 30.7 |
-| Wrong partition (boot vs init\_boot) | Auto-detected by `device_profile.sh` | Verify `HOM_DEV_BOOT_PART` in logs |
+| Wrong partition (boot vs init_boot) | Auto-detected by `device_profile.sh` | Verify `HOM_DEV_BOOT_PART` in logs |
 | Power loss during flash | Post-flash SHA-256 mismatch detected | Restore `boot_original.img` from recovery or fastboot |
 | A/B slot mismatch | Slot suffix auto-detected | Check `HOM_DEV_SLOT_SUFFIX` if issues occur |
 
