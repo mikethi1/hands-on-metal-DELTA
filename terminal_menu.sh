@@ -530,6 +530,312 @@ print_prereq_submenu() {
     esac
 }
 
+# ── Completion summary (what just happened) ──────────────────
+script_completion_success() {
+    local rel="$1"
+    case "$rel" in
+        build/build_offline_zip.sh)
+            echo "Built flashable ZIPs (Magisk module + recovery) in build/dist/."
+            echo "  • Magisk module ZIP: flash via Magisk app → Modules → Install from storage"
+            echo "  • Recovery ZIP: flash via TWRP/OrangeFox → Install → select ZIP"
+            ;;
+        build/fetch_all_deps.sh)
+            echo "Downloaded all dependencies (Magisk APK, busybox, offline bundle) into build/."
+            ;;
+        core/anti_rollback.sh)
+            echo "Checked the Security Patch Level (SPL) and AVB rollback index."
+            echo "  • Anti-rollback risk assessment stored in HOM_ARB_RISK."
+            ;;
+        core/apply_defaults.sh)
+            echo "Applied device-family defaults from the partition index to the current profile."
+            echo "  • Default patch target set (HOM_DEFAULT_PATCH_TARGET)."
+            ;;
+        core/boot_image.sh)
+            echo "Acquired the boot (or init_boot) image from the connected device."
+            echo "  • Image path stored in HOM_BOOT_IMG_PATH."
+            ;;
+        core/candidate_entry.sh)
+            echo "Created a new candidate entry for this device in the partition index."
+            ;;
+        core/device_profile.sh)
+            echo "Detected device model, partitions, A/B slot layout, AVB, and Treble support."
+            echo "  • Device model stored in HOM_DEV_MODEL."
+            ;;
+        core/flash.sh)
+            echo "Flashed the patched boot image to the device and verified integrity."
+            echo "  • Flash verification flag set (HOM_FLASH_VERIFIED=1)."
+            ;;
+        core/logging.sh)
+            echo "Logging framework loaded successfully (sourced by other scripts)."
+            ;;
+        core/magisk_patch.sh)
+            echo "Patched the boot image with Magisk for root access."
+            echo "  • Patched image path stored in HOM_PATCHED_IMG."
+            ;;
+        core/privacy.sh)
+            echo "Privacy-by-default PII redaction helpers loaded."
+            ;;
+        core/share.sh)
+            echo "Created a shareable PII-redacted diagnostic bundle."
+            ;;
+        core/state_machine.sh)
+            echo "State machine framework loaded (reboot-safe workflow tracker)."
+            ;;
+        core/ux.sh)
+            echo "UX output helpers loaded (TWRP / shell / service display modes)."
+            ;;
+        magisk-module/collect.sh)
+            echo "Collected read-only hardware data from the rooted device."
+            ;;
+        magisk-module/customize.sh)
+            echo "Ran the full Magisk module installation workflow on the device."
+            ;;
+        magisk-module/env_detect.sh)
+            echo "Detected the device environment (shell, tools, Python, Termux)."
+            echo "  • Results saved to /sdcard/hands-on-metal/env_registry.sh."
+            ;;
+        magisk-module/service.sh)
+            echo "Boot service executed: environment detection, Termux setup, and data collection."
+            ;;
+        magisk-module/setup_termux.sh)
+            echo "Installed and bootstrapped Termux with the required packages."
+            ;;
+        recovery-zip/collect_recovery.sh)
+            echo "Collected hardware data in recovery mode using read-only mounts."
+            ;;
+        pipeline/build_table.py)
+            echo "Built the hardware-map SQLite database from collected data."
+            ;;
+        pipeline/failure_analysis.py)
+            echo "Analysed install logs and identified failure patterns."
+            ;;
+        pipeline/github_notify.py)
+            echo "Posted analysis results as a GitHub issue comment."
+            ;;
+        pipeline/parse_logs.py)
+            echo "Parsed master log and run-manifest files."
+            ;;
+        pipeline/parse_manifests.py)
+            echo "Parsed VINTF / sysconfig / permissions XML manifests into the database."
+            ;;
+        pipeline/parse_pinctrl.py)
+            echo "Parsed pinctrl debug files into the database."
+            ;;
+        pipeline/parse_symbols.py)
+            echo "Parsed vendor library symbols and ELF sections."
+            ;;
+        pipeline/report.py)
+            echo "Generated HTML hardware report from the database."
+            ;;
+        pipeline/unpack_images.py)
+            echo "Unpacked boot / vendor-boot images and extracted the ramdisk."
+            ;;
+        pipeline/upload.py)
+            echo "Uploaded the diagnostic bundle to GitHub Gist."
+            ;;
+        *)
+            echo "Script completed successfully."
+            ;;
+    esac
+}
+
+script_completion_failure() {
+    local rel="$1" rc="$2"
+    case "$rel" in
+        build/build_offline_zip.sh)
+            echo "ZIP build failed. Check that 'zip' is installed and the partition index exists."
+            ;;
+        build/fetch_all_deps.sh)
+            echo "Dependency download failed. Verify network access and that git/curl/unzip are installed."
+            ;;
+        core/anti_rollback.sh)
+            echo "Rollback check failed. Ensure the boot image file (HOM_BOOT_IMG_PATH) is valid."
+            ;;
+        core/apply_defaults.sh)
+            echo "Could not apply defaults. Ensure device profile and partition index are available."
+            ;;
+        core/boot_image.sh)
+            echo "Could not acquire the boot image. Ensure the device is connected and accessible."
+            ;;
+        core/candidate_entry.sh)
+            echo "Candidate entry creation failed. Verify device profile and partition index."
+            ;;
+        core/device_profile.sh)
+            echo "Device detection failed. Ensure you are running on an Android device or in Termux."
+            ;;
+        core/flash.sh)
+            echo "Flash failed. Ensure root access and a valid patched boot image."
+            ;;
+        core/magisk_patch.sh)
+            echo "Magisk patching failed. Ensure the boot image and Magisk binary are available."
+            ;;
+        magisk-module/collect.sh)
+            echo "Data collection failed. Ensure root access and an Android environment."
+            ;;
+        magisk-module/customize.sh)
+            echo "Module installation failed. Ensure root access and an Android environment."
+            ;;
+        magisk-module/env_detect.sh)
+            echo "Environment detection failed. Ensure you are on an Android device."
+            ;;
+        magisk-module/service.sh)
+            echo "Boot service failed. Ensure root access and an Android environment."
+            ;;
+        magisk-module/setup_termux.sh)
+            echo "Termux setup failed. Ensure network access and an Android device."
+            ;;
+        recovery-zip/collect_recovery.sh)
+            echo "Recovery-mode collection failed. Ensure root access and an Android device."
+            ;;
+        pipeline/build_table.py)
+            echo "Database build failed. Verify Python 3 and the schema file are present."
+            ;;
+        pipeline/failure_analysis.py)
+            echo "Failure analysis failed. Verify Python 3 is installed."
+            ;;
+        pipeline/github_notify.py)
+            echo "GitHub notification failed. Verify GITHUB_TOKEN and Python 3."
+            ;;
+        pipeline/parse_logs.py)
+            echo "Log parsing failed. Verify Python 3 is installed."
+            ;;
+        pipeline/parse_manifests.py)
+            echo "Manifest parsing failed. Verify Python 3 and the schema file."
+            ;;
+        pipeline/parse_pinctrl.py)
+            echo "Pinctrl parsing failed. Verify Python 3 and the schema file."
+            ;;
+        pipeline/parse_symbols.py)
+            echo "Symbol parsing failed. Verify Python 3 is installed."
+            ;;
+        pipeline/report.py)
+            echo "Report generation failed. Verify Python 3 is installed."
+            ;;
+        pipeline/unpack_images.py)
+            echo "Image unpacking failed. Verify Python 3 is installed."
+            ;;
+        pipeline/upload.py)
+            echo "Upload failed. Verify GITHUB_TOKEN and Python 3."
+            ;;
+        *)
+            echo "Script failed (exit code $rc). Review the output above for details."
+            ;;
+    esac
+}
+
+# ── Next-step instructions ───────────────────────────────────
+script_next_steps() {
+    local rel="$1" rc="$2"
+    if [ "$rc" -ne 0 ]; then
+        echo "  → Fix the issue above and re-run this option, or press 'p' to check prerequisites."
+        return
+    fi
+    case "$rel" in
+        build/build_offline_zip.sh)
+            echo "  → Transfer the ZIPs from build/dist/ to your device."
+            echo "  → Flash the Magisk module ZIP via: Magisk app → Modules → Install from storage."
+            echo "  → Or flash the recovery ZIP via: TWRP/OrangeFox → Install → select ZIP."
+            ;;
+        build/fetch_all_deps.sh)
+            echo "  → Dependencies are ready. You can now run 'build/build_offline_zip.sh' to build ZIPs."
+            ;;
+        core/anti_rollback.sh)
+            echo "  → If no rollback risk was found, proceed to flash (core/flash.sh)."
+            echo "  → If a risk was detected, review the SPL/AVB details before flashing."
+            ;;
+        core/apply_defaults.sh)
+            echo "  → Defaults applied. You can now proceed to acquire the boot image (core/boot_image.sh)."
+            ;;
+        core/boot_image.sh)
+            echo "  → Boot image acquired. Next, patch it with Magisk (core/magisk_patch.sh)."
+            echo "  → Or check rollback risk first (core/anti_rollback.sh)."
+            ;;
+        core/candidate_entry.sh)
+            echo "  → Candidate entry created. Run 'build/fetch_all_deps.sh' to refresh the partition index."
+            ;;
+        core/device_profile.sh)
+            echo "  → Device detected. Next, apply defaults (core/apply_defaults.sh)"
+            echo "    or acquire the boot image (core/boot_image.sh)."
+            ;;
+        core/flash.sh)
+            echo "  → Device flashed and verified. Reboot your device to activate Magisk root."
+            echo "  → After reboot, verify root by running: su -c 'id'"
+            ;;
+        core/logging.sh)
+            echo "  → Logging framework is ready. It will be used automatically by other scripts."
+            ;;
+        core/magisk_patch.sh)
+            echo "  → Boot image patched. Next, check rollback risk (core/anti_rollback.sh)"
+            echo "    then flash the patched image (core/flash.sh)."
+            ;;
+        core/privacy.sh)
+            echo "  → Privacy helpers are loaded. They will be used automatically during data collection."
+            ;;
+        core/share.sh)
+            echo "  → Diagnostic bundle created. Share it with the project maintainers for analysis."
+            echo "  → Or upload it via 'pipeline/upload.py'."
+            ;;
+        core/state_machine.sh)
+            echo "  → State machine is ready. It will be used automatically by the workflow scripts."
+            ;;
+        core/ux.sh)
+            echo "  → UX helpers are loaded. They will be used automatically by other scripts."
+            ;;
+        magisk-module/collect.sh)
+            echo "  → Hardware data collected. Run the pipeline scripts to parse and analyse the data."
+            echo "  → Start with 'pipeline/parse_logs.py' or 'pipeline/build_table.py'."
+            ;;
+        magisk-module/customize.sh)
+            echo "  → Module installed. Reboot your device for changes to take effect."
+            ;;
+        magisk-module/env_detect.sh)
+            echo "  → Environment registry saved. Other scripts can now use the detected configuration."
+            ;;
+        magisk-module/service.sh)
+            echo "  → Boot service completed. Data should now be collected automatically on each boot."
+            ;;
+        magisk-module/setup_termux.sh)
+            echo "  → Termux is set up. You can now run the full collection (magisk-module/collect.sh)."
+            ;;
+        recovery-zip/collect_recovery.sh)
+            echo "  → Recovery data collected. Run the pipeline scripts to parse and analyse it."
+            ;;
+        pipeline/build_table.py)
+            echo "  → Database built. Generate a report with 'pipeline/report.py'."
+            ;;
+        pipeline/failure_analysis.py)
+            echo "  → Analysis complete. Review the output or post results via 'pipeline/github_notify.py'."
+            ;;
+        pipeline/github_notify.py)
+            echo "  → GitHub issue comment posted. Check the issue for the analysis results."
+            ;;
+        pipeline/parse_logs.py)
+            echo "  → Logs parsed. Continue with 'pipeline/build_table.py' to build the database."
+            ;;
+        pipeline/parse_manifests.py)
+            echo "  → Manifests parsed. Continue with 'pipeline/build_table.py' to build the database."
+            ;;
+        pipeline/parse_pinctrl.py)
+            echo "  → Pinctrl parsed. Continue with 'pipeline/build_table.py' to build the database."
+            ;;
+        pipeline/parse_symbols.py)
+            echo "  → Symbols parsed. Continue with 'pipeline/build_table.py' to build the database."
+            ;;
+        pipeline/report.py)
+            echo "  → HTML report generated. Open the report file in a browser to view results."
+            ;;
+        pipeline/unpack_images.py)
+            echo "  → Images unpacked. Proceed with parsing or analysis of the extracted contents."
+            ;;
+        pipeline/upload.py)
+            echo "  → Bundle uploaded to GitHub Gist. Share the Gist URL with collaborators."
+            ;;
+        *)
+            echo "  → Return to the menu to continue with the next step."
+            ;;
+    esac
+}
+
 # ── Run a selected script ────────────────────────────────────
 run_selected() {
     local idx="$1"
@@ -540,6 +846,8 @@ run_selected() {
 
     echo
     echo "Selected: $rel"
+    echo "  $(script_description "$rel")"
+    echo
     echo "Note: enter space-separated arguments (embedded space quoting is not supported)."
     read -r -a args_array -p "Arguments (optional): "
 
@@ -564,7 +872,21 @@ run_selected() {
     )
     local rc=$?
     echo
-    echo "Exit code: $rc"
+    echo "═══════════════════════════════════════════════════════"
+    if [ "$rc" -eq 0 ]; then
+        printf " %s✓ SUCCESS%s — %s\n" "$CLR_LIGHT_GREEN" "$CLR_RESET" "$rel"
+        echo "═══════════════════════════════════════════════════════"
+        echo
+        script_completion_success "$rel"
+    else
+        printf " %s✗ FAILED (exit code %d)%s — %s\n" "$CLR_YELLOW" "$rc" "$CLR_RESET" "$rel"
+        echo "═══════════════════════════════════════════════════════"
+        echo
+        script_completion_failure "$rel" "$rc"
+    fi
+    echo
+    echo "Next steps:"
+    script_next_steps "$rel" "$rc"
     echo
 }
 
