@@ -1081,7 +1081,8 @@ run_selected() {
                 core/device_profile.sh|core/flash.sh|\
                 core/magisk_patch.sh|core/share.sh)
                     # Source framework scripts
-                    SCRIPT_NAME="${rel##*/}"; SCRIPT_NAME="${SCRIPT_NAME%.sh}"
+                    SCRIPT_NAME="${rel##*/}"
+                    SCRIPT_NAME="${SCRIPT_NAME%.sh}"
                     export SCRIPT_NAME
                     source "$REPO_ROOT/core/logging.sh"
                     source "$REPO_ROOT/core/ux.sh"
