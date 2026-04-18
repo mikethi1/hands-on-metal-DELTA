@@ -103,6 +103,48 @@ download() {
     ok "Saved to: $dest"
 }
 
+# extract_magisk_binary <apk> <dest_file> <primary_path> [<fallback_path>...]
+#
+# Tries to extract a library from the Magisk APK using multiple
+# candidate paths.  Magisk v26+ renamed libmagisk64.so / libmagisk32.so
+# to libmagisk.so under each ABI directory, so we try the current name
+# first and fall back to the old name.  On failure the APK contents are
+# listed for diagnostic purposes.
+extract_magisk_binary() {
+    local apk="$1" dest="$2"
+    shift 2
+    local paths=("$@")
+
+    local unzip_log="$_TMP/hom-unzip-$$.log"
+    local extracted=false
+
+    for candidate in "${paths[@]}"; do
+        if unzip -jo "$apk" "$candidate" -d "$_TMP/" >"$unzip_log" 2>&1; then
+            local basename
+            basename="$(basename "$candidate")"
+            cp "$_TMP/$basename" "$dest" && chmod +x "$dest"
+            rm -f "$_TMP/$basename"
+            extracted=true
+            break
+        fi
+    done
+
+    rm -f "$unzip_log"
+
+    if [ "$extracted" = false ]; then
+        fail "Extraction failed — APK does not contain any of the expected library paths:"
+        for p in "${paths[@]}"; do
+            echo "    • $p" >&2
+        done
+        echo "" >&2
+        echo "  APK contents (lib/ entries):" >&2
+        unzip -l "$apk" 2>/dev/null | grep 'lib/' | head -30 >&2 || true
+        echo "" >&2
+        fail "Check the Magisk release at: $MAGISK_APK_URL"
+        exit 1
+    fi
+}
+
 echo ""
 echo "=============================================="
 echo "  hands-on-metal Full Dependency Fetcher"
@@ -175,35 +217,20 @@ else
 
         echo "  Extracting binaries from APK..."
         # Magisk v26+ renamed libmagisk64.so / libmagisk32.so to
-        # libmagisk.so under each ABI directory.  Because both ABIs
-        # share the same filename we must extract them one at a time
-        # to avoid overwriting.
+        # libmagisk.so under each ABI directory.  We try the v26+
+        # path first, then fall back to the pre-v26 name so that
+        # both old and new APK layouts are supported.
 
-        unzip -jo "$MAGISK_APK" 'lib/arm64-v8a/libmagisk.so' \
-            -d "$_TMP/" 2>/dev/null || {
-                fail "Failed to extract libmagisk.so (arm64) from APK."
-                fail "Check the Magisk release at: $MAGISK_APK_URL"
-                exit 1
-            }
-        cp "$_TMP/libmagisk.so" "$TOOLS_DIR/magisk64" && chmod +x "$TOOLS_DIR/magisk64"
+        extract_magisk_binary "$MAGISK_APK" "$TOOLS_DIR/magisk64" \
+            'lib/arm64-v8a/libmagisk.so' \
+            'lib/arm64-v8a/libmagisk64.so'
 
-        unzip -jo "$MAGISK_APK" 'lib/armeabi-v7a/libmagisk.so' \
-            -d "$_TMP/" 2>/dev/null || {
-                fail "Failed to extract libmagisk.so (arm32) from APK."
-                fail "Check the Magisk release at: $MAGISK_APK_URL"
-                exit 1
-            }
-        cp "$_TMP/libmagisk.so" "$TOOLS_DIR/magisk32" && chmod +x "$TOOLS_DIR/magisk32"
+        extract_magisk_binary "$MAGISK_APK" "$TOOLS_DIR/magisk32" \
+            'lib/armeabi-v7a/libmagisk.so' \
+            'lib/armeabi-v7a/libmagisk32.so'
 
-        unzip -jo "$MAGISK_APK" 'lib/arm64-v8a/libmagiskinit.so' \
-            -d "$_TMP/" 2>/dev/null || {
-                fail "Failed to extract libmagiskinit.so from APK."
-                fail "Check the Magisk release at: $MAGISK_APK_URL"
-                exit 1
-            }
-        cp "$_TMP/libmagiskinit.so" "$TOOLS_DIR/magiskinit64" && chmod +x "$TOOLS_DIR/magiskinit64"
-
-        rm -f "$_TMP/libmagisk.so" "$_TMP/libmagiskinit.so"
+        extract_magisk_binary "$MAGISK_APK" "$TOOLS_DIR/magiskinit64" \
+            'lib/arm64-v8a/libmagiskinit.so'
 
         ok "magisk64, magisk32, magiskinit64 → $TOOLS_DIR/"
 
