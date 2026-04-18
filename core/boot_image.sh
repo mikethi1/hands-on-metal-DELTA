@@ -230,13 +230,6 @@ _find_pre_placed_image() {
         fi
     done
 
-    # Note: skip Magisk *patched* images — we need the unpatched original
-    for candidate in /sdcard/Download/magisk_patched-*.img; do
-        if [ -f "$candidate" ]; then
-            log_info "Found Magisk-patched image: $candidate (skipping — need unpatched original)"
-        fi
-    done
-
     # ── TWRP / OrangeFox / PBRP / SHRP / RedWolf backups ─────
     # Custom recovery Nandroid backups store raw partition dumps.
     # TWRP naming: BACKUPS/<serial>/<YYYY-MM-DD--HH-MM-SS>/<part>.emmc.win

@@ -172,9 +172,9 @@ _boot_image_obtainable() {
     # 6. GKI device (Android 12+ / API 31+) — generic boot image
     #    obtainable from ci.android.com for the matching kernel version.
     #    Reference: https://source.android.com/docs/core/architecture/partitions/generic-boot
-    local _bpa
-    _bpa=$(getprop ro.build.version.sdk 2>/dev/null || echo 0)
-    [ "$_bpa" -ge 31 ] 2>/dev/null && return 0
+    local _api_level
+    _api_level=$(getprop ro.build.version.sdk 2>/dev/null || echo 0)
+    [ "$_api_level" -ge 31 ] 2>/dev/null && return 0
 
     return 1
 }

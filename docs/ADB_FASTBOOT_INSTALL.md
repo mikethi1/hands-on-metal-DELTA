@@ -1135,13 +1135,13 @@ reboot
 
 ### Where does the boot image come from?
 
-`core/boot_image.sh` acquires the boot/init\_boot image using a priority
+`core/boot_image.sh` acquires the boot/init_boot image using a priority
 chain. Each step is tried only if the previous one did not succeed:
 
 | Priority | Method | Needs root? | Notes |
 |----------|--------|:-----------:|-------|
 | 1 | **Root DD** — copy from live block device | ✅ | Fastest, always matches running firmware |
-| 2 | **Pre-placed / backup scan** | ❌ | Scans boot\_work, /sdcard/Download, Magisk stock backup, TWRP / OrangeFox / PBRP / SHRP / RedWolf / CWM / Nandroid backup folders |
+| 2 | **Pre-placed / backup scan** | ❌ | Scans boot_work, /sdcard/Download, Magisk stock backup, TWRP / OrangeFox / PBRP / SHRP / RedWolf / CWM / Nandroid backup folders |
 | 3 | **Google factory download** (Pixels) | ❌ | Requires `curl` + `unzip` and network. Auto-detects codename + build ID |
 | 4 | **GKI generic boot image** (Android 12+) | ❌ | For ANY GKI-compatible device. Downloads from ci.android.com |
 | 5 | **OEM-specific guidance** | ❌ | Shows Samsung / Xiaomi / OnePlus / Motorola / ASUS / Sony download links |
@@ -1179,10 +1179,10 @@ generic boot images for every GKI kernel version.
 **This means you can download a matching generic boot image for ANY
 GKI-compatible device, not just Pixels.**
 
-| Android version | API | GKI kernel | ci.android.com branch | init\_boot? |
+| Android version | API | GKI kernel | ci.android.com branch | init_boot? |
 |----------------|:---:|:----------:|----------------------|:-----------:|
 | Android 12     | 31  | 5.10       | `aosp_kernel-common-android12-5.10` | ❌ boot only |
-| Android 13     | 33  | 5.10 / 5.15 | `aosp_kernel-common-android13-5.10` or `...-5.15` | ✅ init\_boot introduced |
+| Android 13     | 33  | 5.10 / 5.15 | `aosp_kernel-common-android13-5.10` or `...-5.15` | ✅ init_boot introduced |
 | Android 14     | 34  | 5.15 / 6.1 | `aosp_kernel-common-android14-5.15` or `...-6.1` | ✅ |
 | Android 15     | 35  | 6.1 / 6.6 | `aosp_kernel-common-android15-6.6` | ✅ |
 | Android 16     | 36  | 6.6 / 6.12 | `aosp_kernel-common-android16-6.12` | ✅ |
