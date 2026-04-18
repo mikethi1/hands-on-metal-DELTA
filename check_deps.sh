@@ -83,6 +83,8 @@ _hom_optional nm       "Analysing vendor library symbols (parse_symbols.py)"
 _hom_optional readelf  "Analysing ELF dynamic sections (parse_symbols.py)"
 _hom_optional c++filt  "Demangling C++ symbol names (parse_symbols.py)"
 _hom_optional openssl  "Fallback SHA-256 hashing on device (core scripts)"
+_hom_optional lz4     "Decompressing LZ4-compressed TWRP Nandroid backups (core/boot_image.sh)"
+_hom_optional gzip    "Decompressing gzip-compressed TWRP Nandroid backups (core/boot_image.sh)"
 
 echo ""
 

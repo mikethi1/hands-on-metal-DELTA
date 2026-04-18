@@ -1131,6 +1131,167 @@ reboot
 
 ---
 
+## Boot image sources and GKI generic boot images
+
+### Where does the boot image come from?
+
+`core/boot_image.sh` acquires the boot/init\_boot image using a priority
+chain. Each step is tried only if the previous one did not succeed:
+
+| Priority | Method | Needs root? | Notes |
+|----------|--------|:-----------:|-------|
+| 1 | **Root DD** — copy from live block device | ✅ | Fastest, always matches running firmware |
+| 2 | **Pre-placed / backup scan** | ❌ | Scans boot\_work, /sdcard/Download, Magisk stock backup, TWRP / OrangeFox / PBRP / SHRP / RedWolf / CWM / Nandroid backup folders |
+| 3 | **Google factory download** (Pixels) | ❌ | Requires `curl` + `unzip` and network. Auto-detects codename + build ID |
+| 4 | **GKI generic boot image** (Android 12+) | ❌ | For ANY GKI-compatible device. Downloads from ci.android.com |
+| 5 | **OEM-specific guidance** | ❌ | Shows Samsung / Xiaomi / OnePlus / Motorola / ASUS / Sony download links |
+| 6 | **User prompt** | ❌ | Final fallback — enter a path or block device manually |
+
+**The `boot_image` prerequisite in the menu shows as "ready" when any
+of these sources are available** (root detected, backup found, or Android
+12+ GKI device).
+
+### Magisk GitHub repo — does it host factory images?
+
+**No.** The Magisk repository ([topjohnwu/Magisk](https://github.com/topjohnwu/Magisk))
+only contains the Magisk app and rooting tools. It does **not** host OEM
+factory boot images.
+
+However, **Magisk saves the original stock boot image** whenever it
+patches. This backup is stored at:
+
+```
+/data/adb/magisk/stock_boot.img
+/data/adb/magisk/stock_boot_<partition>.img
+```
+
+The scanner checks this location automatically. This stock backup is
+the best source for re-patching or recovering root if live patching
+fails (see [Fallback root recovery](#fallback-root-recovery-using-backup-images) below).
+
+### GKI generic boot images (Android 12+ / API 31+)
+
+Starting with Android 12, most devices use the
+[Generic Kernel Image (GKI)](https://source.android.com/docs/core/architecture/partitions/generic-boot)
+format. The boot image is standardized — Google publishes prebuilt
+generic boot images for every GKI kernel version.
+
+**This means you can download a matching generic boot image for ANY
+GKI-compatible device, not just Pixels.**
+
+| Android version | API | GKI kernel | ci.android.com branch | init\_boot? |
+|----------------|:---:|:----------:|----------------------|:-----------:|
+| Android 12     | 31  | 5.10       | `aosp_kernel-common-android12-5.10` | ❌ boot only |
+| Android 13     | 33  | 5.10 / 5.15 | `aosp_kernel-common-android13-5.10` or `...-5.15` | ✅ init\_boot introduced |
+| Android 14     | 34  | 5.15 / 6.1 | `aosp_kernel-common-android14-5.15` or `...-6.1` | ✅ |
+| Android 15     | 35  | 6.1 / 6.6 | `aosp_kernel-common-android15-6.6` | ✅ |
+| Android 16     | 36  | 6.6 / 6.12 | `aosp_kernel-common-android16-6.12` | ✅ |
+
+**How to download:**
+
+1. Check your kernel version: `uname -r` → e.g. `6.1.43`
+2. Open `https://ci.android.com/builds/branches/<branch>/grid`
+3. Click the latest green build → **Artifacts** tab
+4. Download `boot.img` (or `init_boot.img` for Android 13+)
+5. Push to device: `adb push boot.img /sdcard/Download/`
+6. Re-run the installer
+
+For automated download, use the AOSP `download_from_ci` script:
+`https://android.googlesource.com/kernel/build/+/refs/heads/main/gki/download_from_ci`
+
+> **Note:** `boot_image.sh` auto-detects GKI compatibility by checking
+> `ro.build.version.sdk >= 31` and matching the kernel version to the
+> correct AOSP branch.
+
+### OEM-specific firmware sources
+
+For non-Google, non-GKI devices, the boot image must come from the
+OEM's firmware package:
+
+| OEM | Source | Extraction |
+|-----|--------|------------|
+| Samsung | [SamFw](https://samfw.com/), [SamMobile](https://www.sammobile.com/firmware/), Frija (PC tool) | `AP_*.tar.md5` → `boot.img.lz4` → `lz4 -d boot.img.lz4 boot.img` |
+| Xiaomi / Redmi / POCO | [XiaomiFirmwareUpdater](https://xiaomifirmwareupdater.com/), [MIUI Downloads](https://new.c.mi.com/global/miuidownload/) | `payload.bin` → `payload-dumper-go -p boot payload.bin` |
+| OnePlus / OPPO / Realme | [OnePlus service](https://service.oneplus.com/), OxygenUpdater app | `payload.bin` → `payload-dumper-go -p boot payload.bin` |
+| Motorola | [Lolinet mirrors](https://mirrors.lolinet.com/firmware/moto/) | ZIP contains `boot.img` directly |
+| ASUS | [ASUS support](https://www.asus.com/support/) | `payload.bin` → `payload-dumper-go -p boot payload.bin` |
+| Sony | XperiFirm (XDA), Newflasher | `.sin` → flashtool → `boot.img` |
+
+**Generic payload.bin extraction** (works for most modern OEMs):
+
+```bash
+pip install payload-dumper-go   # or download from GitHub
+payload-dumper-go -p boot -o . payload.bin
+```
+
+---
+
+## Fallback root recovery using backup images
+
+If live Magisk patching fails (bootloop, checksum mismatch, or patch
+error), you can use a backup boot image to **recover root access**
+without needing to start from scratch.
+
+### Sources for stock boot images (for recovery)
+
+| Source | Location | Root needed? |
+|--------|----------|:------------:|
+| Magisk stock backup | `/data/adb/magisk/stock_boot.img` | ✅ to read |
+| TWRP Nandroid backup | `/sdcard/TWRP/BACKUPS/<serial>/<date>/boot.emmc.win` | ❌ |
+| OrangeFox backup | `/sdcard/Fox/BACKUPS/<serial>/<date>/boot.emmc.win` | ❌ |
+| PBRP / SHRP / RedWolf | `/sdcard/<recovery>/BACKUPS/…/boot.emmc.win` | ❌ |
+| CWM / Nandroid | `/sdcard/clockworkmod/backup/<date>/boot.img` | ❌ |
+| GKI generic image | ci.android.com (Android 12+) | ❌ |
+| OEM factory download | See [OEM sources](#oem-specific-firmware-sources) above | ❌ |
+
+> **TWRP `.emmc.win` files** are raw partition dumps — identical to
+> `.img` files. Compressed backups (`.win.gz`, `.win.lz4`) are
+> automatically decompressed by `boot_image.sh`.
+
+### Recovery workflow
+
+```
+  Stock boot.img (from backup)
+       │
+       ▼
+  Magisk app → Install → Patch a File → select boot.img
+       │
+       ▼
+  magisk_patched-XXXXX.img (on device or transferred to HOST)
+       │
+       ▼
+  fastboot flash boot magisk_patched-XXXXX.img   (Mode C2)
+       │
+       ▼
+  Root restored ✓
+```
+
+**Step-by-step:**
+
+```bash
+# 1. Get the stock boot image from any backup source above
+#    (boot_image.sh scans all these locations automatically)
+
+# 2. Transfer to a device with Magisk app installed
+adb push boot.img /sdcard/Download/
+
+# 3. On that device: Magisk → Install → Patch a File → select boot.img
+#    Magisk creates: /sdcard/Download/magisk_patched-XXXXX.img
+
+# 4. Pull the patched image back to HOST
+adb pull /sdcard/Download/magisk_patched-*.img .
+
+# 5. Flash via fastboot (Mode C2)
+adb reboot bootloader
+fastboot flash boot magisk_patched-XXXXX.img
+fastboot reboot
+```
+
+This workflow also works with GKI generic boot images — patch the
+generic image with Magisk, then flash it to the device.
+
+---
+
 ## Troubleshooting
 
 | Problem | Solution |

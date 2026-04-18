@@ -92,7 +92,7 @@ prereq_label() {
     case "$prereq" in
         root)             echo "root (superuser) access" ;;
         network)          echo "network / internet access" ;;
-        boot_image)       echo "boot image file (HOM_BOOT_IMG_PATH)" ;;
+        boot_image)       echo "boot image (root DD / backup / GKI / factory / manual)" ;;
         magisk_binary)    echo "Magisk binary" ;;
         device_profile)   echo "device profile (core/device_profile.sh)" ;;
         env_registry)     echo "environment registry (/sdcard/hands-on-metal/env_registry.sh)" ;;
@@ -108,6 +108,77 @@ prereq_label() {
     esac
 }
 
+# Check if a boot image file is available or can be obtained.
+# Returns 0 (prereq met / obtainable) when ANY of:
+#   1. HOM_BOOT_IMG_PATH is set and file exists (already acquired)
+#   2. Root access available (can dd dump from live block device)
+#   3. Magisk stock boot backup exists (/data/adb/magisk/stock_boot*.img)
+#      NOTE: The Magisk GitHub repo (topjohnwu/Magisk) does NOT host
+#      factory boot images.  Magisk is a rooting tool only.  However,
+#      when Magisk patches a boot image it saves the original here.
+#   4. Image found in TWRP / OrangeFox / PBRP / SHRP / RedWolf /
+#      CWM / Nandroid backup folders
+#   5. Image pre-placed in Download / boot_work / tmp directories
+_boot_image_obtainable() {
+    # 1. Already acquired
+    [ -n "${HOM_BOOT_IMG_PATH:-}" ] \
+        && [ -f "${HOM_BOOT_IMG_PATH:-/nonexistent}" ] && return 0
+
+    # 2. Root available → can dd the live partition
+    [ "$(id -u 2>/dev/null || echo 1)" -eq 0 ] 2>/dev/null && return 0
+
+    # 3. Magisk stock boot backup (saved when Magisk patches)
+    for _bpi in /data/adb/magisk/stock_boot.img /data/adb/magisk/stock_boot_*.img; do
+        [ -f "$_bpi" ] 2>/dev/null && return 0
+    done
+
+    # 4. Pre-placed images in standard locations
+    local _bpd
+    for _bpd in \
+        /sdcard/hands-on-metal/boot_work \
+        /sdcard/Download \
+        /sdcard \
+        /data/local/tmp; do
+        for _bpn in boot.img init_boot.img boot_original.img init_boot_original.img; do
+            [ -f "$_bpd/$_bpn" ] 2>/dev/null && return 0
+        done
+    done
+
+    # 5. TWRP / custom recovery Nandroid backup folders
+    #    TWRP naming: BACKUPS/<serial>/<date>/<part>.emmc.win
+    #    .win files are raw dd dumps of the partition (same as .img).
+    #    May also be gzip (.win.gz) or lz4 (.win.lz4) compressed.
+    local _bpb
+    for _bpb in \
+        /sdcard/TWRP/BACKUPS \
+        /sdcard/Fox/BACKUPS \
+        /sdcard/OrangeFox/BACKUPS \
+        /sdcard/PBRP/BACKUPS \
+        /sdcard/SHRP/BACKUPS \
+        /sdcard/RedWolf/BACKUPS \
+        /sdcard/clockworkmod/backup \
+        /sdcard/nandroid; do
+        [ -d "$_bpb" ] 2>/dev/null || continue
+        # TWRP-style: BACKUPS/<serial>/<date>/<part>.emmc.win[.gz|.lz4]
+        for _bpg in "$_bpb"/*/*/boot.emmc.win   "$_bpb"/*/*/init_boot.emmc.win \
+                     "$_bpb"/*/*/boot.emmc.win.gz "$_bpb"/*/*/init_boot.emmc.win.gz \
+                     "$_bpb"/*/*/boot.emmc.win.lz4 "$_bpb"/*/*/init_boot.emmc.win.lz4 \
+                     "$_bpb"/*/*/boot.img "$_bpb"/*/*/init_boot.img \
+                     "$_bpb"/*/boot.img "$_bpb"/*/init_boot.img; do
+            [ -f "$_bpg" ] 2>/dev/null && return 0
+        done
+    done
+
+    # 6. GKI device (Android 12+ / API 31+) — generic boot image
+    #    obtainable from ci.android.com for the matching kernel version.
+    #    Reference: https://source.android.com/docs/core/architecture/partitions/generic-boot
+    local _bpa
+    _bpa=$(getprop ro.build.version.sdk 2>/dev/null || echo 0)
+    [ "$_bpa" -ge 31 ] 2>/dev/null && return 0
+
+    return 1
+}
+
 # Check whether a prerequisite is satisfied.  Returns 0 if met.
 check_prereq() {
     local prereq="$1"
@@ -119,8 +190,7 @@ check_prereq() {
             curl -s --connect-timeout 2 -o /dev/null https://github.com 2>/dev/null \
                 || ping -c1 -W2 8.8.8.8 >/dev/null 2>&1 ;;
         boot_image)
-            [ -n "${HOM_BOOT_IMG_PATH:-}" ] \
-                && [ -f "${HOM_BOOT_IMG_PATH:-/nonexistent}" ] ;;
+            _boot_image_obtainable ;;
         magisk_binary)
             command -v magisk >/dev/null 2>&1 \
                 || [ -f "/data/adb/magisk/magisk" ] 2>/dev/null ;;
@@ -190,7 +260,7 @@ script_description() {
         build/host_flash.sh:elevated-setup) echo "Set up Shizuku/LADB on TARGET for elevated ADB access" ;;
         core/anti_rollback.sh)             echo "Check SPL / AVB rollback risk before flashing" ;;
         core/apply_defaults.sh)            echo "Apply device-family defaults from partition index" ;;
-        core/boot_image.sh)                echo "Acquire the boot or init_boot image from the device" ;;
+        core/boot_image.sh)                echo "Acquire boot/init_boot image (root DD, backups, GKI, factory, or manual)" ;;
         core/candidate_entry.sh)           echo "Create a candidate entry for an unknown device" ;;
         core/device_profile.sh)            echo "Detect device model, partitions, AVB, and Treble support" ;;
         core/flash.sh)                     echo "Flash patched boot image to device and verify" ;;
@@ -590,8 +660,10 @@ script_completion_success() {
             echo "  • Default patch target set (HOM_DEFAULT_PATCH_TARGET)."
             ;;
         core/boot_image.sh)
-            echo "Acquired the boot (or init_boot) image from the connected device."
+            echo "Acquired the boot (or init_boot) image."
             echo "  • Image path stored in HOM_BOOT_IMG_PATH."
+            echo "  • Sources checked: root DD, Magisk stock backup, TWRP/recovery backups,"
+            echo "    GKI generic image (Android 12+), Google factory, OEM firmware, manual."
             ;;
         core/candidate_entry.sh)
             echo "Created a new candidate entry for this device in the partition index."
@@ -698,7 +770,9 @@ script_completion_failure() {
             echo "Could not apply defaults. Ensure device profile and partition index are available."
             ;;
         core/boot_image.sh)
-            echo "Could not acquire the boot image. Ensure the device is connected and accessible."
+            echo "Could not acquire the boot image."
+            echo "  Options: place boot.img in /sdcard/Download, check TWRP/recovery backups,"
+            echo "  download GKI image from ci.android.com (Android 12+), or get root access."
             ;;
         core/candidate_entry.sh)
             echo "Candidate entry creation failed. Verify device profile and partition index."
