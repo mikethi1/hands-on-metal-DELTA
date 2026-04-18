@@ -131,8 +131,9 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 | [`schema/`](schema/) | SQLite schema (`hardware_map.sql`) |
 | [`build/`](build/) | `build_offline_zip.sh`, `fetch_all_deps.sh`, `partition_index.json` |
 | [`tools/`](tools/) | Optional binaries (`busybox-arm64`, `magisk64`, `magisk32`, `magiskinit64`) — not committed; fetched by `fetch_all_deps.sh` |
+| [`fileserver/`](fileserver/) | Minimal HTTP file server — download via `curl`/`wget`, upload via `curl -F` (stdlib only, see [fileserver/README.md](fileserver/README.md)) |
 | [`halium-shim/`](halium-shim/) | C shim + Makefile for Halium/libhybris bridge research |
-| [`tests/`](tests/) | Python unit tests for `parse_logs` and `build_table` |
+| [`tests/`](tests/) | Python unit tests for `parse_logs`, `build_table`, and `fileserver` |
 | [`setup.sh`](setup.sh) | One-step bootstrap — clones the repo, checks deps, fetches binaries, builds ZIPs |
 | [`terminal_menu.sh`](terminal_menu.sh) | Interactive terminal launcher — run any project script from one menu |
 | [`check_deps.sh`](check_deps.sh) | Host-side dependency checker — verifies all required tools are installed |
