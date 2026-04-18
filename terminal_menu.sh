@@ -1121,6 +1121,8 @@ run_selected() {
                 core/device_profile.sh|core/flash.sh|\
                 core/magisk_patch.sh|core/share.sh)
                     # Source framework scripts
+                    # Intentional: SCRIPT_NAME is only consumed inside this subshell.
+                    # shellcheck disable=SC2030
                     SCRIPT_NAME="${rel##*/}"
                     SCRIPT_NAME="${SCRIPT_NAME%.sh}"
                     export SCRIPT_NAME
@@ -1212,6 +1214,8 @@ run_exit_log_upload() {
     # 1) Build (or refresh) the share bundle for this RUN_ID.
     (
         cd "$REPO_ROOT" || exit 0
+        # Intentional: this assignment is scoped to this subshell.
+        # shellcheck disable=SC2031
         export SCRIPT_NAME="terminal_menu"
         # shellcheck source=/dev/null
         . "$REPO_ROOT/core/logging.sh"   2>/dev/null || exit 0

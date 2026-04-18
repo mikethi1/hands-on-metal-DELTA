@@ -89,6 +89,90 @@ _hom_optional gzip    "Decompressing gzip-compressed TWRP Nandroid backups (core
 
 echo ""
 
+# ── Auto-fetch Magisk from topjohnwu/Magisk GitHub releases ───
+# Skipped on-device (Termux/Android — Magisk is installed there)
+# and when the user opts out via HOM_SKIP_MAGISK_DOWNLOAD=1.
+# Requires curl + unzip (already required above); fails soft so a
+# missing network does not block the rest of the dep check.
+_hom_fetch_magisk() {
+    [ "${HOM_SKIP_MAGISK_DOWNLOAD:-}" = "1" ] && return 0
+    [ "$_hom_env_type" = "termux" ] || [ "$_hom_env_type" = "android" ] && return 0
+    command -v curl  >/dev/null 2>&1 || return 0
+    command -v unzip >/dev/null 2>&1 || return 0
+
+    local repo_root tools_dir
+    repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    tools_dir="$repo_root/tools"
+
+    # Already fetched? Nothing to do.
+    if [ -f "$tools_dir/magisk64" ] && [ -f "$tools_dir/magisk32" ] \
+            && [ -f "$tools_dir/magiskinit64" ]; then
+        echo "  ✓  Magisk binaries already present in tools/"
+        return 0
+    fi
+
+    local version="${HOM_MAGISK_VERSION:-v30.7}"
+    local url="https://github.com/topjohnwu/Magisk/releases/download/${version}/Magisk-${version}.apk"
+    local tmp="${TMPDIR:-/tmp}"
+    local apk="$tmp/hands-on-metal-magisk-${version}.apk"
+
+    mkdir -p "$tools_dir" "$tmp"
+
+    if [ ! -f "$apk" ]; then
+        echo "  ↓  Downloading Magisk ${version} from topjohnwu/Magisk..."
+        if ! curl -fsSL --retry 3 --retry-delay 2 -o "$apk" "$url"; then
+            echo "  ⚠  Could not download Magisk (offline / blocked / bad version)." >&2
+            echo "     URL: $url" >&2
+            echo "     Re-run with HOM_SKIP_MAGISK_DOWNLOAD=1 to silence." >&2
+            rm -f "$apk"
+            return 0
+        fi
+    else
+        echo "  ✓  Magisk APK cached at $apk"
+    fi
+
+    # Extract magisk64 / magisk32 / magiskinit64 from the APK.
+    # Magisk v26+ renamed libmagisk{64,32}.so → libmagisk.so under each ABI;
+    # try the new path first, then fall back to the old one.
+    _hom_extract_magisk() {
+        local dest="$1"; shift
+        local p
+        for p in "$@"; do
+            if unzip -jo "$apk" "$p" -d "$tmp/" >/dev/null 2>&1; then
+                local base
+                base="$(basename "$p")"
+                cp "$tmp/$base" "$dest" && chmod +x "$dest"
+                rm -f "$tmp/$base"
+                return 0
+            fi
+        done
+        return 1
+    }
+
+    local extract_ok=true
+    _hom_extract_magisk "$tools_dir/magisk64" \
+        'lib/arm64-v8a/libmagisk.so' \
+        'lib/arm64-v8a/libmagisk64.so' || extract_ok=false
+    _hom_extract_magisk "$tools_dir/magisk32" \
+        'lib/armeabi-v7a/libmagisk.so' \
+        'lib/armeabi-v7a/libmagisk32.so' || extract_ok=false
+    _hom_extract_magisk "$tools_dir/magiskinit64" \
+        'lib/arm64-v8a/libmagiskinit.so' || extract_ok=false
+
+    unset -f _hom_extract_magisk
+
+    if [ "$extract_ok" = true ]; then
+        echo "  ✓  Magisk binaries extracted to tools/ (magisk64, magisk32, magiskinit64)"
+    else
+        echo "  ⚠  Magisk APK downloaded but extraction failed (unexpected APK layout)." >&2
+    fi
+}
+
+_hom_fetch_magisk
+unset -f _hom_fetch_magisk
+
+echo ""
+
 # ── On-TARGET apps (detected at runtime, guidance only) ──────
 echo "  On-TARGET optional apps (install on the Android device being flashed):"
 echo ""
