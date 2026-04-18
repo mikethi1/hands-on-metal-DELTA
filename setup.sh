@@ -19,49 +19,75 @@
 
 set -e
 
-# ── git is needed to clone — auto-install if missing ─────────
-if ! command -v git >/dev/null 2>&1; then
-    echo "git is not installed — attempting automatic install..."
+# ── Helper: auto-install a package if the command is missing ──
+# Usage: _hom_auto_install <command> <pkg_name> [<termux_pkg>]
+# If <termux_pkg> is omitted, <pkg_name> is used for Termux too.
+_hom_pkg_index_updated=false
 
-    _installed=false
+_hom_auto_install() {
+    local cmd="$1" pkg="$2" termux_pkg="${3:-$2}"
+
+    command -v "$cmd" >/dev/null 2>&1 && return 0
+
+    echo "$cmd is not installed — attempting automatic install..."
+
+    local _installed=false
 
     if [ -d "/data/data/com.termux/files/usr" ] || [ -n "${TERMUX_VERSION:-}" ]; then
         # Termux on Android
-        pkg install -y git && _installed=true
+        pkg install -y "$termux_pkg" && _installed=true
     elif command -v apt-get >/dev/null 2>&1; then
         # Debian / Ubuntu
-        sudo apt-get update -qq && sudo apt-get install -y -qq git && _installed=true
+        if [ "$_hom_pkg_index_updated" = false ]; then
+            sudo apt-get update -qq
+            _hom_pkg_index_updated=true
+        fi
+        sudo apt-get install -y -qq "$pkg" && _installed=true
     elif command -v dnf >/dev/null 2>&1; then
         # Fedora
-        sudo dnf install -y git && _installed=true
+        sudo dnf install -y "$pkg" && _installed=true
     elif command -v pacman >/dev/null 2>&1; then
         # Arch / Manjaro
-        sudo pacman -S --noconfirm git && _installed=true
+        sudo pacman -S --noconfirm "$pkg" && _installed=true
     elif command -v brew >/dev/null 2>&1; then
         # macOS with Homebrew
-        brew install git && _installed=true
-    elif [ "$(uname)" = "Darwin" ]; then
-        # macOS without Homebrew — xcode-select triggers the CLT installer
-        echo "Installing Xcode Command Line Tools (includes git)..."
-        xcode-select --install 2>/dev/null || true
-        echo "Follow the on-screen dialog, then re-run this script." >&2
+        brew install "$pkg" && _installed=true
+    fi
+
+    if [ "$_installed" = false ] || ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "ERROR: Could not auto-install $cmd ($pkg)." >&2
+        echo "  Please install it manually and re-run this script." >&2
         exit 1
     fi
 
-    if [ "$_installed" = false ] || ! command -v git >/dev/null 2>&1; then
-        echo "ERROR: Could not auto-install git." >&2
-        echo "  Please install it manually and re-run this script:" >&2
-        echo "    Debian / Ubuntu : sudo apt install git" >&2
-        echo "    Termux          : pkg install git"      >&2
-        echo "    Fedora          : sudo dnf install git"  >&2
-        echo "    Arch / Manjaro  : sudo pacman -S git"    >&2
-        echo "    macOS           : xcode-select --install" >&2
-        exit 1
-    fi
+    echo "$cmd installed successfully."
+}
 
-    unset _installed
-    echo "git installed successfully."
+# ── Auto-install required tools ──────────────────────────────
+# git is needed to clone; the rest are needed by build scripts.
+
+# Special case: macOS without Homebrew needs xcode-select for git
+if ! command -v git >/dev/null 2>&1 && [ "$(uname)" = "Darwin" ] && ! command -v brew >/dev/null 2>&1; then
+    echo "Installing Xcode Command Line Tools (includes git)..."
+    xcode-select --install 2>/dev/null || true
+    echo "Follow the on-screen dialog, then re-run this script." >&2
+    exit 1
 fi
+
+_hom_auto_install git      git
+_hom_auto_install zip      zip
+_hom_auto_install unzip    unzip
+_hom_auto_install curl     curl
+_hom_auto_install python3  python3   python
+_hom_auto_install tar      tar
+
+# sha256sum OR shasum — at least one must be present
+if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+    _hom_auto_install sha256sum coreutils
+fi
+
+unset _hom_pkg_index_updated
+unset -f _hom_auto_install
 
 # ── If we are already inside the repo, use it in-place ────────
 if [ -f "check_deps.sh" ] && [ -d "build" ] && [ -f "build/fetch_all_deps.sh" ]; then
