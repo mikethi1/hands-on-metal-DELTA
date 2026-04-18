@@ -116,4 +116,9 @@ bash build/fetch_all_deps.sh
 echo ""
 echo "Setup complete — launching terminal menu..."
 echo ""
-exec bash terminal_menu.sh
+if [ -e /dev/tty ]; then
+    exec bash terminal_menu.sh </dev/tty
+else
+    echo "No interactive terminal available."
+    echo "Run 'bash terminal_menu.sh' interactively to continue."
+fi

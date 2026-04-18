@@ -15,6 +15,13 @@
 
 set -eu
 
+# When launched from "curl … | bash" (e.g. via setup.sh), stdin is the
+# exhausted pipe — not the terminal.  Reopen it from /dev/tty so that
+# interactive `read` calls work.
+if [ ! -t 0 ] && [ -e /dev/tty ]; then
+    exec < /dev/tty
+fi
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── dependency check (runs once per session) ──────────────────
@@ -1029,6 +1036,7 @@ main() {
     while true; do
         print_menu
         read -r -p "Choose an option: " choice
+        choice="${choice%$'\r'}"   # strip trailing CR (some terminals / Termux)
 
         case "$choice" in
             q|Q)
