@@ -272,6 +272,28 @@ bash flash.sh --c3 dist/hands-on-metal-recovery-*.zip   # ADB sideload
 Add `-s SERIAL` if more than one device is connected. Run
 `bash flash.sh --help` for the full command list.
 
+**Boot-image safety on Mode C** — every `--c1`/`--c2`/`--c3` invocation
+automatically:
+
+- Computes the SHA-256 of the host-side image/ZIP and (if a matching
+  `<file>.sha256` sidecar exists, or `--sha256 HEX` is supplied) refuses
+  to send a tampered or wrong artefact to the device.
+- Probes the target via `fastboot getvar` for `unlocked`, `secure`,
+  `current-slot`, `version-bootloader`, `version-baseband`, and
+  `anti-rollback-version`, printing a TARGET safety profile.
+- Refuses to flash a **locked** bootloader unless `--force-locked` is
+  passed.
+- For `--c2`, auto-detects the partition name from the filename across
+  the full Android 10–16 boot-type matrix (`boot`, `init_boot` for
+  Android 13+ GKI 2.0, `vendor_boot` for Android 12+ GKI, `recovery`
+  for A-only devices) — override with `--partition NAME`.
+- Confirms the target actually has the chosen partition via
+  `fastboot getvar partition-size:<name>`.
+
+The on-device path (Mode A and Mode B) goes through the state machine
+in `core/`, which already runs the equivalent checks (`device_profile`,
+`anti_rollback`, pre+post SHA-256 in `core/flash.sh`) on every install.
+
 ### 4 — Run the host-side pipeline after collection
 
 After your device has booted and collected hardware data, pull the logs

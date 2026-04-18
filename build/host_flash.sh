@@ -1307,6 +1307,186 @@ find_recovery_zip() {
 
 # ── C1: Temporary TWRP boot ──────────────────────────────────
 
+# Boot-image safety, integrity, and ARP probe helpers
+# ----------------------------------------------------
+# Used by run_c1, run_c2, run_c3 to verify host-side artefacts
+# and probe TARGET safety state before any destructive operation.
+# Designed to cover the full Android 10–16 boot-type matrix:
+#   • boot          (legacy / pre-GKI)
+#   • init_boot     (GKI 2.0, Android 13+)
+#   • vendor_boot   (GKI, Android 12+)
+#   • recovery      (A-only devices)
+# All checks are non-fatal (warn + prompt) unless the bootloader
+# is locked, in which case run_c2 refuses to flash without
+# --force-locked.
+
+# Global safety options (overridable by --partition / --no-verify
+# / --sha256 / --force-locked CLI flags)
+HOM_FORCE_PART="${HOM_FORCE_PART:-}"
+HOM_NO_VERIFY="${HOM_NO_VERIFY:-false}"
+HOM_EXPECTED_SHA256="${HOM_EXPECTED_SHA256:-}"
+HOM_FORCE_FLASH="${HOM_FORCE_FLASH:-false}"
+
+# Cross-platform SHA-256 of a file (Linux/macOS/Termux).
+# Echoes the lowercase hex digest, or empty string on failure.
+_host_sha256() {
+    local file="$1"
+    [ -f "$file" ] || { echo ""; return 1; }
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$file" | awk '{print $NF}'
+    else
+        echo ""
+        return 1
+    fi
+}
+
+# Verify integrity of a host-side artefact before sending it to TARGET.
+# Args: <file> <kind>   (kind is human-readable, e.g. "TWRP image")
+# Honours: $HOM_NO_VERIFY, $HOM_EXPECTED_SHA256, and an optional
+# sidecar file `<file>.sha256` containing the expected hex digest.
+# Exits via fail() on a definite mismatch.  Warns on missing checksum.
+_verify_image_integrity() {
+    local file="$1" kind="${2:-image}"
+
+    if [ "$HOM_NO_VERIFY" = "true" ]; then
+        warn "Integrity check skipped for $kind ($file) — --no-verify in effect."
+        return 0
+    fi
+
+    local actual expected expected_src=""
+    actual=$(_host_sha256 "$file")
+    if [ -z "$actual" ]; then
+        warn "No SHA-256 tool found on HOST (sha256sum / shasum / openssl) — cannot verify $kind."
+        warn "Pass --no-verify to silence this warning."
+        return 0
+    fi
+
+    info "$kind SHA-256: $actual"
+
+    # Resolve expected digest in priority order:
+    #   1. --sha256 CLI flag
+    #   2. <file>.sha256 sidecar
+    #   3. (none — informational only)
+    if [ -n "$HOM_EXPECTED_SHA256" ]; then
+        expected="$HOM_EXPECTED_SHA256"
+        expected_src="--sha256 flag"
+    elif [ -f "${file}.sha256" ]; then
+        expected=$(awk '{print $1; exit}' "${file}.sha256" 2>/dev/null || echo "")
+        expected_src="${file}.sha256"
+    fi
+
+    if [ -n "${expected:-}" ]; then
+        # Normalise: strip whitespace, lowercase
+        expected=$(printf "%s" "$expected" | tr 'A-Z ' 'a-z\n' | head -1)
+        if [ "$actual" = "$expected" ]; then
+            ok "Integrity verified ($kind matches $expected_src)"
+        else
+            fail "Integrity check FAILED for $kind:
+  expected: $expected   (from $expected_src)
+  actual:   $actual
+  Refusing to send a tampered or wrong image to TARGET.
+  Pass --no-verify to override (NOT RECOMMENDED)."
+        fi
+    else
+        info "No expected SHA-256 supplied (no --sha256 flag, no ${file}.sha256 sidecar) — recorded for audit only."
+    fi
+}
+
+# Detect the TARGET partition name from a filename.
+# Order matters: the longest/most-specific match wins.
+# Echoes one of: init_boot | vendor_boot | recovery | boot | ""
+_detect_partition() {
+    local file="$1"
+    local base
+    base=$(basename "$file" 2>/dev/null | tr 'A-Z' 'a-z')
+    case "$base" in
+        *init_boot*)   echo "init_boot"   ;;
+        *vendor_boot*) echo "vendor_boot" ;;
+        *recovery*)    echo "recovery"    ;;
+        *boot*)        echo "boot"        ;;
+        *)             echo ""            ;;
+    esac
+}
+
+# Probe the TARGET's safety/lock/ARP state via `fastboot getvar`.
+# Sets globals: HOM_TARGET_UNLOCKED, HOM_TARGET_SECURE,
+# HOM_TARGET_CURRENT_SLOT, HOM_TARGET_BOOTLOADER_VER,
+# HOM_TARGET_BASEBAND_VER, HOM_TARGET_ARB_VERSION.
+# Pre-condition: TARGET is in fastboot mode.
+# All values default to "unknown" if the bootloader does not expose them.
+HOM_TARGET_UNLOCKED=""
+HOM_TARGET_SECURE=""
+HOM_TARGET_CURRENT_SLOT=""
+HOM_TARGET_BOOTLOADER_VER=""
+HOM_TARGET_BASEBAND_VER=""
+HOM_TARGET_ARB_VERSION=""
+
+_getvar() {
+    # Echoes the value of `fastboot getvar <key>` (after the "key:")
+    # or empty string on failure.  fastboot writes getvar output to stderr.
+    local key="$1" out
+    out=$(_fastboot getvar "$key" 2>&1 | grep -E "^${key}:" | head -1 | awk -F': *' '{print $2}' | tr -d '\r')
+    printf "%s" "$out"
+}
+
+_probe_target_safety() {
+    info "Probing TARGET safety state via fastboot getvar..."
+    HOM_TARGET_UNLOCKED=$(_getvar unlocked)
+    HOM_TARGET_SECURE=$(_getvar secure)
+    HOM_TARGET_CURRENT_SLOT=$(_getvar current-slot)
+    HOM_TARGET_BOOTLOADER_VER=$(_getvar version-bootloader)
+    HOM_TARGET_BASEBAND_VER=$(_getvar version-baseband)
+    HOM_TARGET_ARB_VERSION=$(_getvar anti-rollback-version)
+
+    echo ""
+    echo "  ${CLR_CYAN}TARGET safety profile:${CLR_RESET}"
+    echo "    unlocked            : ${HOM_TARGET_UNLOCKED:-unknown}"
+    echo "    secure              : ${HOM_TARGET_SECURE:-unknown}"
+    echo "    current-slot        : ${HOM_TARGET_CURRENT_SLOT:-unknown (A-only or not exposed)}"
+    echo "    version-bootloader  : ${HOM_TARGET_BOOTLOADER_VER:-unknown}"
+    echo "    version-baseband    : ${HOM_TARGET_BASEBAND_VER:-unknown}"
+    echo "    anti-rollback-ver   : ${HOM_TARGET_ARB_VERSION:-unknown (not exposed)}"
+    echo ""
+
+    if [ "$HOM_TARGET_UNLOCKED" = "no" ]; then
+        warn "TARGET bootloader is LOCKED. Flashing will fail and may trigger anti-rollback."
+        if [ "$HOM_FORCE_FLASH" != "true" ]; then
+            fail "Refusing to flash a locked bootloader. Unlock first with:
+  fastboot${HOM_TARGET_SERIAL:+ -s $HOM_TARGET_SERIAL} flashing unlock
+Or pass --force-locked to override (your fastboot flash will almost certainly fail)."
+        else
+            warn "--force-locked supplied; proceeding despite locked bootloader."
+        fi
+    elif [ "$HOM_TARGET_UNLOCKED" = "yes" ]; then
+        ok "TARGET bootloader is unlocked."
+    fi
+
+    if [ -n "$HOM_TARGET_ARB_VERSION" ]; then
+        info "TARGET anti-rollback version reported: $HOM_TARGET_ARB_VERSION"
+        info "Ensure the image you are flashing is not from an OLDER anti-rollback index."
+        info "(See docs/TROUBLESHOOTING.md for ARB recovery if this is a downgrade.)"
+    fi
+}
+
+# Confirm the TARGET actually has a partition with the given name.
+# Best-effort: some bootloaders expose `partition-size:<name>`.
+# Non-fatal: warns on missing/unknown.
+_check_partition_exists() {
+    local part="$1" size
+    size=$(_getvar "partition-size:$part")
+    if [ -n "$size" ]; then
+        ok "TARGET has partition '$part' (size: $size)"
+    else
+        warn "TARGET did not report a partition called '$part' via getvar partition-size:$part."
+        warn "Either the bootloader doesn't expose it, or the partition name is wrong for this device."
+        warn "If unsure, abort and consult docs/INSTALL_HUB.md for your device's partition layout."
+    fi
+}
+
 run_c1() {
     local twrp_img="${1:-}"
 
@@ -1332,6 +1512,9 @@ run_c1() {
     fi
 
     ok "TWRP image (on HOST): $twrp_img"
+
+    # Integrity check (non-fatal unless mismatch confirmed)
+    _verify_image_integrity "$twrp_img" "TWRP image"
 
     # Get TARGET device into fastboot
     if check_device_fastboot; then
@@ -1377,6 +1560,9 @@ run_c1() {
 
     _print_target_banner
 
+    # Probe TARGET safety state (lock status, ARP, slot, bootloader version)
+    _probe_target_safety
+
     # Boot TWRP on TARGET
     tgt "Booting TWRP image on TARGET (temporary, RAM only)..."
     if ! _fastboot boot "$twrp_img"; then
@@ -1394,6 +1580,7 @@ run_c1() {
     zip=$(find_recovery_zip)
     if [ -n "$zip" ]; then
         echo "  Found recovery ZIP (on HOST): $zip"
+        _verify_image_integrity "$zip" "recovery ZIP"
         echo ""
         read -r -p "  Sideload this ZIP to TARGET now? [y/N]: " do_sideload
         if [ "$do_sideload" = "y" ] || [ "$do_sideload" = "Y" ]; then
@@ -1456,12 +1643,26 @@ run_c2() {
 
     ok "Patched image (on HOST): $patched_img"
 
-    # Detect partition type from filename
-    local part_name="boot"
-    case "$patched_img" in
-        *init_boot*) part_name="init_boot" ;;
-    esac
-    info "Target partition on TARGET: $part_name (detected from filename)"
+    # Integrity check (sha256, fails on mismatch with --sha256 / sidecar)
+    _verify_image_integrity "$patched_img" "patched boot image"
+
+    # Detect target partition (extended: init_boot / vendor_boot / recovery / boot).
+    # --partition CLI flag overrides auto-detection.
+    local part_name
+    if [ -n "$HOM_FORCE_PART" ]; then
+        part_name="$HOM_FORCE_PART"
+        info "Target partition on TARGET: $part_name (forced via --partition)"
+    else
+        part_name=$(_detect_partition "$patched_img")
+        if [ -z "$part_name" ]; then
+            warn "Could not auto-detect target partition from filename: $(basename "$patched_img")"
+            echo "  Common names: boot, init_boot (Android 13+ GKI 2.0), vendor_boot (Android 12+ GKI), recovery (A-only)."
+            read -r -p "  Enter target partition name [boot]: " part_name
+            part_name="${part_name:-boot}"
+        else
+            info "Target partition on TARGET: $part_name (detected from filename)"
+        fi
+    fi
 
     # Get TARGET into fastboot
     if check_device_fastboot; then
@@ -1494,6 +1695,13 @@ run_c2() {
     fi
 
     _print_target_banner
+
+    # Probe TARGET safety state (lock status, ARP, slot, bootloader version).
+    # Refuses to flash a locked bootloader unless --force-locked is set.
+    _probe_target_safety
+
+    # Verify the partition actually exists on TARGET (best-effort).
+    _check_partition_exists "$part_name"
 
     # Confirm before flashing TARGET
     echo ""
@@ -1571,6 +1779,9 @@ run_c3() {
     fi
 
     ok "Recovery ZIP (on HOST): $zip"
+
+    # Integrity check
+    _verify_image_integrity "$zip" "recovery ZIP"
 
     # Check TARGET device state
     if check_device_adb; then
@@ -1720,7 +1931,7 @@ show_menu() {
 # ── CLI entry point ───────────────────────────────────────────
 
 main() {
-    # Parse global options first (-s serial)
+    # Parse global options first (-s serial, --partition, --no-verify, --sha256, --force-locked)
     while [ $# -gt 0 ]; do
         case "$1" in
             -s)
@@ -1730,6 +1941,40 @@ main() {
                 fi
                 HOM_TARGET_SERIAL="$1"
                 info "Target serial set: $HOM_TARGET_SERIAL"
+                shift
+                ;;
+            --partition)
+                shift
+                if [ $# -eq 0 ]; then
+                    fail "Option --partition requires a partition name (e.g. boot, init_boot, vendor_boot, recovery)."
+                fi
+                HOM_FORCE_PART="$1"
+                info "Target partition forced: $HOM_FORCE_PART"
+                shift
+                ;;
+            --partition=*)
+                HOM_FORCE_PART="${1#*=}"
+                info "Target partition forced: $HOM_FORCE_PART"
+                shift
+                ;;
+            --sha256)
+                shift
+                if [ $# -eq 0 ]; then
+                    fail "Option --sha256 requires a hex digest argument."
+                fi
+                HOM_EXPECTED_SHA256="$1"
+                shift
+                ;;
+            --sha256=*)
+                HOM_EXPECTED_SHA256="${1#*=}"
+                shift
+                ;;
+            --no-verify)
+                HOM_NO_VERIFY="true"
+                shift
+                ;;
+            --force-locked)
+                HOM_FORCE_FLASH="true"
                 shift
                 ;;
             *)
@@ -1761,6 +2006,20 @@ main() {
             echo "  Options:"
             echo "  -s SERIAL          Target a specific device by serial number"
             echo "                     (required when multiple devices are connected)"
+            echo "  --partition NAME   Override partition auto-detection for --c2"
+            echo "                     (boot | init_boot | vendor_boot | recovery)"
+            echo "  --sha256 HEX       Expected SHA-256 of the image/ZIP being sent to TARGET."
+            echo "                     A matching '<image>.sha256' sidecar file is also honoured."
+            echo "  --no-verify        Skip image integrity check (NOT RECOMMENDED)"
+            echo "  --force-locked     Allow flashing even if TARGET bootloader is locked"
+            echo "                     (almost certainly fails; only for unusual setups)"
+            echo ""
+            echo "  Safety: --c1/--c2/--c3 verify image integrity (SHA-256), probe TARGET"
+            echo "  via 'fastboot getvar' (unlocked, secure, current-slot, version-bootloader,"
+            echo "  version-baseband, anti-rollback-version), and refuse to flash a locked"
+            echo "  bootloader unless --force-locked is supplied.  Boot-type detection covers"
+            echo "  Android 10–16: boot, init_boot (GKI 2.0, A13+), vendor_boot (GKI, A12+),"
+            echo "  recovery (A-only)."
             echo ""
             echo "  No arguments: show interactive menu"
             echo ""

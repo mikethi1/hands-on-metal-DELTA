@@ -39,7 +39,7 @@ ADB_SERIAL=""
 usage() {
     # Print the header comment block (everything from line 2 until the
     # first non-comment line).
-    awk 'NR==1 {next} /^[^#]/ {exit} {sub(/^# ?/, ""); print}' "${BASH_SOURCE[0]}"
+    awk 'NR==1 {next} /^[^#]/ {exit} {sub(/^#[ \t]*/, ""); print}' "${BASH_SOURCE[0]}"
     exit 0
 }
 

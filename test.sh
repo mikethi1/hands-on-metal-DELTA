@@ -23,7 +23,7 @@ cd "$REPO_ROOT"
 
 case "${1:-}" in
     -h|--help)
-        awk 'NR==1 {next} /^[^#]/ {exit} {sub(/^# ?/, ""); print}' "${BASH_SOURCE[0]}"
+        awk 'NR==1 {next} /^[^#]/ {exit} {sub(/^#[ \t]*/, ""); print}' "${BASH_SOURCE[0]}"
         exit 0
         ;;
 esac
