@@ -75,7 +75,8 @@ fi
 
 # ── Optional tools ────────────────────────────────────────────
 _hom_optional git      "Cloning the repo and bundle creation via git archive (fetch_all_deps.sh)"
-_hom_optional adb      "Pushing ZIPs to device / pulling logs (Android Platform Tools)"
+_hom_optional adb      "Pushing ZIPs to device / pulling logs / Mode C host-assisted flash (Android Platform Tools)"
+_hom_optional fastboot "Mode C host-assisted flash: fastboot boot / fastboot flash (Android Platform Tools)"
 _hom_optional file     "Verifying ELF binary types after download"
 _hom_optional nm       "Analysing vendor library symbols (parse_symbols.py)"
 _hom_optional readelf  "Analysing ELF dynamic sections (parse_symbols.py)"

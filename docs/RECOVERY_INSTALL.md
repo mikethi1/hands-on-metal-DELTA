@@ -174,44 +174,44 @@ Because TWRP's flash context is **non-interactive** (stdin is not a TTY),
 all fallback prompts use safe defaults automatically — **you will never see
 a text prompt** during a TWRP flash or ADB sideload.
 
-### Automatic behavior (with root + recovery)
+### Your environment: root ✓, recovery ✓
 
-This is the most capable environment. The installer has root AND access to
-all partitions. The typical flow requires **no input beyond starting the
-flash**:
+This is the most capable environment — both root and recovery are available:
 
-```
-You flash ZIP in TWRP
-  └─ Installer starts automatically
-      └─ Root detected (uid=0 in recovery) ✓
-      └─ Boot partition auto-discovered via block device ✓
-      └─ DD copy succeeds → boot image acquired (no prompt)
-      └─ Anti-rollback check passes (automatic)
-      └─ Magisk patch runs (automatic)
-      └─ Flash + SHA-256 verify (automatic)
-      └─ Module installed (automatic)
-      └─ Recovery hardware data collected (automatic)
-      └─ Reboot (automatic)
-```
+| Capability | Status | Prereq ID¹ |
+|-----------|:---:|---|
+| Root access | ✓ Always in recovery | `root` |
+| Android device | ✓ Running on device | `android_device` |
+| Recovery environment | ✓ TWRP / OrangeFox | — |
+| Boot image | Acquired automatically (via root DD) | `boot_image` |
 
-### Boot image fallback chain (root + recovery)
+¹ Prereq IDs match `terminal_menu.sh` → `get_prereqs_for_script()`.
 
-If the automatic `dd` copy fails, the installer tries each fallback. In
-TWRP's non-interactive context, fallback prompts use defaults silently:
+### Boot image acquisition — automatic fallback chain
 
-| Priority | Method | Root? | Recovery? | User input in TWRP? |
-|----------|--------|:---:|:---:|---|
-| 1 | **Root DD** — copy live boot partition | ✓ Has it | ✓ Has it | None — automatic |
-| 2 | **Pre-placed file** — scan `/sdcard/Download/` | Not needed | Not needed | None — automatic if file exists |
-| 3 | **Google factory download** (Pixel only) | Not needed | Not needed | None — auto-accepts `yes` (non-interactive) |
-| 4 | **Manual path fallback** | Depends¹ | Not needed | None — auto-uses `/sdcard/Download/boot.img` |
+All four methods are available. In TWRP's non-interactive context, fallback
+prompts use defaults silently — **no text prompts ever appear**:
 
-¹ If the default path points to a block device, root is needed (and
-available in recovery). If it's a file, no root needed.
+| # | Method | Prereqs | User input in TWRP? |
+|---|--------|---------|:-:|
+| 1 | **Root DD** — copy live boot partition | `root` `android_device` | None — automatic |
+| 2 | **Pre-placed file** — scan `/sdcard/Download/` | `android_device` | None — automatic |
+| 3 | **Factory download** (Pixel only) | `android_device` network `cmd:curl` `cmd:unzip` | None — auto-accepts (non-interactive) |
+| 4 | **Manual path fallback** | `android_device` (+ `root` for block devices) | None — auto-uses `/sdcard/Download/boot.img` |
 
 > **In Mode B with recovery, method 1 succeeds in the vast majority of
 > cases.** The only scenario where it fails is an unusual partition layout
 > without standard by-name symlinks.
+
+### Flash path: B (Recovery path)
+
+Flash uses `run_flash_recovery_path()` in `core/flash.sh`:
+- Prereqs: `root` + `boot_image` (both always satisfied in recovery)
+- DD writes patched image to boot partition
+- SHA-256 verified post-flash
+- Installs Magisk module from ZIP to `/data/adb/modules/`
+- Automatic reboot on success
+- **No user input required**
 
 ### Required input (always needed)
 
@@ -247,11 +247,11 @@ installer **aborts with a clear error** in the TWRP output.
 
 Without a custom recovery, you cannot use Mode B. Your options:
 
-| Your situation | What to do |
-|---------------|------------|
-| **Unlocked bootloader + PC** | Use Mode C: `fastboot boot twrp.img` to temporarily boot TWRP, or `fastboot flash boot` directly → [ADB_FASTBOOT_INSTALL.md](ADB_FASTBOOT_INSTALL.md) |
-| **Magisk already installed** | Use Mode A: flash via Magisk app → [INSTALL.md](INSTALL.md) |
-| **No root, no recovery, no PC** | Not possible — you need at least a PC with fastboot |
+| Your situation | Root? | Recovery? | Recommended mode |
+|---------------|:---:|:---:|---|
+| Magisk already installed | ✓ | ✗ | Mode A → [INSTALL.md](INSTALL.md) |
+| Unlocked BL + PC | ✗ | ✗ | Mode C → [ADB_FASTBOOT_INSTALL.md](ADB_FASTBOOT_INSTALL.md) |
+| No root, no recovery, no PC | ✗ | ✗ | Not possible — need at least a PC with fastboot |
 
 ### What if I have recovery but no root?
 

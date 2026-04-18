@@ -74,8 +74,9 @@ All three paths run the same guided state machine. See [docs/INSTALL_HUB.md](doc
 | **Regulator data sanity check** | Logs the first 10 regulator entries (name + microvolts) and emits `[OK]` / `[WARN]` so you immediately know whether real display-adapter voltages were captured |
 | **Host-side pipeline** | Python scripts parse logs, build a SQLite hardware map, analyse failures, generate reports, and upload a redacted bundle |
 | **Privacy-safe sharing** | All PII stripped by `core/privacy.sh` before any data leaves the device; explicit opt-in for every upload |
-| **Offline ZIP builder** | `build/build_offline_zip.sh` produces self-contained flashable ZIPs for both install paths |
+| **Offline ZIP builder** | `build/build_offline_zip.sh` produces self-contained flashable ZIPs for all install paths |
 | **Full dependency fetcher** | `build/fetch_all_deps.sh` uses `git` + `curl` to pull the repo and every binary, then creates a single offline bundle ZIP |
+| **Host-assisted flash** | `build/host_flash.sh` — Mode C: fastboot boot / flash / ADB sideload for devices with no recovery (see [ADB_FASTBOOT_INSTALL.md](docs/ADB_FASTBOOT_INSTALL.md)) |
 | **Interactive terminal menu** | `terminal_menu.sh` lists all project scripts and lets you run any of them with arguments from a single launcher |
 | **Halium / libhybris shim** | C shim and Makefile for building a compatible userspace bridge from decompiled linker-map data |
 

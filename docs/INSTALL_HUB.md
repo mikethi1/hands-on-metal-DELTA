@@ -91,6 +91,27 @@ For full details on live patching safety, integrity implications, and
 anti-rollback behavior, see:
 **[ADB_FASTBOOT_INSTALL.md § Integrity & anti-rollback](ADB_FASTBOOT_INSTALL.md#does-magisk-patch-the-boot-image-live-integrity--anti-rollback)**
 
+### Prerequisite and capability summary
+
+Each install path uses the same prerequisite IDs as the terminal menu
+(`terminal_menu.sh`). The installer scripts adapt automatically based on
+which capabilities are available:
+
+| Prereq ID | Mode A (Magisk) | Mode B (Recovery) | Mode C (Fastboot) |
+|-----------|:---:|:---:|:---:|
+| `root` | ✓ (Magisk provides) | ✓ (TWRP provides) | ✗ (not on device) |
+| `android_device` | ✓ | ✓ | ✗ (host-side) |
+| `magisk_binary` | ✓ (already installed) | Bundled in ZIP | Patched on PC |
+| `boot_image` | Auto-acquired (root DD) | Auto-acquired (root DD) | Pre-placed or manual |
+| `cmd:adb` | Not needed | Optional (sideload) | ✓ Required |
+| `cmd:fastboot` | Not needed | Not needed | ✓ Required |
+
+> User input is a **fallback only** — the installer tries 4 automatic
+> acquisition methods before prompting. In non-interactive contexts
+> (TWRP flash, sideload), safe defaults are used silently.
+> See each guide's "Where user input is required" section for the exact
+> fallback chain.
+
 ---
 
 ## Unlocking and flashing a custom recovery

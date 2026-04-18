@@ -119,43 +119,44 @@ The Magisk-path installer runs inside the Magisk app's module installer.
 devices. In most cases the install completes with no prompts at all — user
 input is only a **fallback** when automatic detection fails.
 
-### Automatic behavior (with root, no recovery)
+### Your environment: root ✓, recovery ✗
 
-Because Mode A always has root (Magisk provides it), the installer's first
-acquisition method — live `dd` copy from the boot partition — almost always
-succeeds. The typical flow requires **no user input beyond selecting the ZIP**:
+Mode A always has root (Magisk provides it). This means:
 
-```
-You select ZIP in Magisk app
-  └─ Installer starts automatically
-      └─ Root detected (uid=0 via Magisk) ✓
-      └─ Boot partition auto-discovered via block device ✓
-      └─ DD copy succeeds → boot image acquired (no prompt)
-      └─ Anti-rollback check passes (automatic)
-      └─ Magisk patch runs (automatic)
-      └─ Flash + SHA-256 verify (automatic)
-      └─ Reboot (automatic)
-```
+| Capability | Status | Prereq ID¹ |
+|-----------|:---:|---|
+| Root access | ✓ Always available | `root` |
+| Android device | ✓ Running on device | `android_device` |
+| Magisk binary | ✓ Magisk is installed | `magisk_binary` |
+| Recovery | ✗ Not booted into recovery | — |
+| Boot image | Acquired automatically (via root DD) | `boot_image` |
 
-### Boot image fallback chain (root available, no recovery)
+¹ Prereq IDs match `terminal_menu.sh` → `get_prereqs_for_script()`.
 
-If the automatic `dd` copy fails (e.g., unusual partition layout), the
-installer tries each fallback before asking you:
+### Boot image acquisition — automatic fallback chain
 
-| Priority | Method | Root needed? | Recovery needed? | User input? |
-|----------|--------|:---:|:---:|---|
-| 1 | **Root DD** — copy live boot partition via `dd` | ✓ Yes | No | None — fully automatic |
-| 2 | **Pre-placed file** — scan `/sdcard/Download/`, `boot_work/` | No | No | None — automatic if file exists |
-| 3 | **Google factory download** — download + extract (Pixel only) | No | No | **Fallback:** confirmation prompt (defaults to `yes`) |
-| 4 | **Manual path** — ask user for block device or file path | Depends¹ | No | **Fallback:** path prompt (defaults to `/sdcard/Download/boot.img`) |
+Because root is available, the first method (root DD) almost always succeeds.
+The installer tries each method in order — user input is the **last resort**:
 
-¹ If you enter a block device path (e.g., `/dev/block/by-name/boot`), root
-is required to read it. If you enter a file path, no root is needed for that
-step.
+| # | Method | Prereqs | User input? |
+|---|--------|---------|:-:|
+| 1 | **Root DD** — copy live boot partition via `dd` | `root` `android_device` | None — automatic |
+| 2 | **Pre-placed file** — scan `/sdcard/Download/`, `boot_work/` | `android_device` | None — automatic |
+| 3 | **Factory download** — Google Pixel only | `android_device` network `cmd:curl` `cmd:unzip` | Fallback: confirmation |
+| 4 | **Manual path** — ask for block device or file path | `android_device` (+ `root` for block devices) | Fallback: path prompt |
 
 > **In Mode A, method 1 succeeds in the vast majority of cases.** You will
 > only see fallback prompts if the block device can't be auto-discovered
 > (unusual partition layout or missing by-name symlinks).
+
+### Flash path: A (Magisk path)
+
+Flash uses `run_flash_magisk_path()` in `core/flash.sh`:
+- Prereqs: `root` + `boot_image` (both always satisfied in Mode A)
+- DD writes patched image to boot partition
+- SHA-256 verified post-flash
+- Automatic reboot on success
+- **No user input required**
 
 ### Required input (always needed)
 

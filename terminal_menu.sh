@@ -47,6 +47,7 @@ get_prereqs_for_script() {
     case "$rel" in
         build/build_offline_zip.sh)           echo "cmd:zip partition_index" ;;
         build/fetch_all_deps.sh)              echo "cmd:git cmd:curl cmd:unzip network" ;;
+        build/host_flash.sh)                  echo "cmd:adb cmd:fastboot" ;;
         core/anti_rollback.sh)                echo "boot_image" ;;
         core/apply_defaults.sh)               echo "device_profile partition_index" ;;
         core/boot_image.sh)                   echo "android_device" ;;
@@ -154,6 +155,7 @@ script_description() {
     case "$rel" in
         build/build_offline_zip.sh)        echo "Build flashable offline ZIPs (Magisk module + recovery)" ;;
         build/fetch_all_deps.sh)           echo "Download Magisk APK, busybox, and create offline bundle" ;;
+        build/host_flash.sh)               echo "Host-assisted flash: fastboot boot / flash / ADB sideload (Mode C)" ;;
         core/anti_rollback.sh)             echo "Check SPL / AVB rollback risk before flashing" ;;
         core/apply_defaults.sh)            echo "Apply device-family defaults from partition index" ;;
         core/boot_image.sh)                echo "Acquire the boot or init_boot image from the device" ;;
@@ -542,6 +544,11 @@ script_completion_success() {
         build/fetch_all_deps.sh)
             echo "Downloaded all dependencies (Magisk APK, busybox, offline bundle) into build/."
             ;;
+        build/host_flash.sh)
+            echo "Host-assisted flash completed (Mode C)."
+            echo "  • Device was flashed via ADB/fastboot from this PC."
+            echo "  • See docs/ADB_FASTBOOT_INSTALL.md for the full Mode C guide."
+            ;;
         core/anti_rollback.sh)
             echo "Checked the Security Patch Level (SPL) and AVB rollback index."
             echo "  • Anti-rollback risk assessment stored in HOM_ARB_RISK."
@@ -648,6 +655,10 @@ script_completion_failure() {
         build/fetch_all_deps.sh)
             echo "Dependency download failed. Verify network access and that git/curl/unzip are installed."
             ;;
+        build/host_flash.sh)
+            echo "Host-assisted flash failed. Check device connection, bootloader unlock status, and USB cable."
+            echo "  See docs/ADB_FASTBOOT_INSTALL.md for troubleshooting."
+            ;;
         core/anti_rollback.sh)
             echo "Rollback check failed. Ensure the boot image file (HOM_BOOT_IMG_PATH) is valid."
             ;;
@@ -738,6 +749,11 @@ script_next_steps() {
             ;;
         build/fetch_all_deps.sh)
             echo "  → Dependencies are ready. You can now run 'build/build_offline_zip.sh' to build ZIPs."
+            ;;
+        build/host_flash.sh)
+            echo "  → After device reboots: open Magisk app to confirm root."
+            echo "  → If using C2 (direct flash): install the Magisk module ZIP via Magisk app."
+            echo "  → Pull logs: adb pull /sdcard/hands-on-metal/logs/ ./hom-logs/"
             ;;
         core/anti_rollback.sh)
             echo "  → If no rollback risk was found, proceed to flash (core/flash.sh)."

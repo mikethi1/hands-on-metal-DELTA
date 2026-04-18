@@ -49,7 +49,52 @@ brew install android-platform-tools
 
 ---
 
-## Where user input is required
+## Environment capability matrix
+
+The installer adapts automatically based on what capabilities are available.
+This matrix shows which boot image acquisition methods and flash paths work
+for every combination of root access and recovery availability. These map
+directly to the prerequisite IDs used by the terminal menu (`terminal_menu.sh`)
+and dependency checker (`check_deps.sh`).
+
+### Boot image acquisition methods
+
+| # | Method | Prereqs¹ | Fallback input? | Notes |
+|---|--------|---------|:-:|---|
+| 1 | **Root DD** — live partition copy | `root` `android_device` | None | Automatic; fastest path |
+| 2 | **Pre-placed file** — scan known paths | `android_device` | None | Place file at `/sdcard/Download/boot.img` before install |
+| 3 | **Factory download** — Google Pixel only | `android_device` network `cmd:curl` `cmd:unzip` | Confirmation² | Non-interactive: auto-accepts `yes` |
+| 4 | **User prompt** — manual path entry | `android_device` (+ `root` for block devices) | Path prompt² | Non-interactive: uses `/sdcard/Download/boot.img` |
+
+¹ Prereq IDs match `terminal_menu.sh` → `get_prereqs_for_script()`  
+² Only in interactive mode (stdin is a TTY). In TWRP/sideload, defaults are used silently.
+
+### Flash paths
+
+| Path | Prereqs¹ | Used by | Notes |
+|------|---------|---------|-------|
+| **A — Magisk path** (`run_flash_magisk_path`) | `root` `boot_image` | `customize.sh` (Mode A) | DD to boot partition + reboot |
+| **B — Recovery path** (`run_flash_recovery_path`) | `root` `boot_image` | `update-binary` (Mode B) | DD to boot + install Magisk module + reboot |
+| **C — Fastboot path** (host-side) | `cmd:adb` `cmd:fastboot` | This guide (Mode C) | `fastboot flash boot` from PC |
+
+### Which methods work in your situation
+
+| Your situation | Root? | Recovery? | Acquisition methods | Flash path | Install mode |
+|---------------|:---:|:---:|---|---|---|
+| **Magisk installed** | ✓ | ✗ | 1→2→3→4 (all available) | A (Magisk) | [INSTALL.md](INSTALL.md) |
+| **TWRP / OrangeFox** | ✓ | ✓ | 1→2→3→4 (all available) | B (Recovery) | [RECOVERY_INSTALL.md](RECOVERY_INSTALL.md) |
+| **Unlocked BL + PC, no root, no recovery** | ✗ | ✗ | 2→3→4 (no root DD) | C (Fastboot) | This guide (C1 or C2) |
+| **Unlocked BL + PC + temp TWRP** | ✓³ | ✓³ | 1→2→3→4 (all via temp TWRP) | B (Recovery) | This guide (C1) |
+| **Locked bootloader** | ✗ | ✗ | None | None | Unlock first |
+| **No PC, no root, no recovery** | ✗ | ✗ | None | None | Not possible |
+
+³ `fastboot boot twrp.img` gives you a temporary recovery with root.
+
+> **Key insight:** Root access enables method 1 (root DD) and is required
+> for flash paths A and B. Without root, you must pre-place the boot image
+> (method 2) or use the fastboot flash path (C) from a PC.
+
+## Where user input is required (fallback only)
 
 The installer is designed to be **fully automatic**. User input is only
 needed as a **fallback** when automatic detection fails. Most installs
