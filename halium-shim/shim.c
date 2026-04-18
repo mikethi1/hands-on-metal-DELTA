@@ -69,7 +69,11 @@ static void shim_log_init(void) {
     if (!path || !*path) {
         const char *home = getenv("HOME");
         if (home && *home) {
-            snprintf(default_path, sizeof(default_path), "%s/tmp/hom_shim.jsonl", home);
+            int path_len = snprintf(default_path, sizeof(default_path), "%s/tmp/hom_shim.jsonl", home);
+            if (path_len < 0 || (size_t)path_len >= sizeof(default_path)) {
+                fprintf(stderr, "hom_shim: HOME path too long, falling back to ./tmp/hom_shim.jsonl\n");
+                snprintf(default_path, sizeof(default_path), "./tmp/hom_shim.jsonl");
+            }
         } else {
             snprintf(default_path, sizeof(default_path), "./tmp/hom_shim.jsonl");
         }
