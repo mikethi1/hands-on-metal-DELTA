@@ -20,6 +20,7 @@
 #   bash pipeline.sh                  # pull + parse_logs only
 #   bash pipeline.sh --mode A         # also build the SQLite table
 #   bash pipeline.sh --skip-pull      # use existing local logs/ + live_dump/
+#   bash pipeline.sh --audit          # also run pipeline/audit_coverage.py
 #   bash pipeline.sh -s SERIAL        # target a specific adb device
 #   bash pipeline.sh --help
 #
@@ -35,6 +36,7 @@ cd "$REPO_ROOT"
 MODE=""
 SKIP_PULL=false
 ADB_SERIAL=""
+RUN_AUDIT=false
 
 usage() {
     # Print the header comment block (everything from line 2 until the
@@ -48,6 +50,7 @@ while [ $# -gt 0 ]; do
         --mode)        MODE="$2"; shift 2 ;;
         --mode=*)      MODE="${1#*=}"; shift ;;
         --skip-pull)   SKIP_PULL=true; shift ;;
+        --audit)       RUN_AUDIT=true; shift ;;
         -s)            ADB_SERIAL="$2"; shift 2 ;;
         -h|--help)     usage ;;
         *)
@@ -131,6 +134,17 @@ if [ -n "$MODE" ]; then
         --dump ./live_dump \
         --mode "$MODE"
     echo "  ✓ Wrote $REPO_ROOT/hardware_map.sqlite"
+fi
+
+# ── 5 (optional): coverage audit ──────────────────────────────
+if [ "$RUN_AUDIT" = true ]; then
+    echo "→ Running coverage audit (pipeline/audit_coverage.py)..."
+    audit_args=(--static --out coverage_audit.md)
+    if [ -d ./live_dump ] && [ -n "$(ls -A ./live_dump 2>/dev/null)" ]; then
+        audit_args+=(--dump ./live_dump)
+    fi
+    "$PYTHON" pipeline/audit_coverage.py "${audit_args[@]}"
+    echo "  ✓ Wrote $REPO_ROOT/coverage_audit.md"
 fi
 
 echo ""
