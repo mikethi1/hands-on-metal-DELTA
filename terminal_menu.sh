@@ -692,7 +692,6 @@ run_selected() {
         echo "Note: enter space-separated arguments (embedded space quoting is not supported)."
         read -r -a args_array -p "Arguments (optional): "
     else
-        echo "This script does not accept command-line arguments."
         show_boot_image_context "$rel"
     fi
 
