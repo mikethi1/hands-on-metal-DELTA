@@ -1083,6 +1083,10 @@ run_selected() {
 
     echo
     echo "Running..."
+    # Capture the subshell's exit code via "|| rc=$?" so that the
+    # outer "set -e" in this menu does NOT abort before we get a
+    # chance to print the SUCCESS/FAILED banner when a script fails.
+    local rc=0
     (
         cd "$REPO_ROOT" || exit 1
         export HOM_DEPS_CHECKED
@@ -1137,8 +1141,7 @@ run_selected() {
                     ;;
             esac
         fi
-    )
-    local rc=$?
+    ) || rc=$?
     echo
     echo "═══════════════════════════════════════════════════════"
     if [ "$rc" -eq 0 ]; then
