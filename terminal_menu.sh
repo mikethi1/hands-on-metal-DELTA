@@ -753,7 +753,7 @@ script_completion_success() {
                 echo "Uploaded the diagnostic bundle to GitHub Gist."
             else
                 echo "Displayed local bundle summary (no GITHUB_TOKEN set)."
-                echo "  Set GITHUB_TOKEN and re-run with --token to upload to GitHub Gist."
+                echo "  Set GITHUB_TOKEN or re-run with --token to upload to GitHub Gist."
             fi
             ;;
         *)

@@ -248,7 +248,7 @@ def main() -> None:
         # No token and no --dry-run: default to dry-run mode
         print(
             "No GITHUB_TOKEN provided — running in dry-run mode.\n"
-            "To post to GitHub, set GITHUB_TOKEN and re-run with --token.\n",
+            "To post to GitHub, set GITHUB_TOKEN or re-run with --token.\n",
             file=sys.stderr,
         )
         args.dry_run = True
