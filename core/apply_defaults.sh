@@ -31,8 +31,11 @@ _HOM_BASE_ROOT="${REPO_ROOT:-${MODPATH:-}}"
 if [ -n "$_HOM_BASE_ROOT" ]; then
     PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_BASE_ROOT/build/partition_index.json}"
 else
-    _HOM_SOURCE_FILE="${BASH_SOURCE:-$0}"
-    PARTITION_INDEX="${PARTITION_INDEX:-$(cd "$(dirname "$_HOM_SOURCE_FILE")/.." 2>/dev/null && pwd)/build/partition_index.json}"
+    case "$0" in
+        */*) _HOM_REPO_ROOT_FALLBACK="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)" ;;
+        *)   _HOM_REPO_ROOT_FALLBACK="${PWD:-.}" ;;
+    esac
+    PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_REPO_ROOT_FALLBACK/build/partition_index.json}"
 fi
 
 # ── helpers ───────────────────────────────────────────────────

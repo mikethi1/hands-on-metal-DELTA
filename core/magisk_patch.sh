@@ -88,6 +88,19 @@ _find_magisk() {
         [ -x "$try" ] && { echo "$try"; return 0; }
     done
 
+    # 4. Binaries fetched by build/fetch_all_deps.sh (tools/)
+    local base
+    for base in "${REPO_ROOT:-}" "${MODPATH:-}" "${OUT:-}" "${PWD:-}"; do
+        [ -n "$base" ] || continue
+        for try in \
+            "$base/tools/magisk64" \
+            "$base/tools/magisk32" \
+            "$base/magisk64" \
+            "$base/magisk32"; do
+            [ -x "$try" ] && { echo "$try"; return 0; }
+        done
+    done
+
     return 1
 }
 

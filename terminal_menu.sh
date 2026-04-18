@@ -204,7 +204,13 @@ check_prereq() {
             _boot_image_obtainable ;;
         magisk_binary)
             command -v magisk >/dev/null 2>&1 \
-                || [ -f "/data/adb/magisk/magisk" ] 2>/dev/null ;;
+                || [ -x "/data/adb/magisk/magisk" ] 2>/dev/null \
+                || [ -x "/data/adb/magisk/magisk64" ] 2>/dev/null \
+                || [ -x "/data/adb/magisk/magisk32" ] 2>/dev/null \
+                || [ -x "$REPO_ROOT/tools/magisk64" ] 2>/dev/null \
+                || [ -x "$REPO_ROOT/tools/magisk32" ] 2>/dev/null \
+                || [ -x "/sdcard/hands-on-metal/tools/magisk64" ] 2>/dev/null \
+                || [ -x "/sdcard/hands-on-metal/tools/magisk32" ] 2>/dev/null ;;
         device_profile)
             [ -n "${HOM_DEV_MODEL:-}" ] ;;
         env_registry)
