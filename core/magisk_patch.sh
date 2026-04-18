@@ -29,6 +29,7 @@
 #   HOM_MAGISK_VERSION          — Magisk version string
 # ============================================================
 
+# shellcheck disable=SC2034  # consumed by core/logging.sh when sourced
 SCRIPT_NAME="magisk_patch"
 
 OUT="${OUT:-/sdcard/hands-on-metal}"

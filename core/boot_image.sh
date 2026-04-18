@@ -65,6 +65,7 @@
 #                               gki_download | user_prompt)
 # ============================================================
 
+# shellcheck disable=SC2034  # consumed by core/logging.sh when sourced
 SCRIPT_NAME="boot_image"
 
 OUT="${OUT:-/sdcard/hands-on-metal}"

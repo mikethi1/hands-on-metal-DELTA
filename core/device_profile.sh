@@ -21,6 +21,7 @@
 # Requires: logging.sh, ux.sh sourced first.
 # ============================================================
 
+# shellcheck disable=SC2034  # consumed by core/logging.sh when sourced
 SCRIPT_NAME="device_profile"
 
 OUT="${OUT:-/sdcard/hands-on-metal}"

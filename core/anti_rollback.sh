@@ -27,6 +27,7 @@
 #   HOM_DEV_AVB_STATE  — AVB verified boot state
 # ============================================================
 
+# shellcheck disable=SC2034  # consumed by core/logging.sh when sourced
 SCRIPT_NAME="anti_rollback"
 
 OUT="${OUT:-/sdcard/hands-on-metal}"

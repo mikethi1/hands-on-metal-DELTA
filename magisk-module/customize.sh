@@ -108,6 +108,7 @@ ux_progress 25
 
 if ! sm_require "BOOT_IMG_ACQUIRED" 2>/dev/null; then
     _source_core "boot_image.sh"
+    # shellcheck disable=SC2034  # consumed by sourced core/boot_image.sh
     PARTITION_INDEX="$MODPATH/build/partition_index.json"
     SCRIPT_NAME="boot_image"
     run_boot_image_acquire

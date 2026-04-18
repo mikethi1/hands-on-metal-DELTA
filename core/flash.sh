@@ -32,6 +32,7 @@
 #   HOM_DEV_SLOT_SUFFIX     — _a | _b | empty
 # ============================================================
 
+# shellcheck disable=SC2034  # consumed by core/logging.sh when sourced
 SCRIPT_NAME="flash"
 
 OUT="${OUT:-/sdcard/hands-on-metal}"

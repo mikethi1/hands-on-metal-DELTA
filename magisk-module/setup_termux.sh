@@ -139,7 +139,6 @@ wait_for_network || exit 1
 
 # ── Check if Termux APK is already installed by the package manager ──
 
-TERMUX_PKG_NAME="com.termux"
 TERMUX_DATA_DIR=""
 for cand in /data/data/com.termux /data/user/0/com.termux; do
     [ -d "$cand" ] && { TERMUX_DATA_DIR="$cand"; break; }
