@@ -49,6 +49,141 @@ brew install android-platform-tools
 
 ---
 
+## Where user input is required
+
+Every install path has points where you must provide input — either on the
+device screen, in the PC terminal, or at a script prompt. This section lists
+every input point so you know what to expect.
+
+### Bootloader unlock (one-time, before any install)
+
+| Step | Where | What you do |
+|------|-------|-------------|
+| Enable Developer options | Device: Settings → About phone | Tap **Build number** 7 times |
+| Enable OEM unlocking | Device: Developer options | Toggle **OEM unlocking** ON |
+| Enable USB debugging | Device: Developer options | Toggle **USB debugging** ON |
+| Authorize PC | Device: popup dialog | Tap **Allow** (check "Always allow from this computer") |
+| Unlock command | PC terminal | `fastboot flashing unlock` (or `fastboot oem unlock` on older devices) |
+| Confirm unlock | Device: bootloader screen | Press **Volume Up** to confirm (**this wipes all data**) |
+
+### C1 — Temporary TWRP boot (user input points)
+
+| Step | Where | What you do | What you see |
+|------|-------|-------------|-------------|
+| Reboot to bootloader | PC terminal | `adb reboot bootloader` | Device shows "FASTBOOT" on screen |
+| Boot TWRP | PC terminal | `fastboot boot twrp.img` | TWRP home screen loads |
+| Start ADB sideload (option B) | Device: TWRP | Tap **Advanced** → **ADB Sideload** → **Swipe to start** | "Now send the package..." |
+| Send ZIP (option B) | PC terminal | `adb sideload hands-on-metal-recovery-*.zip` | Progress percentage shown |
+| OR push ZIP (option A) | PC terminal | `adb push hands-on-metal-recovery-*.zip /sdcard/` | Transfer completes |
+| Flash ZIP (option A) | Device: TWRP | Tap **Install** → navigate to ZIP → **Swipe to confirm** | Installer output scrolls on screen |
+
+### C2 — Direct fastboot flash (user input points)
+
+| Step | Where | What you do | What you see |
+|------|-------|-------------|-------------|
+| Reboot to bootloader | PC terminal | `adb reboot bootloader` | "FASTBOOT" on device screen |
+| Flash patched image | PC terminal | `fastboot flash boot patched_boot.img` | `OKAY` + transfer speed |
+| Reboot | PC terminal | `fastboot reboot` | Device reboots to Android |
+
+### C3 — ADB sideload (user input points)
+
+| Step | Where | What you do | What you see |
+|------|-------|-------------|-------------|
+| Boot into recovery | PC terminal | `adb reboot recovery` | TWRP/OrangeFox home screen |
+| Start sideload mode | Device: TWRP | **Advanced** → **ADB Sideload** → **Swipe** | "Now send the package..." |
+| Send ZIP | PC terminal | `adb sideload hands-on-metal-recovery-*.zip` | Progress bar/percentage |
+
+### During the guided installer (all modes using the recovery ZIP)
+
+Once the recovery ZIP starts running (via flash, sideload, or TWRP install),
+the guided installer may ask for input at these points. In **non-interactive
+mode** (TWRP flash / sideload), the installer uses safe defaults
+automatically. In **interactive mode** (ADB shell / Termux), you will see
+prompts.
+
+#### Prompt 1 — Google Pixel factory image download (interactive only)
+
+Appears when: the device is a Google Pixel and the boot image couldn't be
+auto-discovered.
+
+```
+  This looks like a Google Pixel device (shiba).
+  A factory image can be downloaded to extract init_boot.img.
+  Build ID: AP4A.250205.002
+
+Download factory image for shiba (build AP4A.250205.002)? [yes/no] [yes]:
+```
+
+**Your input:** Press **Enter** to accept `yes`, or type `no` and press Enter to skip.
+
+**Non-interactive (TWRP):** Automatically uses `yes` and downloads if network
+is available.
+
+#### Prompt 2 — Manual boot partition path (interactive only)
+
+Appears when: all automatic boot image acquisition methods have failed (no
+root DD, no pre-placed file, no factory download).
+
+```
+ACTION REQUIRED — please follow these steps:
+  1) The installer could not automatically obtain the boot image.
+  2)
+  3) You can provide the image in one of these ways:
+  4)
+  5)   a) Place boot.img in /sdcard/Download/ and re-run
+  6)   b) Extract it from a factory image ZIP on your PC and push:
+  7)        adb push boot.img /sdcard/Download/
+  8)   c) Enter a block device path if you know it:
+  9)        /dev/block/bootdevice/by-name/boot
+  10)       /dev/block/by-name/boot
+  11)       /dev/block/platform/<soc>/by-name/boot
+  12)
+  13) Run:  ls /dev/block/bootdevice/by-name/  to list partition names.
+
+Enter full path to boot block device or image file [/sdcard/Download/boot.img]:
+```
+
+**Your input:** Type the full path to your boot image or block device, then
+press **Enter**. Or press **Enter** to use the default path.
+
+**Non-interactive (TWRP):** Automatically uses `/sdcard/Download/boot.img`.
+If that file doesn't exist, the installer aborts and logs the error.
+
+> **Tip:** To avoid this prompt entirely, push the boot image to the device
+> before running the installer:
+> ```bash
+> adb push boot.img /sdcard/Download/
+> ```
+
+#### No further prompts
+
+The remaining steps (anti-rollback check, Magisk patch, flash, verify) run
+**without any user input**. They either succeed or abort with a clear error
+message. If aborted, the device is left in a safe, bootable state.
+
+### After install — verification (all modes)
+
+| Step | Where | What you do | What you see |
+|------|-------|-------------|-------------|
+| Open Magisk | Device: app drawer | Tap **Magisk** app | Home screen shows "Installed" with version |
+| Verify root | Device: Termux or ADB shell | Run `su` | Prompt changes to `#` (root shell) |
+| Check logs | Device or PC | Browse `/sdcard/hands-on-metal/logs/` | `master_*.log` with full install timeline |
+
+### Mode A — Magisk module path (user input points)
+
+If Magisk is already installed and you're using Mode A ([INSTALL.md](INSTALL.md)):
+
+| Step | Where | What you do | What you see |
+|------|-------|-------------|-------------|
+| Open Magisk | Device | Tap **Magisk** app | Home screen |
+| Go to Modules | Device | Tap **Modules** (bottom nav) | Module list |
+| Install from storage | Device | Tap **Install from storage** | File picker opens |
+| Select ZIP | Device | Navigate to and tap the `.zip` file | Installer runs with live output |
+| Boot image prompt (if needed) | Device: installer output | Type path + Enter (see Prompt 2 above) | Only if auto-discovery fails |
+| Reboot | Automatic | Installer reboots after flash | Device restarts |
+
+---
+
 ## C1 — Temporary TWRP boot via fastboot
 
 This boots TWRP **temporarily** (in RAM only) without permanently installing

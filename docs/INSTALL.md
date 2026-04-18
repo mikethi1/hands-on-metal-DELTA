@@ -112,6 +112,53 @@ The installer patches the image and flashes it automatically. The device reboots
 
 ---
 
+## Where user input is required
+
+The Magisk-path installer runs inside the Magisk app's module installer. It
+is interactive — if a prompt appears, you type your response directly in the
+Magisk output console.
+
+| When | Where | What you do | Details |
+|------|-------|-------------|---------|
+| **Select ZIP** | Device: Magisk app | **Modules** → **Install from storage** → select the `.zip` | File picker opens |
+| **Boot image prompt (if needed)** | Device: Magisk installer output | Type the path to your boot image + press Enter | Only appears if auto-discovery fails (see below) |
+| **Google Pixel download prompt** | Device: Magisk installer output | Press Enter to accept `yes`, or type `no` | Only on Pixel devices when boot partition isn't found |
+| **After reboot** | Device | Open Magisk app → confirm root; open Termux → run `su` | Verification step |
+
+### Boot image prompt — what it looks like
+
+If the installer can't find your boot partition automatically, you'll see:
+
+```
+ACTION REQUIRED — please follow these steps:
+  1) The installer could not automatically obtain the boot image.
+  ...
+  5)   a) Place boot.img in /sdcard/Download/ and re-run
+  6)   b) Extract it from a factory image ZIP on your PC and push:
+  7)        adb push boot.img /sdcard/Download/
+  8)   c) Enter a block device path if you know it:
+  9)        /dev/block/bootdevice/by-name/boot
+  ...
+
+Enter full path to boot block device or image file [/sdcard/Download/boot.img]:
+```
+
+**Your input:** Type the full path (e.g., `/dev/block/by-name/boot`) and press
+Enter, or just press Enter to use the default.
+
+> **Tip:** To avoid this prompt, push the boot image before flashing:
+> ```bash
+> adb push boot.img /sdcard/Download/
+> ```
+
+### All other steps are automatic
+
+Anti-rollback check, Magisk patch, flash, and SHA-256 verification all run
+without prompts. They either succeed or abort with a clear error and safe
+device state.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Where to look |

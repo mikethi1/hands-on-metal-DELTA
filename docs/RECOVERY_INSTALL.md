@@ -166,6 +166,30 @@ The installer also collects hardware metadata, VINTF manifests, and fstab files 
 
 ---
 
+## Where user input is required
+
+The recovery ZIP installer is mostly automatic — it runs inside TWRP's
+non-interactive context, so all prompts use safe defaults. User input is
+only needed at these points:
+
+| When | Where | What you do |
+|------|-------|-------------|
+| **Boot into recovery** | Device (physical) | Hold **Power + Volume Down** (device-specific) or run `adb reboot recovery` |
+| **Flash the ZIP** | Device: TWRP | Tap **Install** → navigate to ZIP → **Swipe to confirm** |
+| **OR: ADB sideload** | Device: TWRP + PC | TWRP: **Advanced** → **ADB Sideload** → **Swipe**; PC: `adb sideload <zip>` |
+| **Boot image not found** (rare) | Device: TWRP output | Installer prints instructions on screen. Push `boot.img` to `/sdcard/Download/` via ADB and re-flash the ZIP |
+| **After reboot** | Device | Open Magisk app → confirm root; open Termux → run `su` |
+
+> **Note:** In TWRP's flash context, the installer cannot read interactive
+> input. If the boot image can't be auto-discovered, it uses
+> `/sdcard/Download/boot.img` as the default. Pre-place the image there
+> before flashing to avoid issues:
+> ```bash
+> adb push boot.img /sdcard/Download/
+> ```
+
+---
+
 ## Troubleshooting
 
 | Symptom | What to do |
