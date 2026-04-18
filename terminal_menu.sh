@@ -542,13 +542,19 @@ print_menu() {
                 ;;
         esac
 
-        printf "%s%2d) [%s] %s %s%s" \
+        printf "%s%2d) [%s] %s %s%s\n" \
             "$color" "$((i + 1))" "${SCRIPT_TYPES[$i]}" "${SCRIPT_LABELS[$i]}" "$status_char" "$CLR_RESET"
 
-        if [ "${ITEM_STATUS[$i]}" = "missing" ]; then
-            printf "\n      needs: %s" "${MISSING_INFO[$i]}"
+        # Always show the description so every option is self-documenting
+        local desc
+        desc="$(script_description "${SCRIPT_LABELS[$i]}")"
+        if [ -n "$desc" ]; then
+            printf "      %s\n" "$desc"
         fi
-        printf "\n"
+
+        if [ "${ITEM_STATUS[$i]}" = "missing" ]; then
+            printf "      needs: %s\n" "${MISSING_INFO[$i]}"
+        fi
     done
 
     echo
@@ -633,6 +639,7 @@ print_prereq_submenu() {
     echo " Enter) return to main menu"
     echo
     read -r -p "Choose (s or Enter): " sub_choice
+    sub_choice="${sub_choice//[!a-zA-Z0-9]/}"
     case "$sub_choice" in
         s|S)
             if [ "$SUGGESTION_IDX" -ge 0 ]; then
@@ -1040,7 +1047,10 @@ main() {
     while true; do
         print_menu
         read -r -p "Choose an option: " choice
-        choice="${choice%$'\r'}"   # strip trailing CR (some terminals / Termux)
+        # Strip non-alphanumeric bytes: invisible control characters, Unicode
+        # zero-width / formatting chars, trailing CR, ANSI remnants, etc. that
+        # some terminal emulators and input methods inject on Android / Termux.
+        choice="${choice//[!a-zA-Z0-9]/}"
 
         case "$choice" in
             q|Q)
