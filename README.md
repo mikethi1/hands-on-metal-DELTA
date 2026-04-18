@@ -135,6 +135,10 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 | [`halium-shim/`](halium-shim/) | C shim + Makefile for Halium/libhybris bridge research |
 | [`tests/`](tests/) | Python unit tests for `parse_logs`, `build_table`, and `fileserver` |
 | [`setup.sh`](setup.sh) | One-step bootstrap — clones the repo, checks deps, fetches binaries, builds ZIPs |
+| [`build.sh`](build.sh) | Root entrypoint — builds the flashable ZIPs (wraps `build/build_offline_zip.sh`) |
+| [`flash.sh`](flash.sh) | Root entrypoint — host-assisted flash for Mode A / B / C (wraps `build/host_flash.sh`) |
+| [`pipeline.sh`](pipeline.sh) | Root entrypoint — pulls device logs and runs the host-side pipeline end-to-end |
+| [`test.sh`](test.sh) | Root entrypoint — runs the unit-test suite (matches CI) |
 | [`terminal_menu.sh`](terminal_menu.sh) | Interactive terminal launcher — run any project script from one menu |
 | [`check_deps.sh`](check_deps.sh) | Host-side dependency checker — verifies all required tools are installed |
 | [`docs/`](docs/) | Full documentation (see below) |
@@ -159,39 +163,38 @@ The check runs automatically when using `terminal_menu.sh` or the build scripts.
 
 ## Quick start
 
+Every step below is a **single complete script at the repo root** — paste it
+straight into your terminal (Bash, Zsh, Termux, or any POSIX shell). No
+heredocs, no temp files, no copy-paste pitfalls.
+
+| Step | Command | What it does |
+|------|---------|--------------|
+| Bootstrap | `bash setup.sh` | Clone repo, install host tools, fetch binaries, build ZIPs, drop into the menu |
+| Build | `bash build.sh` | Build the two flashable ZIPs into `dist/` |
+| Flash | `bash flash.sh` | Host-assisted flash (Mode A / B / C — see below) |
+| Pipeline | `bash pipeline.sh` | Pull device logs and run the parser |
+| Tests | `bash test.sh` | Run the full unit-test suite (matches CI) |
+| Menu | `bash terminal_menu.sh` | Interactive launcher for every project script |
+
 ### 1 — Clone and fetch all dependencies
 
 **One-liner** (requires `curl`; `git` is auto-installed if missing):
 
 ```bash
-cat <<'EOF' > ~/hands-on-metal-setup.sh
-#!/usr/bin/env bash
-set -e
 curl -fsSL https://raw.githubusercontent.com/mikethi/hands-on-metal/main/setup.sh | bash
-EOF
-chmod +x ~/hands-on-metal-setup.sh
-~/hands-on-metal-setup.sh
-cd ~/hands-on-metal               # enter the repo after setup
-bash terminal_menu.sh
-# Select option 1 (build/build_offline_zip.sh) — the next step after setup is complete
 ```
 
 **Or clone first**, then run the setup script locally:
 
 ```bash
-cat <<'EOF' > ~/hands-on-metal-setup.sh
-#!/usr/bin/env bash
-set -e
 git clone https://github.com/mikethi/hands-on-metal.git ~/hands-on-metal
 cd ~/hands-on-metal
 bash setup.sh
-EOF
-chmod +x ~/hands-on-metal-setup.sh
-~/hands-on-metal-setup.sh
-cd ~/hands-on-metal
-bash terminal_menu.sh
-# Select option 1 (build/build_offline_zip.sh) — the next step after setup is complete
 ```
+
+`setup.sh` finishes by launching `terminal_menu.sh`. From there select
+option 1 (`build/build_offline_zip.sh`) — or just run `bash build.sh` from
+the repo root, which is the equivalent single-command form.
 
 If `git` is not installed the script attempts to install it automatically
 using the system package manager (`apt-get`, `pkg`, `dnf`, `pacman`, or
@@ -211,114 +214,81 @@ The script is safe to re-run — it skips steps that are already complete.
 If you already have the binaries in `tools/` or want device-side binaries:
 
 ```bash
-cat <<'EOF' > ~/hands-on-metal-build.sh
-#!/usr/bin/env bash
-set -e
 cd ~/hands-on-metal
-bash terminal_menu.sh
-# Select option 1 (build/build_offline_zip.sh)
-# After completion, press 's' for the suggested next step: option 3 (build/host_flash.sh)
-EOF
-chmod +x ~/hands-on-metal-build.sh
-~/hands-on-metal-build.sh
+bash build.sh
 ```
 
 To build without bundled tools (rely on what's already on the device):
 
 ```bash
-cat <<'EOF' > ~/hands-on-metal-build-no-tools.sh
-#!/usr/bin/env bash
-set -e
 cd ~/hands-on-metal
-bash terminal_menu.sh
-# Select option 1 (build/build_offline_zip.sh), then enter arguments: --no-tools
-# After completion, press 's' for the suggested next step
-EOF
-chmod +x ~/hands-on-metal-build-no-tools.sh
-~/hands-on-metal-build-no-tools.sh
+bash build.sh --no-tools
 ```
 
+Run `bash build.sh --help` for all options. After the build, the script
+prints the suggested next step (`bash flash.sh`).
+
 ### 3 — Flash to your device
+
+`flash.sh` is the single host-side entrypoint for **all three install
+paths**.  Run it without arguments for the interactive sub-menu, or pass
+the appropriate flag for the path you need.
 
 **Mode A — Magisk already installed:**
 
 ```bash
-cat <<'EOF' > ~/hands-on-metal-flash-magisk.sh
-#!/usr/bin/env bash
-set -e
 cd ~/hands-on-metal
-bash terminal_menu.sh
-# Select option 3 (build/host_flash.sh)
-# After completion, press 's' for the suggested next step
-#
-# Then on the device:
-# Magisk app → Modules → Install from storage → select the ZIP → reboot
-EOF
-chmod +x ~/hands-on-metal-flash-magisk.sh
-~/hands-on-metal-flash-magisk.sh
+bash flash.sh
+# → use the menu's "push ZIP to device" sub-option, then on the device:
+#   Magisk app → Modules → Install from storage → select the ZIP → reboot
 ```
 
 **Mode B — no Magisk yet (flash from TWRP / OrangeFox):**
 
 ```bash
-cat <<'EOF' > ~/hands-on-metal-flash-recovery.sh
-#!/usr/bin/env bash
-set -e
 cd ~/hands-on-metal
-bash terminal_menu.sh
-# Select option 3 (build/host_flash.sh)
-# After completion, press 's' for the suggested next step
-#
-# Then on the device:
-# Boot into TWRP/OrangeFox → Install → select the ZIP → swipe to confirm → reboot
-EOF
-chmod +x ~/hands-on-metal-flash-recovery.sh
-~/hands-on-metal-flash-recovery.sh
+bash flash.sh
+# → use the menu's "push ZIP to device" sub-option, then on the device:
+#   Boot into TWRP/OrangeFox → Install → select the ZIP → swipe → reboot
 ```
+
+**Mode C — no recovery; bootloader unlocked; device on USB:**
+
+```bash
+cd ~/hands-on-metal
+bash flash.sh --c1 path/to/twrp.img            # temporary TWRP boot
+bash flash.sh --c2 path/to/patched_boot.img    # direct fastboot flash
+bash flash.sh --c3 dist/hands-on-metal-recovery-*.zip   # ADB sideload
+```
+
+Add `-s SERIAL` if more than one device is connected. Run
+`bash flash.sh --help` for the full command list.
 
 ### 4 — Run the host-side pipeline after collection
 
-After your device has booted and collected hardware data, pull the logs and
-run the pipeline on your PC:
+After your device has booted and collected hardware data, pull the logs
+and run the pipeline on your PC:
 
 ```bash
-cat <<'EOF' > ~/hands-on-metal-pipeline.sh
-#!/usr/bin/env bash
-set -e
 cd ~/hands-on-metal
-
-# Pull logs from device to your PC
-adb pull /sdcard/hands-on-metal/logs/ ./logs/
-adb pull /sdcard/hands-on-metal/live_dump/ ./live_dump/
-
-# Find the RUN_ID from the log filenames (e.g. master_20250417_143022.log → RUN_ID is 20250417_143022)
-# ls ./logs/master_*.log
-
-bash terminal_menu.sh
-# Select option 25 (pipeline/parse_logs.py)
-#   Arguments: --log "./logs/master_<RUN_ID>.log" --out /tmp/parsed.json
-#   Replace <RUN_ID> with the timestamp from your log filename
-# After completion, press 's' for the suggested next step: option 22 (pipeline/build_table.py)
-EOF
-chmod +x ~/hands-on-metal-pipeline.sh
-~/hands-on-metal-pipeline.sh
+bash pipeline.sh                 # adb pull + parse_logs → parsed.json
+bash pipeline.sh --mode A        # also build hardware_map.sqlite (use the mode you flashed with)
 ```
+
+Use `--skip-pull` to re-run against existing local `logs/` and `live_dump/`
+directories, or `-s SERIAL` to target a specific device. Run
+`bash pipeline.sh --help` for all options.
 
 ### 5 — Run the unit tests
 
 ```bash
-cat <<'EOF' > ~/hands-on-metal-test.sh
-#!/usr/bin/env bash
-set -e
 cd ~/hands-on-metal
-python -m pytest tests/
-# After tests pass, launch the terminal menu:
-bash terminal_menu.sh
-# Press 's' for the suggested next step, or select any option by number
-EOF
-chmod +x ~/hands-on-metal-test.sh
-~/hands-on-metal-test.sh
+bash test.sh
 ```
+
+This runs `python -m unittest discover -v tests` — the same invocation
+used by GitHub Actions CI, so a green local run means a green CI run.
+No `pip` packages required.
 
 ### 6 — Interactive terminal menu (optional)
 
@@ -326,15 +296,9 @@ Launch a single interactive menu that lists every script in the project and
 lets you run any of them with arguments:
 
 ```bash
-cat <<'EOF' > ~/hands-on-metal-menu.sh
-#!/usr/bin/env bash
-set -e
 cd ~/hands-on-metal
 bash terminal_menu.sh
 # Press 's' for the suggested next step, or select any option by number
-EOF
-chmod +x ~/hands-on-metal-menu.sh
-~/hands-on-metal-menu.sh
 ```
 
 The menu lists all shell scripts (`build/`, `core/`, `magisk-module/`,
