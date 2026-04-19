@@ -823,13 +823,35 @@ def _get_env_registry_val(key: str) -> str:
             rest = line[len(key) + 1:]          # everything after '='
             if rest.startswith('"'):
                 parts = rest.split('"', 2)
-                if len(parts) >= 2:
-                    return parts[1]             # value between first pair of "
-                return ""                       # malformed line — no closing quote
+                return parts[1] if len(parts) >= 2 else ""
             return rest.split()[0]              # unquoted value (edge case)
     except OSError:
         pass
     return ""
+
+
+def _set_env_registry_val(key: str, value: str,
+                          category: str = "unpack") -> None:
+    """Write *key*=*value* to ~/hands-on-metal/env_registry.sh.
+
+    Creates the registry file if it does not yet exist.  Any existing line
+    for the same key is replaced so the file stays idempotent across runs.
+    The format matches core/*'s _reg_set() shell helper:
+        KEY="VALUE"  # cat:<category>
+    """
+    reg = Path.home() / "hands-on-metal" / "env_registry.sh"
+    try:
+        reg.parent.mkdir(parents=True, exist_ok=True)
+        existing: list[str] = []
+        if reg.exists():
+            existing = reg.read_text(errors="replace").splitlines()
+        # Drop any previous line for this key.
+        filtered = [ln for ln in existing if not ln.startswith(key + "=")]
+        filtered.append(f'{key}="{value}"  # cat:{category}')
+        reg.write_text("\n".join(filtered) + "\n")
+    except OSError as exc:
+        print(f"  warn: could not write {key} to env_registry: {exc}",
+              file=sys.stderr)
 
 
 def _decompress_image(src: Path, dest_dir: Path) -> Optional[Path]:
@@ -1389,6 +1411,16 @@ def main() -> None:
     db.close()
     print(f"\nDone — {total_files} ramdisk files extracted total.")
     print("Tip: re-run build_table.py or report.py to refresh the database.")
+
+    # Register the extraction paths in env_registry so that downstream
+    # pipeline steps (parse_manifests.py, build_table.py, report.py …)
+    # know where to find the extracted ramdisk files without having to
+    # re-discover them.
+    ramdisk_dir = dump / "ramdisk"
+    if ramdisk_dir.exists():
+        _set_env_registry_val("HOM_RAMDISK_DIR",    str(ramdisk_dir))
+        _set_env_registry_val("HOM_UNPACK_DUMP_DIR", str(dump))
+        print(f"Registered HOM_RAMDISK_DIR={ramdisk_dir} in env_registry.")
 
 
 if __name__ == "__main__":

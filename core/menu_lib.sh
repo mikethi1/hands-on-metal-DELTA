@@ -353,6 +353,9 @@ is_already_done() {
             [ "${HOM_FLASH_STATUS:-}" = "OK" ] 2>/dev/null ;;
         magisk-module/env_detect.sh)
             [ -f "$HOME/hands-on-metal/env_registry.sh" ] 2>/dev/null ;;
+        pipeline/unpack_images.py)
+            [ -n "${HOM_RAMDISK_DIR:-}" ] \
+                && [ -d "${HOM_RAMDISK_DIR:-/nonexistent}" ] 2>/dev/null ;;
         *)
             return 1 ;;
     esac
@@ -818,6 +821,7 @@ startup_scan() {
         HOM_ENV_SHELL           HOM_ENV_BUSYBOX         HOM_ENV_PYTHON
         HOM_ENV_TERMUX          HOM_ENV_ROOT
         HOM_FILESERVER_URL      HOM_FILESERVER_TOKEN
+        HOM_RAMDISK_DIR         HOM_UNPACK_DUMP_DIR
     )
     for _var in "${_known_hom_vars[@]}"; do
         local _val="${!_var:-}"
@@ -1034,7 +1038,10 @@ script_completion_success() {
             echo "Generated HTML hardware report from the database."
             ;;
         pipeline/unpack_images.py)
+            load_env_registry
             echo "Unpacked boot / vendor-boot images and extracted the ramdisk."
+            echo "  • Extracted ramdisk files: ${HOM_RAMDISK_DIR:-(not yet set — press r to refresh)}"
+            echo "  • HOM_RAMDISK_DIR and HOM_UNPACK_DUMP_DIR written to env_registry."
             ;;
         pipeline/upload.py)
             if [ -n "${GITHUB_TOKEN:-}" ]; then
@@ -1217,7 +1224,10 @@ script_next_steps() {
         pipeline/report.py)
             echo "  → HTML report generated. Open it in a browser to view results." ;;
         pipeline/unpack_images.py)
-            echo "  → Images unpacked. Proceed with parsing or analysis of the extracted contents." ;;
+            echo "  → Images unpacked. HOM_RAMDISK_DIR is now set in env_registry."
+            echo "  → Run parse_manifests.py (option 7) — it will automatically read"
+            echo "    ramdisk prop files (default.prop, build.prop) via HOM_RAMDISK_DIR."
+            echo "  → Proceed with parsing or analysis of the extracted contents." ;;
         pipeline/upload.py)
             if [ -n "${GITHUB_TOKEN:-}" ]; then
                 echo "  → Bundle uploaded to GitHub Gist. Share the Gist URL with collaborators."
@@ -1272,6 +1282,10 @@ run_selected() {
                 ;;
             pipeline/parse_manifests.py|pipeline/parse_pinctrl.py|pipeline/parse_symbols.py)
                 args_array=(--db "$_db" --dump "$_dump" --run-id "$_run_id")
+                ;;
+            pipeline/unpack_images.py)
+                _bw="${HOM_BOOT_WORK_DIR:-$_out/boot_work}"
+                args_array=(--db "$_db" --dump "$_bw" --run-id "$_run_id")
                 ;;
             pipeline/build_table.py)
                 args_array=(--db "$_db" --dump "$_dump" --mode "$_mode")
