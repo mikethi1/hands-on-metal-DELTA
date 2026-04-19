@@ -136,10 +136,10 @@ fi
 # live-filesystem behavior.
 _HOM_OPTION5_IMG_COUNT=0
 if [ -d "$BOOT_WORK_ROOT" ]; then
-    for _img in "$BOOT_WORK_ROOT"/*.img "$BOOT_WORK_ROOT"/partitions/*.img; do
-        [ -f "$_img" ] || continue
-        _HOM_OPTION5_IMG_COUNT=$((_HOM_OPTION5_IMG_COUNT + 1))
-    done
+    _HOM_OPTION5_IMG_COUNT=$(find "$BOOT_WORK_ROOT" -maxdepth 1 -type f -name "*.img" 2>/dev/null | wc -l | tr -d ' ')
+    if [ -d "$BOOT_WORK_ROOT/partitions" ]; then
+        _HOM_OPTION5_IMG_COUNT=$((_HOM_OPTION5_IMG_COUNT + $(find "$BOOT_WORK_ROOT/partitions" -maxdepth 1 -type f -name "*.img" 2>/dev/null | wc -l | tr -d ' ')))
+    fi
 fi
 _HOM_USE_OPTION5_SOURCE=false
 if [ "$_HOM_IS_ROOT" = false ] && [ "$_HOM_OPTION5_IMG_COUNT" -gt 0 ]; then
