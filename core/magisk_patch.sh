@@ -40,6 +40,8 @@ BOOT_WORK_DIR="$OUT/boot_work"
 # Location of the bundled offline Magisk binary (placed by build script)
 BUNDLED_MAGISK="${BUNDLED_MAGISK:-/data/adb/magisk/magisk64}"
 BUNDLED_MAGISK32="${BUNDLED_MAGISK32:-/data/adb/magisk/magisk32}"
+BUNDLED_MAGISKBOOT="${BUNDLED_MAGISKBOOT:-/data/adb/magisk/magiskboot}"
+BUNDLED_BOOT_PATCH_SH="${BUNDLED_BOOT_PATCH_SH:-/data/adb/magisk/boot_patch.sh}"
 
 # ── helpers ───────────────────────────────────────────────────
 
@@ -114,6 +116,65 @@ _find_magisk() {
             "$base/magisk64" \
             "$base/magisk32"; do
             [ -x "$try" ] && { echo "$try"; return 0; }
+        done
+    done
+
+    return 1
+}
+
+# Locate magiskboot — the low-level boot image tool used by boot_patch.sh.
+# Works without root; reads/writes boot image files directly.
+_find_magiskboot() {
+    # 1. PATH
+    local mb; mb=$(command -v magiskboot 2>/dev/null || true)
+    [ -x "$mb" ] && { echo "$mb"; return 0; }
+
+    # 2. Standard Magisk install locations
+    for try in \
+        /data/adb/magisk/magiskboot \
+        /sbin/magiskboot \
+        /system/bin/magiskboot; do
+        [ -x "$try" ] && { echo "$try"; return 0; }
+    done
+
+    # 3. Bundled copy
+    [ -x "$BUNDLED_MAGISKBOOT" ] && { echo "$BUNDLED_MAGISKBOOT"; return 0; }
+
+    # 4. Tools directories
+    local base
+    for base in "${REPO_ROOT:-}" "${MODPATH:-}" "${OUT:-}" "${PWD:-}"; do
+        [ -n "$base" ] || continue
+        for try in \
+            "$base/tools/magiskboot" \
+            "$base/magiskboot"; do
+            [ -x "$try" ] && { echo "$try"; return 0; }
+        done
+    done
+
+    return 1
+}
+
+# Locate Magisk's boot_patch.sh script.
+# Works without root; sets env vars to control patch behaviour.
+_find_boot_patch_sh() {
+    # 1. Standard Magisk install locations
+    for try in \
+        /data/adb/magisk/boot_patch.sh \
+        /data/adb/magisk.d/boot_patch.sh; do
+        [ -f "$try" ] && { echo "$try"; return 0; }
+    done
+
+    # 2. Bundled copy
+    [ -f "$BUNDLED_BOOT_PATCH_SH" ] && { echo "$BUNDLED_BOOT_PATCH_SH"; return 0; }
+
+    # 3. Tools directories
+    local base
+    for base in "${REPO_ROOT:-}" "${MODPATH:-}" "${OUT:-}" "${PWD:-}"; do
+        [ -n "$base" ] || continue
+        for try in \
+            "$base/tools/boot_patch.sh" \
+            "$base/boot_patch.sh"; do
+            [ -f "$try" ] && { echo "$try"; return 0; }
         done
     done
 
@@ -260,9 +321,13 @@ passing AVB verification through the correct flags"
 
     local patched_img="$BOOT_WORK_DIR/${boot_part}_patched.img"
 
-    # Magisk boot_patch.sh writes to /data/local/tmp/magisk_patched_*.img
-    # but we can also use --boot-patch with a specific output if supported.
-    # We use the environment-variable driven approach via magisk --boot-patch.
+    # Preferred path: boot_patch.sh + magiskboot.
+    # Works without root — reads and writes boot image files directly.
+    # Magisk v26+ removed --boot-patch from the main binary; this is the
+    # correct offline API for all versions from v25 onward.
+    #
+    # Fallback: magisk --boot-patch (only works on older builds where the
+    # standalone binary still includes the subcommand).
 
     ux_print "  Running Magisk patch (this may take 30–60 seconds)..."
 
@@ -289,43 +354,110 @@ EOF
     [ -n "$magisk_out_dir" ] || ux_abort "No writable staging directory available for Magisk patching."
     ux_print "  Magisk staging dir: $magisk_out_dir"
 
-    # Copy input to a writable staging directory where Magisk can access it
-    local tmp_input="$magisk_out_dir/boot_magisk_${boot_part}_in_${RUN_ID:-$$}.img"
-    cp "$boot_img" "$tmp_input" 2>/dev/null || \
-        ux_abort "Could not copy boot image to staging dir: $magisk_out_dir"
-
-    # Run the patch — set TMPDIR so Magisk writes its output to the same
-    # staging directory that we already confirmed is writable.
-    log_exec "magisk_boot_patch" \
-        env TMPDIR="$magisk_out_dir" "$magisk_bin" --boot-patch "$tmp_input"
-    local patch_rc=$?
-
-    # Locate the patched output
+    local patch_rc=0
     local found_patched=""
     local f
-    for f in "$magisk_out_dir"/magisk_patched_*.img; do
-        [ -f "$f" ] && { found_patched="$f"; break; }
-    done
-    while [ -z "$found_patched" ] && IFS= read -r search_dir; do
-        [ -n "$search_dir" ] || continue
-        [ "$search_dir" = "$magisk_out_dir" ] && continue
-        for f in "$search_dir"/magisk_patched_*.img; do
+
+    # ── Locate boot_patch.sh + magiskboot ────────────────────────
+    # All three siblings (magisk64/magisk32, magiskboot, boot_patch.sh) are
+    # placed in the same tools/ dir by the build scripts, so check alongside
+    # the already-resolved magisk_bin first before doing a wider search.
+    local magiskboot_bin boot_patch_sh _magisk_dir
+    _magisk_dir="$(dirname "$magisk_bin")"
+    magiskboot_bin=$(_find_magiskboot 2>/dev/null || true)
+    [ -z "$magiskboot_bin" ] && [ -x "$_magisk_dir/magiskboot" ] \
+        && magiskboot_bin="$_magisk_dir/magiskboot"
+    boot_patch_sh=$(_find_boot_patch_sh 2>/dev/null || true)
+    [ -z "$boot_patch_sh" ] && [ -f "$_magisk_dir/boot_patch.sh" ] \
+        && boot_patch_sh="$_magisk_dir/boot_patch.sh"
+
+    if [ -x "$magiskboot_bin" ] && [ -f "$boot_patch_sh" ]; then
+        log_info "boot_patch.sh path: $boot_patch_sh  magiskboot: $magiskboot_bin"
+
+        # boot_patch.sh resolves sibling binaries via MAGISKBIN=$(dirname $0),
+        # so we copy everything into an isolated work directory.
+        local work_dir="$magisk_out_dir/magisk_patch_work_${RUN_ID:-$$}"
+        mkdir -p "$work_dir" || ux_abort "Cannot create patch work dir: $work_dir"
+
+        cp "$magiskboot_bin" "$work_dir/magiskboot" && chmod +x "$work_dir/magiskboot"
+        cp "$boot_patch_sh"  "$work_dir/boot_patch.sh"
+
+        # util_functions.sh — sourced by boot_patch.sh when present
+        local util_fn
+        util_fn="$(dirname "$boot_patch_sh")/util_functions.sh"
+        [ -f "$util_fn" ] && cp "$util_fn" "$work_dir/util_functions.sh"
+
+        # Magisk payload binary — boot_patch.sh calls it as 'magisk'
+        cp "$magisk_bin" "$work_dir/magisk" 2>/dev/null \
+            && chmod +x "$work_dir/magisk" || true
+
+        # magiskinit — injected into the boot ramdisk
+        local try
+        for try in \
+            "$(dirname "$magisk_bin")/magiskinit" \
+            "$(dirname "$magisk_bin")/magiskinit64" \
+            /data/adb/magisk/magiskinit; do
+            if [ -x "$try" ]; then
+                cp "$try" "$work_dir/magiskinit" && chmod +x "$work_dir/magiskinit"
+                break
+            fi
+        done
+
+        local img_in="$work_dir/${boot_part}.img"
+        cp "$boot_img" "$img_in" || ux_abort "Cannot copy boot image to patch work dir"
+
+        log_exec "magisk_boot_patch" \
+            env TMPDIR="$work_dir" \
+                KEEPVERITY="$KEEPVERITY" \
+                KEEPFORCEENCRYPT="$KEEPFORCEENCRYPT" \
+                PATCHVBMETAFLAG="$PATCHVBMETAFLAG" \
+                RECOVERYMODE="$RECOVERYMODE" \
+                LEGACYSAR="$LEGACYSAR" \
+            sh "$work_dir/boot_patch.sh" "$img_in"
+        patch_rc=$?
+
+        # boot_patch.sh writes new-boot.img into TMPDIR (work_dir)
+        for f in "$work_dir/new-boot.img" "$work_dir"/magisk_patched_*.img; do
             [ -f "$f" ] && { found_patched="$f"; break; }
         done
-        [ -n "$found_patched" ] && break
-    done << EOF
+        [ -n "$found_patched" ] && mv "$found_patched" "$patched_img"
+        rm -rf "$work_dir"
+
+    else
+        # ── Fallback: magisk --boot-patch (older / rooted builds) ────
+        log_warn "magiskboot/boot_patch.sh not found — falling back to magisk --boot-patch"
+        local tmp_input="$magisk_out_dir/boot_magisk_${boot_part}_in_${RUN_ID:-$$}.img"
+        cp "$boot_img" "$tmp_input" 2>/dev/null || \
+            ux_abort "Could not copy boot image to staging dir: $magisk_out_dir"
+
+        log_exec "magisk_boot_patch" \
+            env TMPDIR="$magisk_out_dir" "$magisk_bin" --boot-patch "$tmp_input"
+        patch_rc=$?
+
+        for f in "$magisk_out_dir"/magisk_patched_*.img; do
+            [ -f "$f" ] && { found_patched="$f"; break; }
+        done
+        while [ -z "$found_patched" ] && IFS= read -r search_dir; do
+            [ -n "$search_dir" ] || continue
+            [ "$search_dir" = "$magisk_out_dir" ] && continue
+            for f in "$search_dir"/magisk_patched_*.img; do
+                [ -f "$f" ] && { found_patched="$f"; break; }
+            done
+            [ -n "$found_patched" ] && break
+        done << EOF
 $stage_dir_candidates
 EOF
-
-    [ -n "$found_patched" ] && log_info "Magisk patched output found: $found_patched"
-
-    if [ -z "$found_patched" ] || [ ! -f "$found_patched" ]; then
+        if [ -n "$found_patched" ]; then
+            mv "$found_patched" "$patched_img"
+        fi
         rm -f "$tmp_input"
-        ux_abort "Magisk patch produced no output image (rc=$patch_rc). Check logs at $LOG_DIR."
     fi
 
-    mv "$found_patched" "$patched_img"
-    rm -f "$tmp_input"
+    [ -f "$patched_img" ] && log_info "Magisk patched output: $patched_img"
+
+    if [ ! -f "$patched_img" ]; then
+        ux_abort "Magisk patch produced no output image (rc=$patch_rc). Check logs at $LOG_DIR."
+    fi
 
     # ── 5. Validate patched image ─────────────────────────────
 
