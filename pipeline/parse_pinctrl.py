@@ -149,8 +149,12 @@ def main() -> None:
     pinctrl_root = dump / "sys" / "kernel" / "debug" / "pinctrl"
 
     if not pinctrl_root.exists():
-        print(f"pinctrl directory not found: {pinctrl_root}", file=sys.stderr)
-        sys.exit(1)
+        print(
+            f"pinctrl directory not found: {pinctrl_root}\n"
+            "  (pinctrl data is only collected when root is available — skipping)",
+            file=sys.stderr,
+        )
+        sys.exit(0)
 
     db = sqlite3.connect(args.db)
     schema = Path(__file__).parent.parent / "schema" / "hardware_map.sql"

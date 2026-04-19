@@ -1116,7 +1116,8 @@ script_completion_failure() {
             echo "  Verify --db/--dump/--run-id and that dump contains getprop.txt plus vendor/system XML trees." ;;
         pipeline/parse_pinctrl.py)
             echo "Pinctrl parsing failed."
-            echo "  Verify --db/--dump/--run-id and that dump has sys/kernel/debug/pinctrl/." ;;
+            echo "  pinctrl data is only collected when root is available during hardware collection."
+            echo "  If the dump lacks sys/kernel/debug/pinctrl/, re-run with root or skip this step." ;;
         pipeline/parse_symbols.py)
             echo "Symbol parsing failed."
             echo "  Verify --db/--dump/--run-id and that dump has vendor_symbols/*.nm.txt." ;;
