@@ -295,7 +295,8 @@ EOF
     local patch_rc=$?
 
     # Locate the patched output
-    local found_patched="" f
+    local found_patched=""
+    local f
     for f in "$magisk_out_dir"/magisk_patched_*.img; do
         [ -f "$f" ] && { found_patched="$f"; break; }
     done
@@ -305,6 +306,7 @@ EOF
         for f in "$search_dir"/magisk_patched_*.img; do
             [ -f "$f" ] && { found_patched="$f"; break; }
         done
+        [ -n "$found_patched" ] && break
     done << EOF
 $stage_dir_candidates
 EOF
