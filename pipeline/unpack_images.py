@@ -706,7 +706,9 @@ def process_image(img_path: Path, dump: Path, run_id: int,
 
     print(f"    ↳ ramdisk decompressed: {len(cpio_data)} bytes")
 
-    safe_stem = "".join(ch if (ch.isalnum() or ch in "._-") else "_" for ch in img_path.stem)
+    safe_stem = "".join(ch if ch.isalnum() else "_" for ch in img_path.stem)
+    if not safe_stem:
+        safe_stem = "image"
 
     # Extract CPIO
     out_dir = dump / "ramdisk" / safe_stem
@@ -764,11 +766,11 @@ def find_images(dump: Path) -> list[Path]:
 
     search_dirs: list[Path] = [dump / "partitions", dump / "boot_images", dump]
 
-    # Option 20 discovery fallback: if dump is ~/hands-on-metal/live_dump,
-    # also look in option-5 extraction paths under ~/hands-on-metal/boot_work/.
-    if dump.name == "live_dump":
-        hom_root = dump.parent
-        search_dirs.extend([hom_root / "boot_work" / "partitions", hom_root / "boot_work"])
+    # Option 20 discovery fallback: also check option-5 extraction paths
+    # under a sibling boot_work directory when available.
+    sibling_boot_work = dump.parent / "boot_work"
+    if sibling_boot_work != dump:
+        search_dirs.extend([sibling_boot_work / "partitions", sibling_boot_work])
 
     # Optional explicit boot_work override for custom layouts.
     boot_work_env = os.environ.get("HOM_BOOT_WORK_DIR")

@@ -517,6 +517,8 @@ if [ -d "$BOOT_WORK_ROOT" ]; then
             echo "boot_images/$dest_name" >> "$MANIFEST"
             imported_count=$((imported_count + 1))
             log "  imported fallback image: $dest_name"
+        elif [ ! -s "$dest" ]; then
+            log "  [WARN ] failed to import fallback image: $src"
         fi
     done
 
@@ -530,6 +532,8 @@ if [ -d "$BOOT_WORK_ROOT" ]; then
                 echo "partitions/$base" >> "$MANIFEST"
                 imported_count=$((imported_count + 1))
                 log "  imported partition image: $base"
+            elif [ ! -s "$part_dst" ]; then
+                log "  [WARN ] failed to import partition image: $src"
             fi
 
             # Keep common boot-chain images in boot_images/ too for compatibility
@@ -539,6 +543,8 @@ if [ -d "$BOOT_WORK_ROOT" ]; then
                     if [ ! -s "$boot_dst" ] && cp -p "$src" "$boot_dst" 2>/dev/null; then
                         echo "boot_images/$base" >> "$MANIFEST"
                         imported_count=$((imported_count + 1))
+                    elif [ ! -s "$boot_dst" ]; then
+                        log "  [WARN ] failed to mirror partition image into boot_images/: $src"
                     fi
                     ;;
             esac
