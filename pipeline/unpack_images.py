@@ -53,6 +53,7 @@ import argparse
 import hashlib
 import io
 import os
+import re
 import sqlite3
 import struct
 import subprocess
@@ -485,7 +486,82 @@ TARGET_NAMES = {
     "prop.default", "build.prop",
 }
 TARGET_PREFIXES = ("init.", "ueventd.", "fstab.", "lib/modules/")
-TARGET_SUFFIXES = (".rc", ".prop", ".fstab", ".ko", ".so")
+TARGET_SUFFIXES = (".rc", ".prop", ".fstab", ".ko", ".so", ".pb")
+
+# ── .pb (protobuf) bare-metal value extractor ────────────────────────────────
+# Maps filename substrings → sysconfig category key prefix.
+_PB_CATEGORY: list[tuple[str, str]] = [
+    ("pwrctrl",   "pwrctrl"),
+    ("power",     "pwrctrl"),
+    ("pmu",       "pwrctrl"),
+    ("pin",       "pins"),
+    ("gpio",      "pins"),
+    ("reg",       "reg"),
+    ("regulator", "reg"),
+    ("device",    "deviceinfo"),
+    ("hardware",  "deviceinfo"),
+    ("board",     "deviceinfo"),
+]
+
+_PB_HEX_RE    = re.compile(r"0x[0-9a-fA-F]{4,}")
+_PB_PIN_RE    = re.compile(r"\bgp[phabn]\d+[-_]?\d*\b|\bgpio\d+\b", re.IGNORECASE)
+_PB_PWR_RE    = re.compile(r"\bpd_\w+\b|\bpwrctrl\b|\bpmic\w*\b", re.IGNORECASE)
+_PB_COMPAT_RE = re.compile(r"\b[\w]{2,},[\w-]+\b")
+
+
+def _ingest_pb_file(pb_path: Path, src_path: str, run_id: int,
+                    cur: sqlite3.Cursor) -> None:
+    """Extract bare-metal values from a binary .pb protobuf file.
+
+    Reads the raw bytes, recovers printable ASCII strings ≥ 4 chars,
+    then filters for hardware-relevant patterns (register addresses,
+    pin identifiers, power domains, compatible strings) and stores up
+    to 64 results per file in sysconfig_entry so that export_postmarketos
+    and report.py can surface them.
+    """
+    try:
+        raw = pb_path.read_bytes()
+    except OSError:
+        return
+
+    stem = pb_path.stem.lower()
+    category = "ramdisk_pb"
+    for frag, cat in _PB_CATEGORY:
+        if frag in stem:
+            category = cat
+            break
+
+    # Recover printable ASCII strings (min 4 chars) from binary blob
+    strings: list[str] = []
+    buf: list[str] = []
+    for byte in raw:
+        ch = chr(byte)
+        if 0x20 <= byte < 0x7F:  # printable ASCII
+            buf.append(ch)
+        else:
+            if len(buf) >= 4:
+                strings.append("".join(buf))
+            buf.clear()
+    if len(buf) >= 4:
+        strings.append("".join(buf))
+
+    # Keep only hardware-relevant strings
+    hw_strings: list[str] = []
+    for s in strings:
+        if (_PB_HEX_RE.search(s) or _PB_PIN_RE.search(s)
+                or _PB_PWR_RE.search(s) or _PB_COMPAT_RE.search(s)):
+            hw_strings.append(s)
+
+    for i, val in enumerate(hw_strings[:64]):
+        key = f"pb.{category}.{pb_path.name}.{i}"
+        try:
+            cur.execute(
+                """INSERT OR IGNORE INTO sysconfig_entry
+                   (run_id, source, key, value) VALUES (?,?,?,?)""",
+                (run_id, src_path, key, val[:512]),
+            )
+        except sqlite3.Error:
+            pass
 
 
 def _want_file(name: str) -> bool:
@@ -895,6 +971,21 @@ def process_image(img_path: Path, dump: Path, run_id: int,
 
     print(f"    ↳ boot image v{img.version}, ramdisk={len(img.ramdisk_data)} bytes")
 
+    # Store bare-metal boot image values: kernel cmdline and page size
+    for sc_key, sc_val in (
+        ("boot.pagesize", str(img.page_size)),
+        ("boot.cmdline",  img.cmdline),
+    ):
+        if sc_val and sc_val != "0":
+            try:
+                cur.execute(
+                    """INSERT OR IGNORE INTO sysconfig_entry
+                       (run_id, source, key, value) VALUES (?,?,?,?)""",
+                    (run_id, f"image:{image_rel}", sc_key, sc_val),
+                )
+            except sqlite3.Error:
+                pass
+
     if not img.ramdisk_data:
         result["status"] = "no_ramdisk"
         return result
@@ -919,9 +1010,10 @@ def process_image(img_path: Path, dump: Path, run_id: int,
     result["ramdisk_files"] = files
     print(f"    ↳ extracted {len(files)} relevant files to {out_dir.relative_to(dump)}/")
 
-    # Parse fstab files found in the ramdisk
+    # Parse fstab files and ingest .pb files found in the ramdisk
     for fname in files:
-        if "fstab" in fname.lower():
+        fname_lower = fname.lower()
+        if "fstab" in fname_lower:
             fpath = out_dir / fname.lstrip("/")
             if fpath.exists():
                 text = fpath.read_text(errors="replace")
@@ -929,6 +1021,10 @@ def process_image(img_path: Path, dump: Path, run_id: int,
                                 run_id, cur)
                 if n:
                     print(f"      fstab {fname}: {n} entries")
+        elif fname_lower.endswith(".pb"):
+            fpath = out_dir / fname.lstrip("/")
+            if fpath.exists():
+                _ingest_pb_file(fpath, f"ramdisk:{image_rel}/{fname}", run_id, cur)
 
     # Register extracted files in collected_file
     for fname in files:
