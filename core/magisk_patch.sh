@@ -33,7 +33,7 @@
 # shellcheck disable=SC2034  # consumed by core/logging.sh when sourced
 SCRIPT_NAME="magisk_patch"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-$HOME/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 BOOT_WORK_DIR="$OUT/boot_work"
 

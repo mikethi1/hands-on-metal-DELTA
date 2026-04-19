@@ -1849,7 +1849,7 @@ run_c3() {
     echo "  Next steps (on TARGET device):"
     echo "    1. TARGET reboots automatically after the installer finishes"
     echo "    2. On TARGET: open Magisk app → confirm root"
-    echo "    3. On TARGET: check /sdcard/hands-on-metal/ for hardware data"
+    echo "    3. On TARGET: check ~/hands-on-metal/ for hardware data"
     echo ""
 }
 

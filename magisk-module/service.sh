@@ -27,7 +27,7 @@ MODULE_DIR=/data/adb/modules/hands-on-metal-collector
 SENTINEL="$MODULE_DIR/.collected"
 CORE="$MODULE_DIR/core"
 
-OUT=/sdcard/hands-on-metal
+OUT="${HOME:-/data/local/tmp}/hands-on-metal"
 ENV_REGISTRY="$OUT/env_registry.sh"
 LOG_DIR="$OUT/logs"
 STATE_FILE="$MODULE_DIR/.install_state"

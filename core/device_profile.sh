@@ -17,7 +17,7 @@
 #   • Available boot partition block devices
 #
 # All results are written to:
-#   $ENV_REGISTRY  (/sdcard/hands-on-metal/env_registry.sh)
+#   $ENV_REGISTRY  (~/hands-on-metal/env_registry.sh)
 #
 # Requires: logging.sh, ux.sh sourced first.
 # ============================================================
@@ -25,7 +25,7 @@
 # shellcheck disable=SC2034  # consumed by core/logging.sh when sourced
 SCRIPT_NAME="device_profile"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-$HOME/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 PROFILE_REPORT="$OUT/device_profile.txt"
 

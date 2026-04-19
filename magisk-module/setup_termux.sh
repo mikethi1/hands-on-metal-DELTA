@@ -15,13 +15,13 @@
 #   5. Updates the env registry with new Termux paths
 #
 # Required packages configured in: REQUIRED_PACKAGES below.
-# All writes go to /sdcard/hands-on-metal/.
+# All writes go to $OUT/ (~/hands-on-metal/).
 # Never modifies /system or any read-only partition.
 # ============================================================
 
 set -u
 
-OUT=/sdcard/hands-on-metal
+OUT="${HOME:-/data/local/tmp}/hands-on-metal"
 ENV_REGISTRY="$OUT/env_registry.sh"
 LOG="$OUT/setup_termux.log"
 
@@ -150,7 +150,7 @@ if [ -z "$TERMUX_DATA_DIR" ]; then
 
     # Look for a Termux APK in the sdcard drop zone
     TERMUX_APK=""
-    for f in "$OUT/termux.apk" /sdcard/termux.apk /sdcard/Download/termux*.apk; do
+    for f in "$OUT/termux.apk" "$HOME/Downloads/termux.apk" "$HOME/storage/downloads/termux.apk"; do
         [ -f "$f" ] && { TERMUX_APK="$f"; break; }
     done
 
@@ -162,7 +162,7 @@ if [ -z "$TERMUX_DATA_DIR" ]; then
             log "pm install failed — Termux setup will be incomplete"
         fi
     else
-        log "No Termux APK found at $OUT/termux.apk or /sdcard/Download/termux*.apk"
+        log "No Termux APK found at $OUT/termux.apk or ~/Downloads/termux.apk"
         log "Drop a Termux APK (F-Droid build) to $OUT/termux.apk and rerun"
         reg_set termux HOM_TERMUX_INSTALLED "false"
         reg_set termux HOM_TERMUX_INSTALL_ERROR "no_apk_found"

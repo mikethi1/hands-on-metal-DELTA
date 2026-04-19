@@ -12,7 +12,7 @@
 #      board files, .pb configs, deviceconfig XMLs, fstab, and
 #      any other files reachable only in recovery context
 #   3. Write every discovered value into the flat env registry
-#      at $ENV_REGISTRY (/sdcard/hands-on-metal/env_registry.sh)
+#      at $ENV_REGISTRY (~/hands-on-metal/env_registry.sh)
 #      so the Magisk module (Mode A) and pipeline (Mode C) can
 #      cross-reference them
 #   4. Collect raw binary artefacts (dtbo.img, recovery.img,
@@ -20,14 +20,14 @@
 #
 # Safety guarantees:
 #   • All partition mounts are read-only
-#   • Never writes outside /sdcard/hands-on-metal/
+#   • Never writes outside $OUT/
 #   • Umounts every partition it mounts before exit
 # ============================================================
 
 set -u
 
-OUT=/sdcard/hands-on-metal/recovery_dump
-ENV_REGISTRY=/sdcard/hands-on-metal/env_registry.sh
+OUT="${HOME:-/tmp}/hands-on-metal/recovery_dump"
+ENV_REGISTRY="${HOME:-/tmp}/hands-on-metal/env_registry.sh"
 LOG=$OUT/collect_recovery.log
 MANIFEST=$OUT/recovery_manifest.txt
 

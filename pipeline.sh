@@ -4,12 +4,12 @@
 # hands-on-metal — Complete Host-Side Pipeline Workflow (root entrypoint)
 #
 # After the device has booted with the patched image and finished
-# collecting hardware data into /sdcard/hands-on-metal/, this
+# collecting hardware data into ~/hands-on-metal/, this
 # script pulls the artefacts back to the host and runs the
 # Python pipeline end-to-end:
 #
-#   1. adb pull /sdcard/hands-on-metal/logs/      → ./logs/
-#   2. adb pull /sdcard/hands-on-metal/live_dump/ → ./live_dump/
+#   1. adb pull ~/hands-on-metal/logs/      → ./logs/
+#   2. adb pull ~/hands-on-metal/live_dump/ → ./live_dump/
 #   3. python pipeline/parse_logs.py --log ./logs --out ./parsed.json
 #
 # (Optional) When --mode A|B|C is supplied, also runs:
@@ -97,12 +97,12 @@ if [ "$SKIP_PULL" = false ]; then
 
     echo "→ Pulling logs from device..."
     mkdir -p logs live_dump
-    "${ADB[@]}" pull /sdcard/hands-on-metal/logs/      ./logs/      || {
-        echo "ERROR: adb pull of /sdcard/hands-on-metal/logs/ failed." >&2
+    "${ADB[@]}" pull ~/hands-on-metal/logs/      ./logs/      || {
+        echo "ERROR: adb pull of ~/hands-on-metal/logs/ failed." >&2
         echo "       Is the device connected and authorised?" >&2
         exit 1
     }
-    "${ADB[@]}" pull /sdcard/hands-on-metal/live_dump/ ./live_dump/ || {
+    "${ADB[@]}" pull ~/hands-on-metal/live_dump/ ./live_dump/ || {
         echo "  ⚠  Could not pull live_dump/ (it may not exist yet — collection may still be running)."
     }
 else

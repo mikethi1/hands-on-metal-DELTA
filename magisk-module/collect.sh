@@ -4,7 +4,7 @@
 # ============================================================
 # Hands-on-metal — Hardware Data Collection (root-adaptive)
 # Collects all hardware-relevant data READ-ONLY into
-# /sdcard/hands-on-metal/live_dump/ then writes a manifest so
+# ~/hands-on-metal/live_dump/ then writes a manifest so
 # the host-side pipeline knows what is available.
 #
 # Root-adaptive behaviour:
@@ -17,16 +17,16 @@
 #
 # Safety guarantees:
 #   • Never mounts any partition read-write
-#   • Never writes outside /sdcard/hands-on-metal/
+#   • Never writes outside $OUT/
 #   • Skips unreadable paths gracefully
 # ============================================================
 
 set -u
 
-OUT=/sdcard/hands-on-metal/live_dump
+OUT="${HOME:-/data/local/tmp}/hands-on-metal/live_dump"
 LOG=$OUT/collect.log
 MANIFEST=$OUT/manifest.txt
-ENV_REGISTRY=/sdcard/hands-on-metal/env_registry.sh
+ENV_REGISTRY="${HOME:-/data/local/tmp}/hands-on-metal/env_registry.sh"
 
 # ── helpers ──────────────────────────────────────────────────
 

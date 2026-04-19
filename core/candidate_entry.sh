@@ -15,12 +15,12 @@
 # Requires: logging.sh, ux.sh, privacy.sh sourced first.
 #
 # Outputs:
-#   /sdcard/hands-on-metal/candidates/<brand>_<device>_api<N>_<RUN_ID>.json
+#   ~/hands-on-metal/candidates/<brand>_<device>_api<N>_<RUN_ID>.json
 # ============================================================
 
 SCRIPT_NAME="${SCRIPT_NAME:-candidate_entry}"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-$HOME/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 CANDIDATE_DIR="$OUT/candidates"
 _HOM_RESOLVED_ROOT="${REPO_ROOT:-${MODPATH:-}}"

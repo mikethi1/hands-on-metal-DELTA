@@ -3,7 +3,7 @@
 # shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Write a local shareable bundle of non-PII hardware/install
-# variables to /sdcard/hands-on-metal/share/<RUN_ID>/.
+# variables to ~/hands-on-metal/share/<RUN_ID>/.
 #
 # This is the DEFAULT sharing mode — no network, no GitHub token,
 # no authentication required.  Works straight from the repo.
@@ -27,7 +27,7 @@
 
 SCRIPT_NAME="${SCRIPT_NAME:-share}"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-$HOME/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 LOG_DIR="${LOG_DIR:-$OUT/logs}"
 SHARE_DIR="$OUT/share/${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"

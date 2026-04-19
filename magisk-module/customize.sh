@@ -24,7 +24,7 @@ set -u
 
 MODPATH="${MODPATH:-/data/adb/modules/hands-on-metal-collector}"
 CORE="$MODPATH/core"
-OUT="/sdcard/hands-on-metal"
+OUT="${HOME:-/data/local/tmp}/hands-on-metal"
 ENV_REGISTRY="$OUT/env_registry.sh"
 STATE_FILE="$MODPATH/.install_state"
 LOG_DIR="$OUT/logs"
@@ -178,7 +178,7 @@ ux_print "  The device will reboot momentarily."
 ux_print ""
 ux_print "  After reboot:"
 ux_print "    1. Open Magisk app → confirm root"
-ux_print "    2. Hardware collection logs: /sdcard/hands-on-metal/"
+ux_print "    2. Hardware collection logs: ~/hands-on-metal/"
 ux_print "    3. Full install log: $LOG_DIR/"
 ux_print ""
 

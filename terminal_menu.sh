@@ -35,7 +35,7 @@ source "$REPO_ROOT/check_deps.sh" || exit 1
 # device_profile.sh writes HOM_DEV_* variables (build ID, boot
 # partition type, codename, etc.) to this file.  Sourcing it
 # makes that context available for display in the menu.
-_HOM_ENV_REGISTRY="/sdcard/hands-on-metal/env_registry.sh"
+_HOM_ENV_REGISTRY="$HOME/hands-on-metal/env_registry.sh"
 load_env_registry() {
     if [ -f "$_HOM_ENV_REGISTRY" ]; then
         # shellcheck disable=SC1090
@@ -119,7 +119,7 @@ prereq_label() {
         boot_image)       echo "boot image (root DD / backup / GKI / factory / manual)" ;;
         magisk_binary)    echo "Magisk binary" ;;
         device_profile)   echo "device profile (core/device_profile.sh)" ;;
-        env_registry)     echo "environment registry (/sdcard/hands-on-metal/env_registry.sh)" ;;
+        env_registry)     echo "environment registry ($HOME/hands-on-metal/env_registry.sh)" ;;
         android_device)   echo "Android device environment" ;;
         partition_index)  echo "partition index (build/partition_index.json)" ;;
         schema)           echo "database schema (schema/hardware_map.sql)" ;;
@@ -159,7 +159,7 @@ _boot_image_obtainable() {
     # 4. Pre-placed images in standard locations
     local _bpd
     for _bpd in \
-        /sdcard/hands-on-metal/boot_work \
+        $HOME/hands-on-metal/boot_work \
         /sdcard/Download \
         /sdcard \
         /data/local/tmp; do
@@ -222,12 +222,12 @@ check_prereq() {
                 || [ -x "/data/adb/magisk/magisk32" ] 2>/dev/null \
                 || [ -x "$REPO_ROOT/tools/magisk64" ] 2>/dev/null \
                 || [ -x "$REPO_ROOT/tools/magisk32" ] 2>/dev/null \
-                || [ -x "${OUT:-/sdcard/hands-on-metal}/tools/magisk64" ] 2>/dev/null \
-                || [ -x "${OUT:-/sdcard/hands-on-metal}/tools/magisk32" ] 2>/dev/null ;;
+                || [ -x "${OUT:-$HOME/hands-on-metal}/tools/magisk64" ] 2>/dev/null \
+                || [ -x "${OUT:-$HOME/hands-on-metal}/tools/magisk32" ] 2>/dev/null ;;
         device_profile)
             [ -n "${HOM_DEV_MODEL:-}" ] ;;
         env_registry)
-            [ -f "/sdcard/hands-on-metal/env_registry.sh" ] 2>/dev/null ;;
+            [ -f "$HOME/hands-on-metal/env_registry.sh" ] 2>/dev/null ;;
         android_device)
             [ -n "$(getprop ro.build.display.id 2>/dev/null || true)" ] \
                 || [ -d "/data/data/com.termux" ] 2>/dev/null ;;
@@ -348,7 +348,7 @@ is_already_done() {
         core/flash.sh)
             [ "${HOM_FLASH_STATUS:-}" = "OK" ] 2>/dev/null ;;
         magisk-module/env_detect.sh)
-            [ -f "/sdcard/hands-on-metal/env_registry.sh" ] 2>/dev/null ;;
+            [ -f "$HOME/hands-on-metal/env_registry.sh" ] 2>/dev/null ;;
         *)
             return 1 ;;
     esac
@@ -442,7 +442,7 @@ refresh_status() {
     # the menu — but they do persist these vars to env_registry.sh.
     # Sourcing it here lets is_already_done / check_prereq see the state
     # set by previously-run scripts (e.g. HOM_DEV_MODEL after option 4).
-    local _reg="${ENV_REGISTRY:-${OUT:-/sdcard/hands-on-metal}/env_registry.sh}"
+    local _reg="${ENV_REGISTRY:-${OUT:-$HOME/hands-on-metal}/env_registry.sh}"
     if [ -f "$_reg" ]; then
         # shellcheck source=/dev/null
         . "$_reg" 2>/dev/null || true
@@ -802,7 +802,7 @@ script_completion_success() {
             ;;
         magisk-module/env_detect.sh)
             echo "Detected the device environment (shell, tools, Python, Termux)."
-            echo "  • Results saved to /sdcard/hands-on-metal/env_registry.sh."
+            echo "  • Results saved to $HOME/hands-on-metal/env_registry.sh."
             ;;
         magisk-module/service.sh)
             echo "Boot service executed: environment detection, Termux setup, and data collection."
@@ -991,7 +991,7 @@ script_next_steps() {
         build/host_flash.sh)
             echo "  → After device reboots: open Magisk app to confirm root."
             echo "  → If using C2 (direct flash): install the Magisk module ZIP via Magisk app."
-            echo "  → Pull logs: adb pull /sdcard/hands-on-metal/logs/ ./hom-logs/"
+            echo "  → Pull logs: adb pull ~/hands-on-metal/logs/ ./hom-logs/"
             ;;
         core/anti_rollback.sh)
             echo "  → If no rollback risk was found, proceed to flash (core/flash.sh)."
@@ -1218,7 +1218,7 @@ run_exit_log_upload() {
     # housekeeping to abort the script half-way through.
     set +eu
 
-    local out_dir="${OUT:-/sdcard/hands-on-metal}"
+    local out_dir="${OUT:-$HOME/hands-on-metal}"
     local reg="${ENV_REGISTRY:-$out_dir/env_registry.sh}"
     local upload_py="$REPO_ROOT/pipeline/upload.py"
 
