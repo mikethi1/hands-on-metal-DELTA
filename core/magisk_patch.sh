@@ -311,6 +311,8 @@ EOF
 $stage_dir_candidates
 EOF
 
+    [ -n "$found_patched" ] && log_info "Magisk patched output found: $found_patched"
+
     if [ -z "$found_patched" ] || [ ! -f "$found_patched" ]; then
         rm -f "$tmp_input"
         ux_abort "Magisk patch produced no output image (rc=$patch_rc). Check logs at $LOG_DIR."
