@@ -72,6 +72,7 @@ SCRIPT_NAME="boot_image"
 OUT="${OUT:-$HOME/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 BOOT_WORK_DIR="$OUT/boot_work"
+OPTION5_PARTITIONS_DIR="${OPTION5_PARTITIONS_DIR:-$BOOT_WORK_DIR/partitions}"
 _HOM_RESOLVED_ROOT="${REPO_ROOT:-${MODPATH:-}}"
 if [ -n "$_HOM_RESOLVED_ROOT" ]; then
     PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_RESOLVED_ROOT/build/partition_index.json}"
@@ -761,7 +762,7 @@ _extract_all_partitions_from_inner_zip() {
     # $1 = path to inner image-*.zip
     # $2 = optional output directory for extracted partition images
     local inner_zip_path="$1"
-    local part_dir="${2:-$BOOT_WORK_DIR/partitions}"
+    local part_dir="${2:-$OPTION5_PARTITIONS_DIR}"
     [ -f "$inner_zip_path" ] || return 1
     _has_cmd unzip || return 1
 
@@ -936,7 +937,7 @@ _download_factory_boot_image() {
     _reg_set boot HOM_OPTION5_INNER_ZIP_PATH "$inner_zip_path"
 
     # Step 2: extract boot.img or init_boot.img from inner ZIP
-    local partitions_dir="$BOOT_WORK_DIR/partitions"
+    local partitions_dir="$OPTION5_PARTITIONS_DIR"
     if unzip -joq "$inner_zip_path" "${boot_part}.img" \
             -d "$extract_dir" 2>/dev/null; then
         local target_img="$extract_dir/${boot_part}.img"
