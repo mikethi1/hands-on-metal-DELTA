@@ -1091,7 +1091,7 @@ def _extract_nested_archives(roots: list[Path], cache_root: Path) -> list[Path]:
 
             try:
                 st = candidate.stat()
-                digest_src = f"{akey}:{st.st_size}"
+                digest_src = f"{akey}:{st.st_size}:{st.st_dev}:{st.st_ino}"
             except OSError:
                 digest_src = akey
             digest = hashlib.sha256(digest_src.encode("utf-8", errors="replace")).hexdigest()[:24]
@@ -1219,9 +1219,7 @@ def find_images(dump: Path) -> list[Path]:
             continue
         # Also recursively discover *.img candidates.
         for img in sorted(search_dir.rglob("*.img")):
-            if img.name in IMAGE_NAMES:
-                _add(img)
-            elif any(n in img.name for n in ("boot", "recovery", "ramdisk")):
+            if img.name in IMAGE_NAMES or any(n in img.name for n in ("boot", "recovery", "ramdisk")):
                 _add(img)
         # Decompress .gz / .lz4 compressed backups found during the fallback
         # search (e.g. TWRP .win.gz, Samsung boot.img.lz4).  The decompressed
