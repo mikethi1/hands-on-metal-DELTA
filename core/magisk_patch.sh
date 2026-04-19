@@ -69,21 +69,13 @@ _sha256() {
 
 _dir_writable() {
     local dir="$1"
-    local probe="$dir/.hom_write_probe_$$"
+    local probe="$dir/.boot_magisk_write_probe_$$"
     [ -n "$dir" ] || return 1
     mkdir -p "$dir" 2>/dev/null || true
     [ -d "$dir" ] || return 1
     : > "$probe" 2>/dev/null || return 1
     rm -f "$probe" 2>/dev/null || true
     return 0
-}
-
-_pick_writable_dir() {
-    local dir
-    for dir in "$@"; do
-        _dir_writable "$dir" && { echo "$dir"; return 0; }
-    done
-    return 1
 }
 
 # Locate the best available Magisk binary.
@@ -269,18 +261,31 @@ passing AVB verification through the correct flags"
 
     ux_print "  Running Magisk patch (this may take 30–60 seconds)..."
 
-    local magisk_out_dir
-    magisk_out_dir=$(_pick_writable_dir \
+    local stage_dir_candidates
+    stage_dir_candidates=$(printf '%s\n' \
         "/data/local/tmp" \
         "${TMPDIR:-}" \
         "$BOOT_WORK_DIR" \
         "${HOME:-}/tmp" \
-        "${PWD:-.}") || \
-        ux_abort "No writable staging directory available for Magisk patching."
+        "${PWD:-.}")
+
+    local search_dir
+    local magisk_out_dir
+    magisk_out_dir=""
+    while IFS= read -r search_dir; do
+        [ -n "$search_dir" ] || continue
+        if _dir_writable "$search_dir"; then
+            magisk_out_dir="$search_dir"
+            break
+        fi
+    done << EOF
+$stage_dir_candidates
+EOF
+    [ -n "$magisk_out_dir" ] || ux_abort "No writable staging directory available for Magisk patching."
     ux_print "  Magisk staging dir: $magisk_out_dir"
 
     # Copy input to a writable staging directory where Magisk can access it
-    local tmp_input="$magisk_out_dir/hom_${boot_part}_in_${RUN_ID:-$$}.img"
+    local tmp_input="$magisk_out_dir/boot_magisk_${boot_part}_in_${RUN_ID:-$$}.img"
     cp "$boot_img" "$tmp_input" 2>/dev/null || \
         ux_abort "Could not copy boot image to staging dir: $magisk_out_dir"
 
@@ -290,14 +295,19 @@ passing AVB verification through the correct flags"
     local patch_rc=$?
 
     # Locate the patched output
-    local found_patched="" f search_dir
-    for search_dir in "$magisk_out_dir" "/data/local/tmp" "$BOOT_WORK_DIR" "${TMPDIR:-}" "${PWD:-.}"; do
+    local found_patched="" f
+    for f in "$magisk_out_dir"/magisk_patched_*.img; do
+        [ -f "$f" ] && { found_patched="$f"; break; }
+    done
+    while [ -z "$found_patched" ] && IFS= read -r search_dir; do
         [ -n "$search_dir" ] || continue
+        [ "$search_dir" = "$magisk_out_dir" ] && continue
         for f in "$search_dir"/magisk_patched_*.img; do
             [ -f "$f" ] && { found_patched="$f"; break; }
         done
-        [ -n "$found_patched" ] && break
-    done
+    done << EOF
+$stage_dir_candidates
+EOF
 
     if [ -z "$found_patched" ] || [ ! -f "$found_patched" ]; then
         rm -f "$tmp_input"
