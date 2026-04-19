@@ -996,7 +996,8 @@ def _safe_extract_zip(src: Path, out_dir: Path) -> bool:
                 if member.create_system == 3:  # Unix
                     mode = (member.external_attr >> 16) & 0xFFFF
                     # ZIP external_attr stores Unix mode bits in the upper
-                    # 16 bits. 0o170000 masks file type; 0o120000=symlink.
+                    # 16 bits. 0o170000 = S_IFMT (file type mask);
+                    # 0o120000 = S_IFLNK (symlink file type).
                     if (mode & 0o170000) == 0o120000:
                         continue
                 rel = Path(member.filename)
