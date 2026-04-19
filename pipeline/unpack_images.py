@@ -31,10 +31,20 @@ Usage:
   python pipeline/unpack_images.py --db hardware_map.sqlite \\
       --dump /path/to/dump --run-id 1
 
-The script auto-discovers boot.img / vendor_boot.img inside:
-  <dump_dir>/partitions/   (Mode B recovery images)
-  <dump_dir>/boot_images/  (explicit location)
-  <dump_dir>/              (fallback)
+Image discovery order (first match wins per path):
+  1. HOM_BOOT_IMG_PATH from the live environment or
+     ~/hands-on-metal/env_registry.sh (written by core/boot_image.sh,
+     option 5 — the canonical acquired image).
+  2. ~/hands-on-metal/boot_work/partitions/ and ~/hands-on-metal/boot_work/
+     (option-5 factory-ZIP extraction output, override via HOM_BOOT_WORK_DIR).
+  3. Fallback system search inside the --dump directory:
+       <dump_dir>/partitions/   (Mode B recovery images)
+       <dump_dir>/boot_images/  (explicit location)
+       <dump_dir>/              (fallback)
+
+Compressed backups (.win.gz, .win.lz4, .img.lz4) found in the fallback
+search are decompressed on the fly into boot_work/ so their resolved paths
+are known to all subsequent pipeline steps.
 """
 
 import argparse
@@ -42,6 +52,7 @@ import io
 import os
 import sqlite3
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -640,6 +651,122 @@ def _default_dump_dir() -> Path:
     return boot_work if boot_work.exists() else live_dump
 
 
+def _get_env_registry_val(key: str) -> str:
+    """Return the value of *key* from ~/hands-on-metal/env_registry.sh, or ''.
+
+    The registry uses lines of the form:
+        KEY="VALUE"  # cat:category
+    Written by core/* scripts via _reg_set().
+    """
+    reg = Path.home() / "hands-on-metal" / "env_registry.sh"
+    if not reg.exists():
+        return ""
+    try:
+        for line in reg.read_text(errors="replace").splitlines():
+            if not line.startswith(key + "="):
+                continue
+            rest = line[len(key) + 1:]          # everything after '='
+            if rest.startswith('"'):
+                return rest.split('"', 2)[1]    # value between first pair of "
+            return rest.split()[0]              # unquoted value (edge case)
+    except OSError:
+        pass
+    return ""
+
+
+def _decompress_image(src: Path, dest_dir: Path) -> "Path | None":
+    """Decompress a .gz or .lz4 compressed partition image into *dest_dir*.
+
+    Handles:
+      • .gz  — gzip (TWRP .win.gz, Samsung boot.img.gz)
+      • .lz4 — LZ4 framed (TWRP .win.lz4, Samsung boot.img.lz4)
+
+    The output filename strips the compression suffix and any TWRP
+    .emmc.win infix so the result looks like a plain *.img file.
+    The decompressed path is returned on success; None on failure.
+    The caller is responsible for adding the returned path to its
+    discovery list so it is visible to subsequent pipeline steps.
+    """
+    suffix = src.suffix.lower()
+    if suffix not in (".gz", ".lz4"):
+        return None
+
+    # Build a clean output filename.
+    stem = src.stem                         # drop last extension (.gz / .lz4)
+    for infix in (".emmc.win", ".emmc", ".win"):
+        if stem.endswith(infix):
+            stem = stem[: -len(infix)]
+            break
+    out_name = stem + ".img"
+
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"    ↳ cannot create decompression dir {dest_dir}: {exc}",
+              file=sys.stderr)
+        return None
+
+    out_path = dest_dir / out_name
+    print(f"    ↳ decompressing {suffix[1:].upper()} backup: "
+          f"{src.name} → {out_path}")
+
+    try:
+        if suffix == ".gz":
+            with gzip.open(str(src), "rb") as f_in, \
+                 open(str(out_path), "wb") as f_out:
+                while True:
+                    chunk = f_in.read(1 << 20)   # 1 MiB chunks
+                    if not chunk:
+                        break
+                    f_out.write(chunk)
+            return out_path
+
+        # .lz4 — prefer the Python binding; fall back to the lz4 CLI tool.
+        if _HAS_LZ4:
+            try:
+                with open(str(src), "rb") as f_in, \
+                     open(str(out_path), "wb") as f_out:
+                    ctx = _lz4_frame.LZ4FrameDecompressor()
+                    while True:
+                        chunk = f_in.read(1 << 20)
+                        if not chunk:
+                            break
+                        f_out.write(ctx.decompress(chunk))
+                return out_path
+            except Exception as lz4_err:
+                print(f"    ↳ lz4.frame failed: {lz4_err} — trying lz4 CLI",
+                      file=sys.stderr)
+                out_path.unlink(missing_ok=True)
+
+        # CLI fallback (lz4 tool from Termux / apt).
+        try:
+            with open(str(out_path), "wb") as f_out:
+                result = subprocess.run(
+                    ["lz4", "-dc", "--", str(src)],
+                    stdout=f_out, stderr=subprocess.PIPE,
+                    timeout=300,
+                )
+            if result.returncode == 0 and out_path.stat().st_size > 0:
+                return out_path
+            print(
+                "    ↳ lz4 CLI failed: "
+                + result.stderr.decode(errors="replace").strip(),
+                file=sys.stderr,
+            )
+            out_path.unlink(missing_ok=True)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+            print(f"    ↳ lz4 tool unavailable or timed out: {exc}",
+                  file=sys.stderr)
+            out_path.unlink(missing_ok=True)
+        return None
+
+    except OSError as exc:
+        print(f"    ↳ decompression failed for {src.name}: {exc}",
+              file=sys.stderr)
+        out_path.unlink(missing_ok=True)
+        return None
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # Main image processing pipeline
 # ════════════════════════════════════════════════════════════════════════════
@@ -762,23 +889,77 @@ IMAGE_NAMES = ("boot.img", "vendor_boot.img", "recovery.img",
 
 
 def find_images(dump: Path) -> list[Path]:
-    found: list[Path] = []
+    """Return an ordered, de-duplicated list of boot/recovery images to process.
 
+    Search priority (first wins per unique resolved path):
+
+    1. **Option-5 known image** — ``HOM_BOOT_IMG_PATH`` from the live
+       environment or ``env_registry.sh``.  This is the canonical image
+       acquired and validated by ``core/boot_image.sh`` (option 5).
+
+    2. **boot_work directory** — ``HOM_BOOT_WORK_DIR`` (env / registry) or
+       ``~/hands-on-metal/boot_work``.  Covers the single acquired image *and*
+       any additional partition images extracted from factory ZIPs by option 5
+       into ``boot_work/partitions/``.
+
+    3. **Fallback system search** inside *dump* (the ``--dump`` directory).
+       Compressed backups (``.win.gz``, ``.win.lz4``, ``.img.lz4``) found here
+       are decompressed into ``boot_work/`` on the fly so their resolved paths
+       are known to all subsequent pipeline steps.
+    """
+    found: list[Path] = []
+    _seen: set[str] = set()
+
+    def _add(p: Path) -> None:
+        try:
+            key = str(p.resolve())
+        except OSError:
+            key = str(p)
+        if key not in _seen and p.is_file() and p.stat().st_size > 0:
+            _seen.add(key)
+            found.append(p)
+
+    # ── Priority 1: image known from option-5 (HOM_BOOT_IMG_PATH) ──────────
+    # core/boot_image.sh writes this variable to env_registry.sh after every
+    # successful acquisition.  Check the live env first (same shell session),
+    # then the persisted registry (cross-session / re-invocation).
+    known_val = (
+        os.environ.get("HOM_BOOT_IMG_PATH")
+        or _get_env_registry_val("HOM_BOOT_IMG_PATH")
+    )
+    if known_val:
+        _add(Path(known_val))
+
+    # ── Priority 2: boot_work directory (option-5 output tree) ─────────────
+    # boot_work/partitions/ receives all images extracted from factory ZIPs
+    # via _extract_all_partitions_from_inner_zip().  boot_work/ itself holds
+    # the single acquired image (same as HOM_BOOT_IMG_PATH in most cases).
+    boot_work_val = (
+        os.environ.get("HOM_BOOT_WORK_DIR")
+        or _get_env_registry_val("HOM_BOOT_WORK_DIR")
+        or str(Path.home() / "hands-on-metal" / "boot_work")
+    )
+    boot_work = Path(boot_work_val)
+    for bw_dir in (boot_work / "partitions", boot_work):
+        if not bw_dir.exists():
+            continue
+        for name in IMAGE_NAMES:
+            c = bw_dir / name
+            if c.exists():
+                _add(c)
+        for img in sorted(bw_dir.glob("*.img")):
+            if any(n in img.name for n in ("boot", "recovery", "ramdisk")):
+                _add(img)
+
+    # ── Priority 3: fallback system search inside --dump ───────────────────
     search_dirs: list[Path] = [dump / "partitions", dump / "boot_images", dump]
 
-    # Option 20 discovery fallback: also check option-5 extraction paths
-    # under a sibling boot_work directory when available.
+    # Also check a sibling boot_work when dump is not already boot_work.
     sibling_boot_work = dump.parent / "boot_work"
-    if sibling_boot_work != dump:
+    if sibling_boot_work != boot_work:
         search_dirs.extend([sibling_boot_work / "partitions", sibling_boot_work])
 
-    # Optional explicit boot_work override for custom layouts.
-    boot_work_env = os.environ.get("HOM_BOOT_WORK_DIR")
-    if boot_work_env:
-        boot_work = Path(boot_work_env)
-        search_dirs.extend([boot_work / "partitions", boot_work])
-
-    # De-duplicate while preserving order.
+    # De-duplicate directories while preserving order.
     uniq_dirs: list[Path] = []
     seen_dirs: set[str] = set()
     for d in search_dirs:
@@ -795,13 +976,25 @@ def find_images(dump: Path) -> list[Path]:
         if not search_dir.exists():
             continue
         for name in IMAGE_NAMES:
-            candidate = search_dir / name
-            if candidate.exists():
-                found.append(candidate)
-        # Also glob for any *.img that matches
+            c = search_dir / name
+            if c.exists():
+                _add(c)
+        # Also glob for any *.img that matches.
         for img in sorted(search_dir.glob("*.img")):
-            if img not in found and any(n in img.name for n in ("boot", "recovery", "ramdisk")):
-                found.append(img)
+            if any(n in img.name for n in ("boot", "recovery", "ramdisk")):
+                _add(img)
+        # Decompress .gz / .lz4 compressed backups found during the fallback
+        # search (e.g. TWRP .win.gz, Samsung boot.img.lz4).  The decompressed
+        # image is written into boot_work/ so its location is persistently known
+        # alongside other option-5 output images.
+        for pattern in ("*.gz", "*.lz4"):
+            for comp in sorted(search_dir.glob(pattern)):
+                if any(n in comp.name
+                       for n in ("boot", "recovery", "ramdisk", ".win")):
+                    dec = _decompress_image(comp, boot_work)
+                    if dec is not None:
+                        _add(dec)
+
     return found
 
 
@@ -840,10 +1033,14 @@ def main() -> None:
         images = find_images(dump)
 
     if not images:
-        print("No boot images found.  Place boot.img / vendor_boot.img in "
-              f"{dump}/partitions/ or {dump}/boot_images/. "
-              "Preferred: run option 5 first; fallback paths are checked automatically.",
-              file=sys.stderr)
+        print(
+            "No boot images found.\n"
+            "  Option 5 (core/boot_image.sh) is the recommended way to acquire\n"
+            "  the boot image — run it first, then re-run this script.\n"
+            f"  Fallback search was: {dump}/partitions/, {dump}/boot_images/, {dump}/\n"
+            "  You can also use --image <path> to supply an image directly.",
+            file=sys.stderr,
+        )
         sys.exit(0)
 
     print(f"Processing {len(images)} image(s)...")
