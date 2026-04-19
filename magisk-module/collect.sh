@@ -479,6 +479,72 @@ else
     log "[SKIP ] Boot partition DD requires root"
 fi
 
+# 22. Reuse option-5 extracted images as fallback input
+# Option 5 (core/boot_image.sh) stores extracted images under:
+#   ~/hands-on-metal/boot_work/
+#   ~/hands-on-metal/boot_work/partitions/
+# Pull them into this dump so option 20 (unpack_images.py) can use both
+# the boot image and any additional extracted partition images.
+BOOT_WORK_ROOT="${HOME:-/data/local/tmp}/hands-on-metal/boot_work"
+if [ -d "$BOOT_WORK_ROOT" ]; then
+    log "Importing option-5 extracted images from $BOOT_WORK_ROOT (fallback source)..."
+    mkdir -p "$OUT/boot_images" "$OUT/partitions"
+
+    imported_count=0
+
+    # Single-image outputs from option 5 (prefer current collect output if present)
+    for src in \
+        "$BOOT_WORK_ROOT"/*_original.img \
+        "$BOOT_WORK_ROOT"/boot.img \
+        "$BOOT_WORK_ROOT"/init_boot.img \
+        "$BOOT_WORK_ROOT"/vendor_boot.img \
+        "$BOOT_WORK_ROOT"/recovery.img; do
+        [ -f "$src" ] || continue
+        base=$(basename "$src")
+        case "$base" in
+            *_original.img) dest_name="${base%_original.img}.img" ;;
+            *)              dest_name="$base" ;;
+        esac
+        dest="$OUT/boot_images/$dest_name"
+        if [ ! -s "$dest" ] && cp -p "$src" "$dest" 2>/dev/null; then
+            echo "boot_images/$dest_name" >> "$MANIFEST"
+            imported_count=$((imported_count + 1))
+            log "  imported fallback image: $dest_name"
+        fi
+    done
+
+    # Full partition-set extraction from option 5
+    if [ -d "$BOOT_WORK_ROOT/partitions" ]; then
+        for src in "$BOOT_WORK_ROOT"/partitions/*.img; do
+            [ -f "$src" ] || continue
+            base=$(basename "$src")
+            part_dst="$OUT/partitions/$base"
+            if [ ! -s "$part_dst" ] && cp -p "$src" "$part_dst" 2>/dev/null; then
+                echo "partitions/$base" >> "$MANIFEST"
+                imported_count=$((imported_count + 1))
+                log "  imported partition image: $base"
+            fi
+
+            # Keep common boot-chain images in boot_images/ too for compatibility
+            case "$base" in
+                boot.img|init_boot.img|vendor_boot.img|recovery.img)
+                    boot_dst="$OUT/boot_images/$base"
+                    if [ ! -s "$boot_dst" ] && cp -p "$src" "$boot_dst" 2>/dev/null; then
+                        echo "boot_images/$base" >> "$MANIFEST"
+                        imported_count=$((imported_count + 1))
+                    fi
+                    ;;
+            esac
+        done
+    fi
+
+    if [ "$imported_count" -gt 0 ]; then
+        log "Imported $imported_count fallback image file(s) from option-5 output."
+    else
+        log "No additional fallback images imported from option-5 output."
+    fi
+fi
+
 # ── Emit collection-path env vars to the shared registry ─────
 log "Updating env registry with collection paths..."
 reg_set path HOM_LIVE_DUMP_DIR "$(real_abs "$OUT")"

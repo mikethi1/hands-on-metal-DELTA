@@ -738,7 +738,32 @@ IMAGE_NAMES = ("boot.img", "vendor_boot.img", "recovery.img",
 
 def find_images(dump: Path) -> list[Path]:
     found: list[Path] = []
-    for search_dir in (dump / "partitions", dump / "boot_images", dump):
+
+    search_dirs: list[Path] = [dump / "partitions", dump / "boot_images", dump]
+
+    # Option 5 fallback: if dump is ~/hands-on-metal/live_dump, also look in
+    # ~/hands-on-metal/boot_work and ~/hands-on-metal/boot_work/partitions.
+    if dump.name == "live_dump":
+        hom_root = dump.parent
+        search_dirs.extend([hom_root / "boot_work" / "partitions", hom_root / "boot_work"])
+
+    # Optional explicit boot_work override for custom layouts.
+    boot_work_env = os.environ.get("HOM_BOOT_WORK_DIR")
+    if boot_work_env:
+        boot_work = Path(boot_work_env)
+        search_dirs.extend([boot_work / "partitions", boot_work])
+
+    # De-duplicate while preserving order.
+    uniq_dirs: list[Path] = []
+    seen_dirs: set[str] = set()
+    for d in search_dirs:
+        key = str(d.resolve()) if d.exists() else str(d)
+        if key in seen_dirs:
+            continue
+        seen_dirs.add(key)
+        uniq_dirs.append(d)
+
+    for search_dir in uniq_dirs:
         if not search_dir.exists():
             continue
         for name in IMAGE_NAMES:
@@ -760,9 +785,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description="Unpack Android boot/ramdisk images into the hardware_map database"
     )
-    ap.add_argument("--db",     required=True, help="Path to hardware_map.sqlite")
-    ap.add_argument("--dump",   required=True, help="Root of the collection dump directory")
-    ap.add_argument("--run-id", required=True, type=int, dest="run_id")
+    ap.add_argument("--db",     default="hardware_map.sqlite",
+                    help="Path to hardware_map.sqlite (default: ./hardware_map.sqlite)")
+    ap.add_argument("--dump",   default=os.path.expanduser("~/hands-on-metal/live_dump"),
+                    help="Root of the collection dump directory (default: ~/hands-on-metal/live_dump)")
+    ap.add_argument("--run-id", default=1, type=int, dest="run_id",
+                    help="Run ID for DB rows (default: 1)")
     ap.add_argument("--image",  default=None,
                     help="Explicit path to a single image file (skips auto-discovery)")
     args = ap.parse_args()
