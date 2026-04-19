@@ -593,6 +593,13 @@ print_suggestion_line() {
         fi
     fi
 }
+
+# Initialize cached status/suggestion data once before entering the menu loop.
+startup_scan() {
+    refresh_status
+    compute_suggestion
+}
+
 print_menu() {
     refresh_status
 
