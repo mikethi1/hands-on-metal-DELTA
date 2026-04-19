@@ -205,18 +205,18 @@ _extract_build_id_from_image() {
 
     # 1. ro.build.id=VALUE (prop.default / default.prop in the ramdisk)
     result=$(grep -a -m1 -o 'ro\.build\.id=[^[:space:][:cntrl:]/]*' \
-        "$file" 2>/dev/null | head -1 | sed 's/ro\.build\.id=//' || true)
+        "$file" 2>/dev/null | sed 's/ro\.build\.id=//' || true)
     [ -n "$result" ] && { echo "$result"; return 0; }
 
     # 2. ro.build.fingerprint=brand/product/device:ver/BUILD_ID/incr:type/keys
     #    The build ID is field 4 when split on '/'.
     result=$(grep -a -m1 -o 'ro\.build\.fingerprint=[^[:space:][:cntrl:]]*' \
-        "$file" 2>/dev/null | head -1 | cut -d/ -f4 || true)
+        "$file" 2>/dev/null | cut -d/ -f4 || true)
     [ -n "$result" ] && { echo "$result"; return 0; }
 
     # 3. Kernel command line: androidboot.buildid=VALUE
     result=$(grep -a -m1 -o 'androidboot\.buildid=[^[:space:]]*' \
-        "$file" 2>/dev/null | head -1 | sed 's/androidboot\.buildid=//' || true)
+        "$file" 2>/dev/null | sed 's/androidboot\.buildid=//' || true)
     [ -n "$result" ] && { echo "$result"; return 0; }
 
     echo ""
@@ -1148,8 +1148,8 @@ run_boot_image_acquire() {
 
             if [ "$_pp_accepted" -ne 0 ]; then
                 log_info "User declined image $pre_placed — searching for next candidate"
-                skipped_images="${skipped_images}${pre_placed}
-"
+                # Append path on its own line so _in_list can match it exactly.
+                skipped_images="$(printf '%s\n%s' "$skipped_images" "$pre_placed")"
                 continue
             fi
 
