@@ -123,6 +123,7 @@ fi
 if [ ! -f "$SENTINEL" ]; then
     if ! _service_preflight; then
         _ota_log "Aborting service run due to missing/unreadable prerequisites."
+        # shellcheck disable=SC2317  # exit path is used when script is executed (not sourced)
         return 1 2>/dev/null || exit 1
     fi
 
