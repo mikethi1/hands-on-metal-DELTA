@@ -55,6 +55,7 @@ import struct
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 # ── Optional compression library imports ────────────────────────────────────
 try:
@@ -72,6 +73,11 @@ except ImportError:
 import gzip
 import lzma
 import bz2
+
+# Timeout for the lz4 CLI decompression subprocess.  Large compressed images
+# (e.g. TWRP full-nandroid backups) can exceed 1 GiB; 5 minutes is generous
+# but avoids hanging forever on very slow storage.
+_DECOMPRESS_TIMEOUT = 300
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -667,14 +673,17 @@ def _get_env_registry_val(key: str) -> str:
                 continue
             rest = line[len(key) + 1:]          # everything after '='
             if rest.startswith('"'):
-                return rest.split('"', 2)[1]    # value between first pair of "
+                parts = rest.split('"', 2)
+                if len(parts) >= 2:
+                    return parts[1]             # value between first pair of "
+                return ""                       # malformed line — no closing quote
             return rest.split()[0]              # unquoted value (edge case)
     except OSError:
         pass
     return ""
 
 
-def _decompress_image(src: Path, dest_dir: Path) -> "Path | None":
+def _decompress_image(src: Path, dest_dir: Path) -> Optional[Path]:
     """Decompress a .gz or .lz4 compressed partition image into *dest_dir*.
 
     Handles:
@@ -744,7 +753,7 @@ def _decompress_image(src: Path, dest_dir: Path) -> "Path | None":
                 result = subprocess.run(
                     ["lz4", "-dc", "--", str(src)],
                     stdout=f_out, stderr=subprocess.PIPE,
-                    timeout=300,
+                    timeout=_DECOMPRESS_TIMEOUT,
                 )
             if result.returncode == 0 and out_path.stat().st_size > 0:
                 return out_path
@@ -956,7 +965,13 @@ def find_images(dump: Path) -> list[Path]:
 
     # Also check a sibling boot_work when dump is not already boot_work.
     sibling_boot_work = dump.parent / "boot_work"
-    if sibling_boot_work != boot_work:
+    try:
+        _sibling_resolved = sibling_boot_work.resolve()
+        _boot_work_resolved = boot_work.resolve()
+    except OSError:
+        _sibling_resolved = sibling_boot_work
+        _boot_work_resolved = boot_work
+    if _sibling_resolved != _boot_work_resolved:
         search_dirs.extend([sibling_boot_work / "partitions", sibling_boot_work])
 
     # De-duplicate directories while preserving order.
