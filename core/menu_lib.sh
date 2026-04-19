@@ -1113,7 +1113,7 @@ script_completion_failure() {
             echo "Log parsing failed. Verify Python 3 is installed." ;;
         pipeline/parse_manifests.py)
             echo "Manifest parsing failed."
-            echo "  Verify --db/--dump/--run-id and that dump contains XML/getprop data." ;;
+            echo "  Verify --db/--dump/--run-id and that dump contains getprop.txt plus vendor/system XML trees." ;;
         pipeline/parse_pinctrl.py)
             echo "Pinctrl parsing failed."
             echo "  Verify --db/--dump/--run-id and that dump has sys/kernel/debug/pinctrl/." ;;
@@ -1262,6 +1262,7 @@ run_selected() {
         _analysis="${HOM_FAILURE_ANALYSIS_PATH:-$_out/failure_analysis.json}"
         _run_id="${RUN_ID:-1}"
         _mode="${HOM_BUILD_MODE:-A}"
+        # Parsers expect integer run IDs; fallback to 1 when RUN_ID is timestamp-like.
         case "$_run_id" in ''|*[!0-9]*) _run_id=1 ;; esac
         case "$rel" in
             pipeline/parse_logs.py)
