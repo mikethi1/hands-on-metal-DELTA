@@ -135,10 +135,13 @@ fi
 # root. If option-5 output is absent (or execution is root), keep the existing
 # live-filesystem behavior.
 _HOM_OPTION5_IMG_COUNT=0
+_HOM_HAS_BOOT_WORK=false
 if [ -d "$BOOT_WORK_ROOT" ]; then
+    _HOM_HAS_BOOT_WORK=true
     _HOM_OPTION5_IMG_COUNT=$(find "$BOOT_WORK_ROOT" -maxdepth 1 -type f -name "*.img" 2>/dev/null | wc -l | tr -d ' ')
     if [ -d "$BOOT_WORK_ROOT/partitions" ]; then
-        _HOM_OPTION5_IMG_COUNT=$((_HOM_OPTION5_IMG_COUNT + $(find "$BOOT_WORK_ROOT/partitions" -maxdepth 1 -type f -name "*.img" 2>/dev/null | wc -l | tr -d ' ')))
+        _hom_partitions_img_count=$(find "$BOOT_WORK_ROOT/partitions" -maxdepth 1 -type f -name "*.img" 2>/dev/null | wc -l | tr -d ' ')
+        _HOM_OPTION5_IMG_COUNT=$((_HOM_OPTION5_IMG_COUNT + _hom_partitions_img_count))
     fi
 fi
 _HOM_USE_OPTION5_SOURCE=false
@@ -359,7 +362,7 @@ if [ "$_HOM_USE_OPTION5_SOURCE" = false ]; then
     copy_file /vendor/etc/selinux/plat_sepolicy_vers.txt
     copy_dir /vendor/etc/selinux
 else
-    log "[SKIP ] Live VINTF/sysconfig/permissions/SELinux filesystem scans (using option-5 source)"
+    log "[SKIP ] Live VINTF/sysconfig/.pb/permissions/RC/SELinux filesystem scans (using option-5 source)"
 fi
 
 # 16. Symbol lists from vendor libraries (text nm output, usually requires root)
@@ -506,7 +509,7 @@ fi
 #   ~/hands-on-metal/boot_work/partitions/
 # Pull them into this dump so option 20 (unpack_images.py) can use both
 # the boot image and any additional extracted partition images.
-if [ -d "$BOOT_WORK_ROOT" ]; then
+if [ "$_HOM_HAS_BOOT_WORK" = true ]; then
     log "Importing pre-extracted option-5 images from $BOOT_WORK_ROOT..."
     mkdir -p "$OUT/boot_images" "$OUT/partitions"
 
