@@ -20,7 +20,7 @@ Steps:
 Usage:
   python pipeline/build_table.py \\
       --db hardware_map.sqlite \\
-      --dump /path/to/live_dump \\
+      --dump /path/to/boot_work \\
       --mode A              # A | B | C
 
 After this completes, run:
@@ -486,6 +486,11 @@ def main() -> None:
                     help="Collection mode: A=live, B=recovery, C=shim")
     ap.add_argument("--shim-log", default=None,
                     help="Path to Mode C shim JSONL log (default: <dump>/hom_shim.jsonl)")
+    ap.add_argument("--pmos", action="store_true",
+                    help="After building the DB, run export_postmarketos.py to generate "
+                         "postmarketOS scaffold files in ./postmarketos_<codename>/")
+    ap.add_argument("--pmos-out", default=None,
+                    help="Output directory for --pmos export (default: ./postmarketos_<codename>/)")
     args = ap.parse_args()
 
     dump   = Path(args.dump)
@@ -563,6 +568,14 @@ def main() -> None:
     db.close()
     print(f"\nDone. Database: {db_path}")
     print("Run: python pipeline/report.py --db", db_path)
+
+    # Optional postmarketOS scaffold export
+    if args.pmos:
+        print("\n[11] Exporting postmarketOS scaffold files (--pmos)...")
+        pmos_args = ["--db", str(db_path)]
+        if args.pmos_out:
+            pmos_args += ["--out", args.pmos_out]
+        run_submodule(HERE / "export_postmarketos.py", pmos_args)
 
 
 if __name__ == "__main__":

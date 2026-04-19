@@ -18,7 +18,7 @@ Output tables:
 
 Usage:
   python pipeline/parse_pinctrl.py --db hardware_map.sqlite \
-      --dump /sdcard/hands-on-metal/live_dump --run-id 1
+      --dump /sdcard/hands-on-metal/boot_work --run-id 1
 """
 
 import argparse

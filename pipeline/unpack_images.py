@@ -37,10 +37,12 @@ Image discovery order (first match wins per path):
      option 5 — the canonical acquired image).
   2. ~/hands-on-metal/boot_work/partitions/ and ~/hands-on-metal/boot_work/
      (option-5 factory-ZIP extraction output, override via HOM_BOOT_WORK_DIR).
-  3. Fallback system search inside the --dump directory:
+  3. Recursive extraction-first search inside the --dump directory:
        <dump_dir>/partitions/   (Mode B recovery images)
        <dump_dir>/boot_images/  (explicit location)
        <dump_dir>/              (fallback)
+     All nested ZIP/TAR archives are expanded first and then searched
+     recursively for image payloads.
 
 Compressed backups (.win.gz, .win.lz4, .img.lz4) found in the fallback
 search are decompressed on the fly into boot_work/ so their resolved paths
@@ -48,12 +50,15 @@ are known to all subsequent pipeline steps.
 """
 
 import argparse
+import hashlib
 import io
 import os
 import sqlite3
 import struct
 import subprocess
 import sys
+import tarfile
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -957,6 +962,162 @@ def process_image(img_path: Path, dump: Path, run_id: int,
 IMAGE_NAMES = ("boot.img", "vendor_boot.img", "recovery.img",
                "init_boot.img")
 
+_ARCHIVE_SUFFIXES = (
+    ".zip",
+    ".tar",
+    ".tgz",
+    ".tar.gz",
+    ".tbz2",
+    ".tar.bz2",
+    ".txz",
+    ".tar.xz",
+)
+_TAR_SUFFIXES = tuple(sfx for sfx in _ARCHIVE_SUFFIXES if sfx != ".zip")
+
+
+def _is_archive_file(path: Path) -> bool:
+    name = path.name.lower()
+    return any(name.endswith(sfx) for sfx in _ARCHIVE_SUFFIXES)
+
+
+def _is_tar_file(path: Path) -> bool:
+    name = path.name.lower()
+    return any(name.endswith(sfx) for sfx in _TAR_SUFFIXES)
+
+
+def _safe_extract_zip(src: Path, out_dir: Path) -> bool:
+    out_resolved = out_dir.resolve()
+    try:
+        with zipfile.ZipFile(src, "r") as zf:
+            members = [m for m in zf.infolist() if not m.is_dir()]
+            if not members:
+                return False
+            for member in members:
+                if member.create_system == 3:  # Unix
+                    mode = (member.external_attr >> 16) & 0xFFFF
+                    # ZIP external_attr stores Unix mode bits in the upper
+                    # 16 bits. 0o170000 = S_IFMT (file type mask);
+                    # 0o120000 = S_IFLNK (symlink file type).
+                    if (mode & 0o170000) == 0o120000:
+                        continue
+                rel = Path(member.filename)
+                if rel.is_absolute() or ".." in rel.parts:
+                    continue
+                target = out_dir / rel
+                try:
+                    target.resolve().relative_to(out_resolved)
+                except ValueError:
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(member, "r") as f_in, open(target, "wb") as f_out:
+                    while True:
+                        chunk = f_in.read(1 << 20)
+                        if not chunk:
+                            break
+                        f_out.write(chunk)
+        return True
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
+def _safe_extract_tar(src: Path, out_dir: Path) -> bool:
+    out_resolved = out_dir.resolve()
+    try:
+        with tarfile.open(src, "r:*") as tf:
+            members = [m for m in tf.getmembers() if m.isfile()]
+            if not members:
+                return False
+            for member in members:
+                rel = Path(member.name)
+                if rel.is_absolute() or ".." in rel.parts:
+                    continue
+                target = out_dir / rel
+                try:
+                    target.resolve().relative_to(out_resolved)
+                except ValueError:
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                f_in = tf.extractfile(member)
+                # Defensive guard for malformed archives despite m.isfile().
+                if f_in is None:
+                    continue
+                with f_in, open(target, "wb") as f_out:
+                    while True:
+                        chunk = f_in.read(1 << 20)
+                        if not chunk:
+                            break
+                        f_out.write(chunk)
+        return True
+    except (OSError, tarfile.TarError):
+        return False
+
+
+def _extract_nested_archives(roots: list[Path], cache_root: Path) -> list[Path]:
+    """Recursively extract archives under *roots* into *cache_root*.
+
+    Returned list preserves search order and contains both original roots and
+    all extracted sub-roots so callers can recursively search nested content.
+    """
+    ordered_roots: list[Path] = []
+    seen_roots: set[str] = set()
+    for root in roots:
+        if not root.exists():
+            continue
+        key = str(root.resolve())
+        if key in seen_roots:
+            continue
+        seen_roots.add(key)
+        ordered_roots.append(root)
+
+    try:
+        cache_root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return ordered_roots
+
+    seen_archives: set[str] = set()
+    idx = 0
+    while idx < len(ordered_roots):
+        current = ordered_roots[idx]
+        idx += 1
+        for candidate in sorted(current.rglob("*")):
+            if not candidate.is_file() or not _is_archive_file(candidate):
+                continue
+            try:
+                akey = str(candidate.resolve())
+            except OSError:
+                akey = str(candidate)
+            if akey in seen_archives:
+                continue
+            seen_archives.add(akey)
+
+            try:
+                st = candidate.stat()
+                digest_src = f"{akey}:{st.st_size}:{st.st_dev}:{st.st_ino}"
+            except OSError:
+                digest_src = akey
+            digest = hashlib.sha256(digest_src.encode("utf-8", errors="replace")).hexdigest()[:24]
+            out_dir = cache_root / f"{candidate.stem}_{digest}"
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            ok = False
+            if candidate.name.lower().endswith(".zip"):
+                ok = _safe_extract_zip(candidate, out_dir)
+            elif _is_tar_file(candidate):
+                ok = _safe_extract_tar(candidate, out_dir)
+            else:
+                continue
+            if not ok:
+                continue
+            try:
+                rkey = str(out_dir.resolve())
+            except OSError:
+                rkey = str(out_dir)
+            if rkey not in seen_roots:
+                seen_roots.add(rkey)
+                ordered_roots.append(out_dir)
+
+    return ordered_roots
+
 
 def find_images(dump: Path) -> list[Path]:
     """Return an ordered, de-duplicated list of boot/recovery images to process.
@@ -972,10 +1133,11 @@ def find_images(dump: Path) -> list[Path]:
        any additional partition images extracted from factory ZIPs by option 5
        into ``boot_work/partitions/``.
 
-    3. **Fallback system search** inside *dump* (the ``--dump`` directory).
-       Compressed backups (``.win.gz``, ``.win.lz4``, ``.img.lz4``) found here
-       are decompressed into ``boot_work/`` on the fly so their resolved paths
-       are known to all subsequent pipeline steps.
+    3. **Extraction-first recursive search** inside *dump* (the ``--dump``
+       directory). Nested ZIP/TAR archives are extracted first, then
+       compressed backups (``.win.gz``, ``.win.lz4``, ``.img.lz4``) are
+       decompressed into ``boot_work/`` on the fly so their resolved paths are
+       known to all subsequent pipeline steps.
     """
     found: list[Path] = []
     _seen: set[str] = set()
@@ -1021,7 +1183,7 @@ def find_images(dump: Path) -> list[Path]:
             if any(n in img.name for n in ("boot", "recovery", "ramdisk")):
                 _add(img)
 
-    # ── Priority 3: fallback system search inside --dump ───────────────────
+    # ── Priority 3: fallback search roots inside --dump ────────────────────
     search_dirs: list[Path] = [dump / "partitions", dump / "boot_images", dump]
 
     # Also check a sibling boot_work when dump is not already boot_work.
@@ -1048,23 +1210,24 @@ def find_images(dump: Path) -> list[Path]:
         seen_dirs.add(key)
         uniq_dirs.append(d)
 
-    for search_dir in uniq_dirs:
+    # Expand nested archive trees first so image discovery can start at the
+    # extraction root and walk all nested archive content before parsing.
+    extract_cache = boot_work / "extracted_archives"
+    deep_dirs = _extract_nested_archives(uniq_dirs, extract_cache)
+
+    for search_dir in deep_dirs:
         if not search_dir.exists():
             continue
-        for name in IMAGE_NAMES:
-            c = search_dir / name
-            if c.exists():
-                _add(c)
-        # Also glob for any *.img that matches.
-        for img in sorted(search_dir.glob("*.img")):
-            if any(n in img.name for n in ("boot", "recovery", "ramdisk")):
+        # Also recursively discover *.img candidates.
+        for img in sorted(search_dir.rglob("*.img")):
+            if img.name in IMAGE_NAMES or any(n in img.name for n in ("boot", "recovery", "ramdisk")):
                 _add(img)
         # Decompress .gz / .lz4 compressed backups found during the fallback
         # search (e.g. TWRP .win.gz, Samsung boot.img.lz4).  The decompressed
         # image is written into boot_work/ so its location is persistently known
         # alongside other option-5 output images.
         for pattern in ("*.gz", "*.lz4"):
-            for comp in sorted(search_dir.glob(pattern)):
+            for comp in sorted(search_dir.rglob(pattern)):
                 if any(n in comp.name
                        for n in ("boot", "recovery", "ramdisk", ".win")):
                     dec = _decompress_image(comp, boot_work)
