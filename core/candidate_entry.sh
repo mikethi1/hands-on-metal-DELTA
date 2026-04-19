@@ -96,7 +96,7 @@ _match_family() {
                     partial_match="$in_family"
                 fi
             fi
-            in_family=$(printf '%s' "$line" | sed 's/.*"\([a-z_]*\)".*/\1/')
+            in_family=$(printf '%s' "$line" | sed 's/.*"\([a-z0-9_]*\)".*/\1/')
             in_soc_match=0
             fam_is_ab=""
             soc_hit=0
