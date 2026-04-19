@@ -683,10 +683,10 @@ _is_google_device_supported() {
 # already-extracted inner image-*.zip into "$BOOT_WORK_DIR/partitions/".
 #
 # This complements the single Magisk-target image returned by
-# _download_factory_boot_image: callers still get back the one image
-# they need to patch, but the user also ends up with boot.img,
-# init_boot.img, vendor_boot.img, dtbo.img, vbmeta*.img and
-# recovery.img on disk for flashing / recovery / inspection.
+# _download_factory_boot_image when the user explicitly opts in:
+# callers still get back the one image they need to patch, and can
+# also choose to extract boot.img, init_boot.img, vendor_boot.img,
+# dtbo.img, vbmeta*.img and recovery.img for recovery / inspection.
 #
 # Writes ONLY to stderr (via ux_print / log_info) so it is safe to
 # call from inside a function whose stdout is captured via $(...).
@@ -878,10 +878,17 @@ _download_factory_boot_image() {
         local target_img="$extract_dir/${boot_part}.img"
         if [ -f "$target_img" ] && [ -s "$target_img" ]; then
             ux_print "  ✓  Extracted ${boot_part}.img from factory image"
-            # Also extract the rest of the standard boot-chain images
-            # (boot, init_boot, vendor_boot, dtbo, vbmeta*, recovery)
-            # into BOOT_WORK_DIR/partitions/ for flashing / recovery.
-            _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
+            # Optional: extract the full boot-chain image set only if
+            # the user explicitly asks for it.
+            local extract_extra="no"
+            if [ -t 0 ] 2>/dev/null; then
+                ux_prompt extract_extra \
+                    "  Extract additional partition images too (boot/vendor_boot/dtbo/vbmeta/recovery)? [yes/no]" \
+                    "no"
+            fi
+            if [ "$extract_extra" = "yes" ] || [ "$extract_extra" = "y" ]; then
+                _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
+            fi
             echo "$target_img"
             [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
             rm -f "$inner_zip_path"
@@ -901,7 +908,15 @@ _download_factory_boot_image() {
             local fallback_img="$extract_dir/boot.img"
             if [ -f "$fallback_img" ] && [ -s "$fallback_img" ]; then
                 ux_print "  ✓  Extracted boot.img as fallback"
-                _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
+                local extract_extra="no"
+                if [ -t 0 ] 2>/dev/null; then
+                    ux_prompt extract_extra \
+                        "  Extract additional partition images too (boot/vendor_boot/dtbo/vbmeta/recovery)? [yes/no]" \
+                        "no"
+                fi
+                if [ "$extract_extra" = "yes" ] || [ "$extract_extra" = "y" ]; then
+                    _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
+                fi
                 echo "$fallback_img"
                 [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
                 rm -f "$inner_zip_path"
@@ -1012,38 +1027,47 @@ run_boot_image_acquire() {
             ux_print "  ✓  Found image: $pre_placed"
             log_info "Pre-placed/backup image found: $pre_placed"
 
+            if [ -t 0 ] 2>/dev/null; then
+                if ! _confirm_yn "Use this detected image: $pre_placed ?"; then
+                    log_info "User declined detected pre-placed image $pre_placed"
+                    pre_placed=""
+                fi
+            fi
+
             # Handle TWRP compressed backups
-            case "$pre_placed" in
-                *.win.gz)
-                    ux_print "  Decompressing gzip TWRP backup..."
-                    if _has_cmd gzip; then
-                        gzip -dc "$pre_placed" > "$out_img" 2>/dev/null
-                        log_info "Decompressed gzip backup: $pre_placed → $out_img"
-                    else
-                        log_warn "gzip not available — cannot decompress $pre_placed"
-                        ux_print "  ✗  gzip not available to decompress backup"
-                        pre_placed=""
-                    fi
-                    ;;
-                *.win.lz4)
-                    ux_print "  Decompressing lz4 TWRP backup..."
-                    if _has_cmd lz4; then
-                        lz4 -dc "$pre_placed" > "$out_img" 2>/dev/null
-                        log_info "Decompressed lz4 backup: $pre_placed → $out_img"
-                    else
-                        log_warn "lz4 not available — cannot decompress $pre_placed"
-                        ux_print "  ✗  lz4 not available to decompress backup"
-                        ux_print "     Install: apt install lz4 (host) / pkg install lz4 (Termux)"
-                        pre_placed=""
-                    fi
-                    ;;
-                *)
-                    # Uncompressed — direct copy (.img or .emmc.win)
-                    if [ "$pre_placed" != "$out_img" ]; then
-                        log_exec "cp_boot_image" cp "$pre_placed" "$out_img"
-                    fi
-                    ;;
-            esac
+            if [ -n "$pre_placed" ]; then
+                case "$pre_placed" in
+                    *.win.gz)
+                        ux_print "  Decompressing gzip TWRP backup..."
+                        if _has_cmd gzip; then
+                            gzip -dc "$pre_placed" > "$out_img" 2>/dev/null
+                            log_info "Decompressed gzip backup: $pre_placed → $out_img"
+                        else
+                            log_warn "gzip not available — cannot decompress $pre_placed"
+                            ux_print "  ✗  gzip not available to decompress backup"
+                            pre_placed=""
+                        fi
+                        ;;
+                    *.win.lz4)
+                        ux_print "  Decompressing lz4 TWRP backup..."
+                        if _has_cmd lz4; then
+                            lz4 -dc "$pre_placed" > "$out_img" 2>/dev/null
+                            log_info "Decompressed lz4 backup: $pre_placed → $out_img"
+                        else
+                            log_warn "lz4 not available — cannot decompress $pre_placed"
+                            ux_print "  ✗  lz4 not available to decompress backup"
+                            ux_print "     Install: apt install lz4 (host) / pkg install lz4 (Termux)"
+                            pre_placed=""
+                        fi
+                        ;;
+                    *)
+                        # Uncompressed — direct copy (.img or .emmc.win)
+                        if [ "$pre_placed" != "$out_img" ]; then
+                            log_exec "cp_boot_image" cp "$pre_placed" "$out_img"
+                        fi
+                        ;;
+                esac
+            fi
 
             if [ -n "$pre_placed" ] && [ -f "$out_img" ] && [ -s "$out_img" ]; then
                 boot_dev="$pre_placed"
