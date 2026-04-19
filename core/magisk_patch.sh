@@ -375,7 +375,7 @@ EOF
 
         chmod 0755 "$fallback_ws/magiskinit" "$fallback_ws/magiskboot" \
             "$fallback_ws/init-ld" "$fallback_ws/boot_patch.sh" \
-            "$fallback_ws/util_functions.sh" "$fallback_ws/busybox" \
+            "$fallback_ws/busybox" \
             2>/dev/null || true
 
         if [ -x "$fallback_ws/magisk" ] \
