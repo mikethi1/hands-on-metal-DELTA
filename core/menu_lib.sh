@@ -1120,7 +1120,8 @@ script_completion_failure() {
             echo "  If the dump lacks sys/kernel/debug/pinctrl/, re-run with root or skip this step." ;;
         pipeline/parse_symbols.py)
             echo "Symbol parsing failed."
-            echo "  Verify --db/--dump/--run-id and that dump has vendor_symbols/*.nm.txt." ;;
+            echo "  vendor_symbols data is only collected when root is available during hardware collection."
+            echo "  If the dump has vendor_symbols/ but no *.nm.txt files, re-run collection with root." ;;
         pipeline/report.py)
             echo "Report generation failed. Verify Python 3 is installed." ;;
         pipeline/unpack_images.py)
