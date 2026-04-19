@@ -972,11 +972,17 @@ _ARCHIVE_SUFFIXES = (
     ".txz",
     ".tar.xz",
 )
+_TAR_SUFFIXES = tuple(sfx for sfx in _ARCHIVE_SUFFIXES if sfx != ".zip")
 
 
 def _is_archive_file(path: Path) -> bool:
     name = path.name.lower()
     return any(name.endswith(sfx) for sfx in _ARCHIVE_SUFFIXES)
+
+
+def _is_tar_file(path: Path) -> bool:
+    name = path.name.lower()
+    return any(name.endswith(sfx) for sfx in _TAR_SUFFIXES)
 
 
 def _safe_extract_zip(src: Path, out_dir: Path) -> bool:
@@ -1079,15 +1085,17 @@ def _extract_nested_archives(roots: list[Path], cache_root: Path) -> list[Path]:
                 continue
             seen_archives.add(akey)
 
-            digest = hashlib.sha256(akey.encode("utf-8", errors="replace")).hexdigest()[:32]
+            digest = hashlib.sha256(akey.encode("utf-8", errors="replace")).hexdigest()
             out_dir = cache_root / f"{candidate.stem}_{digest}"
             out_dir.mkdir(parents=True, exist_ok=True)
 
             ok = False
             if candidate.name.lower().endswith(".zip"):
                 ok = _safe_extract_zip(candidate, out_dir)
-            else:
+            elif _is_tar_file(candidate):
                 ok = _safe_extract_tar(candidate, out_dir)
+            else:
+                continue
             if not ok:
                 continue
             try:
@@ -1200,12 +1208,11 @@ def find_images(dump: Path) -> list[Path]:
     for search_dir in deep_dirs:
         if not search_dir.exists():
             continue
-        for name in IMAGE_NAMES:
-            for c in sorted(search_dir.rglob(name)):
-                _add(c)
         # Also recursively discover *.img candidates.
         for img in sorted(search_dir.rglob("*.img")):
-            if any(n in img.name for n in ("boot", "recovery", "ramdisk")):
+            if img.name in IMAGE_NAMES:
+                _add(img)
+            elif any(n in img.name for n in ("boot", "recovery", "ramdisk")):
                 _add(img)
         # Decompress .gz / .lz4 compressed backups found during the fallback
         # search (e.g. TWRP .win.gz, Samsung boot.img.lz4).  The decompressed
