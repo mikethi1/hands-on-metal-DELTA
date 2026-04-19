@@ -409,6 +409,7 @@ EOF
 
         log_exec "magisk_boot_patch" \
             env TMPDIR="$work_dir" \
+                OUTFD="${OUTFD:-2}" \
                 KEEPVERITY="$KEEPVERITY" \
                 KEEPFORCEENCRYPT="$KEEPFORCEENCRYPT" \
                 PATCHVBMETAFLAG="$PATCHVBMETAFLAG" \
