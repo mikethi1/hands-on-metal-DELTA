@@ -993,11 +993,12 @@ def _safe_extract_zip(src: Path, out_dir: Path) -> bool:
             if not members:
                 return False
             for member in members:
-                mode = (member.external_attr >> 16) & 0xFFFF
-                # ZIP external_attr stores Unix mode bits in the upper 16 bits.
-                # 0o170000 masks file type and 0o120000 identifies symlinks.
-                if (mode & 0o170000) == 0o120000:  # symlink
-                    continue
+                if member.create_system == 3:  # Unix
+                    mode = (member.external_attr >> 16) & 0xFFFF
+                    # ZIP external_attr stores Unix mode bits in the upper
+                    # 16 bits. 0o170000 masks file type; 0o120000=symlink.
+                    if (mode & 0o170000) == 0o120000:
+                        continue
                 rel = Path(member.filename)
                 if rel.is_absolute() or ".." in rel.parts:
                     continue
@@ -1090,7 +1091,7 @@ def _extract_nested_archives(roots: list[Path], cache_root: Path) -> list[Path]:
 
             try:
                 st = candidate.stat()
-                digest_src = f"{akey}:{st.st_size}:{st.st_mtime_ns}"
+                digest_src = f"{akey}:{st.st_size}"
             except OSError:
                 digest_src = akey
             digest = hashlib.sha256(digest_src.encode("utf-8", errors="replace")).hexdigest()[:24]
