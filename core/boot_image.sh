@@ -72,6 +72,7 @@ SCRIPT_NAME="boot_image"
 OUT="${OUT:-$HOME/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 BOOT_WORK_DIR="$OUT/boot_work"
+OPTION5_PARTITIONS_DIR="${OPTION5_PARTITIONS_DIR:-$BOOT_WORK_DIR/partitions}"
 _HOM_RESOLVED_ROOT="${REPO_ROOT:-${MODPATH:-}}"
 if [ -n "$_HOM_RESOLVED_ROOT" ]; then
     PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_RESOLVED_ROOT/build/partition_index.json}"
@@ -758,11 +759,13 @@ _is_google_device_supported() {
 #
 # Usage: _extract_all_partitions_from_inner_zip <inner_zip_path>
 _extract_all_partitions_from_inner_zip() {
+    # $1 = path to inner image-*.zip
+    # $2 = optional output directory for extracted partition images
     local inner_zip_path="$1"
+    local part_dir="${2:-$OPTION5_PARTITIONS_DIR}"
     [ -f "$inner_zip_path" ] || return 1
     _has_cmd unzip || return 1
 
-    local part_dir="$BOOT_WORK_DIR/partitions"
     mkdir -p "$part_dir" 2>/dev/null || return 1
 
     # Standard boot-chain images shipped in Google factory inner ZIPs.
@@ -796,12 +799,14 @@ _extract_all_partitions_from_inner_zip() {
     done
 
     if [ "$extracted_count" -gt 0 ]; then
+        _reg_set boot HOM_OPTION5_PARTITIONS_DIR "$part_dir"
         ux_print "  ✓  Extracted $extracted_count partition image(s) to $part_dir"
         ux_print "    ${extracted_names# }"
         return 0
     fi
 
     log_warn "No standard partition images found inside inner ZIP"
+    _reg_set boot HOM_OPTION5_PARTITIONS_DIR ""
     return 1
 }
 
@@ -820,7 +825,6 @@ _download_factory_boot_image() {
     build_id_lower=$(echo "$build_id" | tr '[:upper:]' '[:lower:]')
 
     local factory_zip
-    local downloaded_here=0
 
     if [ -n "$local_zip" ] && [ -f "$local_zip" ] && [ -s "$local_zip" ]; then
         # User-supplied (or auto-detected) local factory ZIP — no download.
@@ -831,8 +835,7 @@ _download_factory_boot_image() {
         _has_cmd curl || { log_warn "curl not available — cannot download factory image"; return 1; }
 
         local factory_url="https://dl.google.com/dl/android/aosp/${codename}-${build_id_lower}-factory.zip"
-        factory_zip="$_TMP/hom_factory_${codename}_${build_id_lower}.zip"
-        downloaded_here=1
+        factory_zip="$BOOT_WORK_DIR/factory_${codename}_${build_id_lower}.zip"
 
         ux_print "  Downloading Google factory image..."
         ux_print "  URL: $factory_url"
@@ -855,12 +858,15 @@ _download_factory_boot_image() {
         rm -f "$curl_log"
     fi
 
+    _reg_set boot HOM_OPTION5_FACTORY_ZIP_PATH "$factory_zip"
+
     # Google factory ZIPs are ZIP-in-ZIP:
     #   outer: {codename}-{build_id}/image-{codename}-{build_id}.zip
     # The inner ZIP contains boot.img, init_boot.img, etc.
 
-    local extract_dir="$_TMP/hom_factory_extract"
+    local extract_dir="$BOOT_WORK_DIR/factory_extract"
     mkdir -p "$extract_dir"
+    _reg_set boot HOM_OPTION5_EXTRACT_DIR "$extract_dir"
 
     # Step 1: extract the inner image-*.zip from the outer ZIP
     local inner_zip
@@ -880,14 +886,12 @@ _download_factory_boot_image() {
                 -d "$extract_dir" 2>/dev/null; then
             local found="$extract_dir/${boot_part}.img"
             if [ -f "$found" ] && [ -s "$found" ]; then
+                _reg_set boot HOM_OPTION5_EXTRACTED_IMG_PATH "$found"
                 echo "$found"
-                [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
                 return 0
             fi
         fi
         log_warn "Could not locate ${boot_part}.img inside factory ZIP"
-        [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-        rm -rf "$extract_dir"
         return 1
     fi
 
@@ -912,14 +916,10 @@ _download_factory_boot_image() {
         if [ -t 0 ] 2>/dev/null; then
             if ! _confirm_yn "Continue with mismatched factory ZIP anyway?"; then
                 log_warn "User aborted due to factory ZIP build mismatch"
-                [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-                rm -rf "$extract_dir"
                 return 1
             fi
         else
             log_warn "Non-interactive: refusing mismatched factory ZIP"
-            [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-            rm -rf "$extract_dir"
             return 1
         fi
     elif [ -n "$inner_build" ]; then
@@ -929,15 +929,15 @@ _download_factory_boot_image() {
 
     unzip -joq "$factory_zip" "$inner_zip" -d "$extract_dir" 2>/dev/null || {
         log_warn "Failed to extract inner ZIP from factory image"
-        [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-        rm -rf "$extract_dir"
         return 1
     }
 
     local inner_zip_path
     inner_zip_path="$extract_dir/$(basename "$inner_zip")"
+    _reg_set boot HOM_OPTION5_INNER_ZIP_PATH "$inner_zip_path"
 
     # Step 2: extract boot.img or init_boot.img from inner ZIP
+    local partitions_dir="$OPTION5_PARTITIONS_DIR"
     if unzip -joq "$inner_zip_path" "${boot_part}.img" \
             -d "$extract_dir" 2>/dev/null; then
         local target_img="$extract_dir/${boot_part}.img"
@@ -954,11 +954,10 @@ _download_factory_boot_image() {
                 log_info "Non-interactive mode: skipping additional partition extraction"
             fi
             if [ "$extract_extra" = "yes" ] || [ "$extract_extra" = "y" ]; then
-                _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
+                _extract_all_partitions_from_inner_zip "$inner_zip_path" "$partitions_dir" || true
             fi
+            _reg_set boot HOM_OPTION5_EXTRACTED_IMG_PATH "$target_img"
             echo "$target_img"
-            [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-            rm -f "$inner_zip_path"
             return 0
         fi
     fi
@@ -984,20 +983,16 @@ _download_factory_boot_image() {
                     log_info "Non-interactive mode: skipping additional partition extraction"
                 fi
                 if [ "$extract_extra" = "yes" ] || [ "$extract_extra" = "y" ]; then
-                    _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
+                    _extract_all_partitions_from_inner_zip "$inner_zip_path" "$partitions_dir" || true
                 fi
+                _reg_set boot HOM_OPTION5_EXTRACTED_IMG_PATH "$fallback_img"
                 echo "$fallback_img"
-                [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-                rm -f "$inner_zip_path"
                 return 0
             fi
         fi
     fi
 
     log_warn "Failed to extract ${boot_part}.img from factory image"
-    [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-    rm -f "$inner_zip_path"
-    rm -rf "$extract_dir"
     return 1
 }
 
@@ -1010,6 +1005,11 @@ run_boot_image_acquire() {
         "Magisk must patch this image before flashing; we need a local copy to work with"
 
     mkdir -p "$BOOT_WORK_DIR" "$_TMP"
+    _reg_set boot HOM_OPTION5_FACTORY_ZIP_PATH ""
+    _reg_set boot HOM_OPTION5_EXTRACT_DIR ""
+    _reg_set boot HOM_OPTION5_INNER_ZIP_PATH ""
+    _reg_set boot HOM_OPTION5_EXTRACTED_IMG_PATH ""
+    _reg_set boot HOM_OPTION5_PARTITIONS_DIR ""
 
     # ── 0. Self-contained dependency check ────────────────────
 
@@ -1249,7 +1249,6 @@ run_boot_image_acquire() {
                         "$codename" "$boot_part" "$build_id" "$user_path" || true)
                     if [ -n "$extracted_img" ] && [ -f "$extracted_img" ] && [ -s "$extracted_img" ]; then
                         cp "$extracted_img" "$out_img"
-                        rm -f "$extracted_img"
                         boot_dev="local_factory_zip:$user_path"
                         acquire_method="local_factory_zip"
                         ux_print "  ✓  Extracted ${boot_part}.img from local factory ZIP"
