@@ -57,50 +57,91 @@ _json_str() {
 
 # ── family matching ───────────────────────────────────────────
 # Returns the name of the matching device_family, or "none".
+# Prefers a family whose is_ab field matches the device's A/B status.
 _match_family() {
-    local platform soc_mfr
+    local platform soc_mfr soc_model hardware is_ab
     platform=$(_reg_get HOM_DEV_PLATFORM)
     soc_mfr=$(_reg_get HOM_DEV_SOC_MFR)
+    soc_model=$(_reg_get HOM_DEV_SOC_MODEL)
+    hardware=$(_reg_get HOM_DEV_HARDWARE)
+    is_ab=$(_reg_get HOM_DEV_IS_AB)
 
     [ ! -f "$PARTITION_INDEX" ] && { echo "none"; return; }
 
-    # Extract soc_match arrays from the JSON using grep/sed (no jq required).
-    # Each device_family block has one or more soc_match entries.
-    # We look for a prefix match against platform or soc_mfr.
-    local family_name=""
-    local in_family=""
-    local fam=""
+    # Lower-case all device identifiers once for comparison.
+    local plat_lower mfr_lower model_lower hw_lower
+    plat_lower=$(printf '%s' "$platform"  | tr '[:upper:]' '[:lower:]')
+    mfr_lower=$(printf '%s'  "$soc_mfr"   | tr '[:upper:]' '[:lower:]')
+    model_lower=$(printf '%s' "$soc_model" | tr '[:upper:]' '[:lower:]')
+    hw_lower=$(printf '%s'   "$hardware"  | tr '[:upper:]' '[:lower:]')
+
+    # Parse the partition_index.json line-by-line (no jq required).
+    # Strategy:
+    #   • Track which device_family block we are currently in.
+    #   • Track whether we are inside a soc_match array.
+    #   • Track the family's is_ab value for A/B disambiguation.
+    #   • Prefer an is_ab-exact match; fall back to any soc match.
+    local in_family="" fam_is_ab="" in_soc_match=0 soc_hit=0
+    local exact_match="" partial_match=""
 
     while IFS= read -r line; do
-        # Detect family key: "  \"<name>\": {"
+
+        # ── New family block detected ───────────────────────────
         if printf '%s' "$line" | grep -qE '^\s+"[a-z_]+"\s*:\s*\{'; then
-            fam=$(printf '%s' "$line" | sed 's/.*"\([a-z_]*\)".*/\1/')
-            in_family="$fam"
+            # Flush the previous family if it had a soc match.
+            if [ "$soc_hit" -eq 1 ] && [ -n "$in_family" ]; then
+                if [ -z "$exact_match" ] && [ "$fam_is_ab" = "$is_ab" ]; then
+                    exact_match="$in_family"
+                elif [ -z "$partial_match" ]; then
+                    partial_match="$in_family"
+                fi
+            fi
+            in_family=$(printf '%s' "$line" | sed 's/.*"\([a-z_]*\)".*/\1/')
+            in_soc_match=0
+            fam_is_ab=""
+            soc_hit=0
         fi
 
-        # Detect soc_match values within current family
+        # ── Read is_ab for the current family ──────────────────
+        if [ -n "$in_family" ] && [ "$in_soc_match" -eq 0 ] && \
+           printf '%s' "$line" | grep -qE '"is_ab"\s*:\s*(true|false)'; then
+            fam_is_ab=$(printf '%s' "$line" | grep -oE 'true|false' | head -1)
+        fi
+
+        # ── Track soc_match array boundaries ───────────────────
         if [ -n "$in_family" ] && printf '%s' "$line" | grep -q '"soc_match"'; then
-            # Read until closing ]
-            : # handled by looking at next lines
+            in_soc_match=1
+        fi
+        if [ "$in_soc_match" -eq 1 ] && printf '%s' "$line" | grep -qE '^\s*\]'; then
+            in_soc_match=0
         fi
 
-        if [ -n "$in_family" ] && printf '%s' "$line" | grep -qE '"(msm|sm|sdm|qcom|gs|mt|mediatek|exynos|tensor|kirin|hi|unisoc|sc|tegra)"'; then
+        # ── Compare soc_match prefix against device identifiers ─
+        # Use [a-z0-9_]* so that prefixes like "gs101" or "mt6" are
+        # captured correctly (the original [a-z]* dropped the digits).
+        if [ "$in_soc_match" -eq 1 ] && [ "$soc_hit" -eq 0 ] && \
+           printf '%s' "$line" | grep -qE '^\s*"[a-z0-9]'; then
             local prefix
-            prefix=$(printf '%s' "$line" | sed 's/.*"\([a-z]*\)".*/\1/')
-            local plat_lower
-            plat_lower=$(printf '%s' "$platform" | tr '[:upper:]' '[:lower:]')
-            local mfr_lower
-            mfr_lower=$(printf '%s' "$soc_mfr" | tr '[:upper:]' '[:lower:]')
-            case "$plat_lower" in
-                "$prefix"*) family_name="$in_family"; break ;;
-            esac
-            case "$mfr_lower" in
-                "$prefix"*) family_name="$in_family"; break ;;
-            esac
+            prefix=$(printf '%s' "$line" | sed 's/.*"\([a-z0-9_]*\)".*/\1/')
+            [ -n "$prefix" ] || continue
+            case "$plat_lower"  in "$prefix"*) soc_hit=1 ;; esac
+            [ "$soc_hit" -eq 0 ] && case "$mfr_lower"   in "$prefix"*) soc_hit=1 ;; esac
+            [ "$soc_hit" -eq 0 ] && case "$model_lower" in "$prefix"*) soc_hit=1 ;; esac
+            [ "$soc_hit" -eq 0 ] && case "$hw_lower"    in "$prefix"*) soc_hit=1 ;; esac
         fi
+
     done < "$PARTITION_INDEX"
 
-    echo "${family_name:-none}"
+    # Flush the last family.
+    if [ "$soc_hit" -eq 1 ] && [ -n "$in_family" ]; then
+        if [ -z "$exact_match" ] && [ "$fam_is_ab" = "$is_ab" ]; then
+            exact_match="$in_family"
+        elif [ -z "$partial_match" ]; then
+            partial_match="$in_family"
+        fi
+    fi
+
+    echo "${exact_match:-${partial_match:-none}}"
 }
 
 # ── main function ─────────────────────────────────────────────
@@ -145,6 +186,13 @@ run_candidate_entry() {
     hardware=$(_reg_get HOM_DEV_HARDWARE)
 
     # ── 2. Check family match ─────────────────────────────────
+
+    ux_print "  Matching device against partition_index..."
+    ux_print "    platform  : ${platform:-(not set — run device_profile first)}"
+    ux_print "    soc_mfr   : ${soc_mfr:-(not set)}"
+    ux_print "    soc_model : ${soc_model:-(not set)}"
+    ux_print "    hardware  : ${hardware:-(not set)}"
+    ux_print "    is_ab     : ${is_ab:-(not set)}"
 
     local matched_family
     matched_family=$(_match_family)
