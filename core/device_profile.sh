@@ -25,7 +25,7 @@
 # shellcheck disable=SC2034  # consumed by core/logging.sh when sourced
 SCRIPT_NAME="device_profile"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-${HOME:-/sdcard}/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 PROFILE_REPORT="$OUT/device_profile.txt"
 

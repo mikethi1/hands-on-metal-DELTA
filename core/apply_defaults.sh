@@ -25,7 +25,7 @@
 
 SCRIPT_NAME="${SCRIPT_NAME:-apply_defaults}"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-${HOME:-/sdcard}/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 _HOM_RESOLVED_ROOT="${REPO_ROOT:-${MODPATH:-}}"
 if [ -n "$_HOM_RESOLVED_ROOT" ]; then

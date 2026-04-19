@@ -69,7 +69,7 @@
 # shellcheck disable=SC2034  # consumed by core/logging.sh when sourced
 SCRIPT_NAME="boot_image"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-${HOME:-/sdcard}/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 BOOT_WORK_DIR="$OUT/boot_work"
 _HOM_RESOLVED_ROOT="${REPO_ROOT:-${MODPATH:-}}"

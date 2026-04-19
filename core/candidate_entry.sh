@@ -20,7 +20,7 @@
 
 SCRIPT_NAME="${SCRIPT_NAME:-candidate_entry}"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-${HOME:-/sdcard}/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 CANDIDATE_DIR="$OUT/candidates"
 _HOM_RESOLVED_ROOT="${REPO_ROOT:-${MODPATH:-}}"

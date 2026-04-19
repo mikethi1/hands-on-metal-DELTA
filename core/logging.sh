@@ -21,7 +21,7 @@
 #   manifest_step STEP STATUS NOTE
 # ============================================================
 
-LOG_DIR="${LOG_DIR:-/sdcard/hands-on-metal/logs}"
+LOG_DIR="${LOG_DIR:-${HOME:-/sdcard}/hands-on-metal/logs}"
 SCRIPT_NAME="${SCRIPT_NAME:-unknown}"
 
 # Generate a run ID once; child scripts inherit it via export.

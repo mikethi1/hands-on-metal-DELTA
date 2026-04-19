@@ -31,7 +31,7 @@
 # shellcheck disable=SC2034  # consumed by core/logging.sh when sourced
 SCRIPT_NAME="anti_rollback"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-${HOME:-/sdcard}/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 
 # The SPL from which Magisk's May-2026 anti-rollback policy activates.

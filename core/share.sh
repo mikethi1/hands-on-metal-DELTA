@@ -27,7 +27,7 @@
 
 SCRIPT_NAME="${SCRIPT_NAME:-share}"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-${HOME:-/sdcard}/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 LOG_DIR="${LOG_DIR:-$OUT/logs}"
 SHARE_DIR="$OUT/share/${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
