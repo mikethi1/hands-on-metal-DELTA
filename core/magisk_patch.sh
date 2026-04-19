@@ -388,8 +388,9 @@ EOF
         [ -f "$util_fn" ] && cp "$util_fn" "$work_dir/util_functions.sh"
 
         # Magisk payload binary — boot_patch.sh calls it as 'magisk'
-        cp "$magisk_bin" "$work_dir/magisk" 2>/dev/null \
-            && chmod +x "$work_dir/magisk" || true
+        if cp "$magisk_bin" "$work_dir/magisk" 2>/dev/null; then
+            chmod +x "$work_dir/magisk" 2>/dev/null || true
+        fi
 
         # magiskinit — injected into the boot ramdisk
         local try
