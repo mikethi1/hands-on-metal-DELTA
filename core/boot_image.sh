@@ -194,34 +194,6 @@ _in_list() {
     printf '%s\n' "$2" | grep -qxF "$1" 2>/dev/null
 }
 
-# Heuristic: try to extract a build ID string from a raw boot/init_boot image.
-# Scans the binary for common Android build property patterns embedded in the
-# image (works best on LZ4-legacy or uncompressed ramdisks; may return empty
-# for GZip-compressed ramdisks).
-# Echoes the build ID (e.g. "CP1A.260305.018"), or empty if not detectable.
-_extract_build_id_from_image() {
-    local file="$1" result=""
-    [ -f "$file" ] || { echo ""; return 0; }
-
-    # 1. ro.build.id=VALUE (prop.default / default.prop in the ramdisk)
-    result=$(grep -a -m1 -o 'ro\.build\.id=[^[:space:][:cntrl:]/]*' \
-        "$file" 2>/dev/null | sed 's/ro\.build\.id=//' || true)
-    [ -n "$result" ] && { echo "$result"; return 0; }
-
-    # 2. ro.build.fingerprint=brand/product/device:ver/BUILD_ID/incr:type/keys
-    #    The build ID is field 4 when split on '/'.
-    result=$(grep -a -m1 -o 'ro\.build\.fingerprint=[^[:space:][:cntrl:]]*' \
-        "$file" 2>/dev/null | cut -d/ -f4 || true)
-    [ -n "$result" ] && { echo "$result"; return 0; }
-
-    # 3. Kernel command line: androidboot.buildid=VALUE
-    result=$(grep -a -m1 -o 'androidboot\.buildid=[^[:space:]]*' \
-        "$file" 2>/dev/null | sed 's/androidboot\.buildid=//' || true)
-    [ -n "$result" ] && { echo "$result"; return 0; }
-
-    echo ""
-}
-
 # ── dependency self-check ─────────────────────────────────────
 # Validates that the tools THIS script needs are present.
 # Logs missing optional tools so acquisition paths that depend
@@ -610,28 +582,6 @@ _confirm_yn() {
     if [ -t 0 ]; then
         printf '\n%s [Y/n]: ' "$prompt" >&2
         read -r answer </dev/tty 2>/dev/null || answer=""
-    else
-        answer="Y"
-    fi
-    case "$answer" in
-        ''|y|Y|yes|YES|Yes) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-_confirm_yn_timeout() {
-    # $1 = prompt text, $2 = timeout seconds (default 30).
-    # Returns 0 for yes (or on timeout — auto-proceeds), 1 for no.
-    local prompt="$1" timeout="${2:-30}" answer=""
-    if [ -t 0 ]; then
-        printf '\n%s [Y/n] (auto-yes in %ss): ' "$prompt" "$timeout" >&2
-        # shellcheck disable=SC3045  # read -t: mksh/bash/busybox-ash extension
-        if read -r -t "$timeout" answer </dev/tty 2>/dev/null; then
-            : # got an answer before timeout
-        else
-            printf '\n  (no response — proceeding automatically)\n' >&2
-            answer="Y"
-        fi
     else
         answer="Y"
     fi
@@ -1073,8 +1023,7 @@ run_boot_image_acquire() {
         ux_print "  Will try pre-placed image or factory download..."
     fi
 
-    # Retrieve device build and codename here — needed in both step 2
-    # (pre-placed image build-ID matching) and step 3 (local/factory file).
+    # Retrieve device build and codename — needed by step 3 (local/factory file).
     local codename build_id build_id_lower=""
     codename=$(_reg_get HOM_DEV_DEVICE)
     build_id=$(_reg_get HOM_DEV_BUILD_ID)
@@ -1109,41 +1058,11 @@ run_boot_image_acquire() {
 
             log_info "Pre-placed/backup image found: $pre_placed"
 
-            # ── Build-ID check ────────────────────────────────
-            # Try to extract the build ID embedded in the image binary.
-            local img_build img_build_lower=""
-            img_build=$(_extract_build_id_from_image "$pre_placed")
-            if [ -n "$img_build" ]; then
-                img_build_lower=$(echo "$img_build" | tr '[:upper:]' '[:lower:]')
-            fi
-
             # ── User confirmation ─────────────────────────────
-            _pp_accepted=0  # default: accepted (non-interactive / no build info)
+            _pp_accepted=0  # default: accepted (non-interactive)
             if [ -t 0 ] 2>/dev/null; then
-                if [ -n "$img_build" ] && [ -n "$build_id_lower" ]; then
-                    if [ "$img_build_lower" = "$build_id_lower" ]; then
-                        # Build match: show info, auto-proceed after 30 s
-                        ux_print "  ✓  Found image: $pre_placed"
-                        ux_print "     Image build : $img_build"
-                        ux_print "     Device build: $build_id"
-                        ux_print "     ✓  Builds match."
-                        log_info "Build ID match: image=$img_build device=$build_id"
-                        _confirm_yn_timeout "Use this image (builds match)?" || _pp_accepted=1
-                    else
-                        # Build mismatch: show both numbers, require explicit Y/N
-                        ux_print "  ⚠  Found image: $pre_placed"
-                        ux_print "     Image build : $img_build"
-                        ux_print "     Device build: $build_id"
-                        ux_print "     Builds do NOT match — a mismatched image may cause"
-                        ux_print "     boot failures or anti-rollback bricks."
-                        log_warn "Build ID mismatch: image=$img_build device=$build_id"
-                        _confirm_yn "Use this image despite build mismatch?" || _pp_accepted=1
-                    fi
-                else
-                    # Build ID not determinable from image binary
-                    ux_print "  ✓  Found image: $pre_placed"
-                    _confirm_yn "Use this detected image: $pre_placed?" || _pp_accepted=1
-                fi
+                ux_print "  ✓  Found image: $pre_placed"
+                _confirm_yn "Use this detected image?" || _pp_accepted=1
             fi
 
             if [ "$_pp_accepted" -ne 0 ]; then
@@ -1229,8 +1148,6 @@ run_boot_image_acquire() {
     #       or Google factory image download (Pixel devices) ──────
 
     if [ -z "$acquire_method" ]; then
-        # codename, build_id, build_id_lower already populated before step 2
-
         # ── 3a. Ask the user for a local file first (img or zip) ──
         local user_path=""
         user_path=$(_prompt_local_user_image "$boot_part" "$codename" "$build_id_lower")
