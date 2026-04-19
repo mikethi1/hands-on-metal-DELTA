@@ -325,12 +325,12 @@ is_already_done() {
     local rel="$1"
     case "$rel" in
         build/fetch_all_deps.sh)
-            # Deps fetched if Magisk APK or busybox binary already present
-            [ -d "$REPO_ROOT/build/magisk" ] 2>/dev/null \
-                && [ -f "$REPO_ROOT/build/busybox" ] 2>/dev/null ;;
+            # Deps fetched if Magisk binaries and busybox are present in tools/
+            [ -f "$REPO_ROOT/tools/magisk64" ] 2>/dev/null \
+                && [ -f "$REPO_ROOT/tools/busybox-arm64" ] 2>/dev/null ;;
         build/build_offline_zip.sh)
-            # ZIPs already built
-            compgen -G "$REPO_ROOT/build/hands-on-metal-*.zip" >/dev/null 2>&1 ;;
+            # ZIPs already built (written to dist/ by build_offline_zip.sh)
+            compgen -G "$REPO_ROOT/dist/hands-on-metal-*.zip" >/dev/null 2>&1 ;;
         core/device_profile.sh)
             [ -n "${HOM_DEV_MODEL:-}" ] ;;
         core/apply_defaults.sh)
