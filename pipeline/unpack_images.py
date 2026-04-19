@@ -364,21 +364,65 @@ def _try_lz4(data: bytes) -> bytes | None:
         return None
 
 
+def _lz4_stdin_cli_commands() -> tuple[list[str], ...]:
+    """Candidate commands for decoding LZ4 data from stdin."""
+    return (
+        ["lz4", "-dc", "-"],
+        ["lz4", "-l", "-dc", "-"],
+        ["lz4cat"],
+        ["unlz4", "-c"],
+    )
+
+
+def _lz4_file_cli_commands(src: Path) -> tuple[list[str], ...]:
+    """Candidate commands for decoding an LZ4-compressed file."""
+    src_str = str(src)
+    return (
+        ["lz4", "-dc", "--", src_str],
+        ["lz4", "-l", "-dc", "--", src_str],
+        ["lz4cat", "--", src_str],
+        ["unlz4", "-c", "--", src_str],
+    )
+
+
 def _try_lz4_cli(data: bytes) -> bytes | None:
     """Try LZ4 decompression via external lz4 CLI using stdin/stdout."""
-    try:
-        result = subprocess.run(
-            ["lz4", "-dc", "-"],
-            input=data,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=_DECOMPRESS_TIMEOUT,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout
+    for cmd in _lz4_stdin_cli_commands():
+        try:
+            result = subprocess.run(
+                cmd,
+                input=data,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=_DECOMPRESS_TIMEOUT,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+        if result.returncode == 0:
+            return result.stdout
+    return None
+
+
+def _try_lz4_cli_file(src: Path, out_path: Path) -> tuple[bool, bytes]:
+    """Try LZ4 decompression of *src* via external CLI variants into *out_path*."""
+    last_stderr = b""
+    for cmd in _lz4_file_cli_commands(src):
+        try:
+            with open(str(out_path), "wb") as f_out:
+                result = subprocess.run(
+                    cmd,
+                    stdout=f_out,
+                    stderr=subprocess.PIPE,
+                    timeout=_DECOMPRESS_TIMEOUT,
+                )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            out_path.unlink(missing_ok=True)
+            continue
+        if result.returncode == 0 and out_path.stat().st_size > 0:
+            return True, b""
+        last_stderr = result.stderr
+        out_path.unlink(missing_ok=True)
+    return False, last_stderr
 
 
 def _try_lzma(data: bytes) -> bytes | None:
@@ -772,25 +816,18 @@ def _decompress_image(src: Path, dest_dir: Path) -> Optional[Path]:
                 out_path.unlink(missing_ok=True)
 
         # CLI fallback (lz4 tool from Termux / apt).
-        try:
-            with open(str(out_path), "wb") as f_out:
-                result = subprocess.run(
-                    ["lz4", "-dc", "--", str(src)],
-                    stdout=f_out, stderr=subprocess.PIPE,
-                    timeout=_DECOMPRESS_TIMEOUT,
-                )
-            if result.returncode == 0 and out_path.stat().st_size > 0:
-                return out_path
+        ok, err = _try_lz4_cli_file(src, out_path)
+        if ok:
+            return out_path
+        if err:
             print(
                 "    ↳ lz4 CLI failed: "
-                + result.stderr.decode(errors="replace").strip(),
+                + err.decode(errors="replace").strip(),
                 file=sys.stderr,
             )
-            out_path.unlink(missing_ok=True)
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
-            print(f"    ↳ lz4 tool unavailable or timed out: {exc}",
+        else:
+            print("    ↳ lz4 tool unavailable or timed out",
                   file=sys.stderr)
-            out_path.unlink(missing_ok=True)
         return None
 
     except OSError as exc:

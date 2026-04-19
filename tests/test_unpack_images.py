@@ -60,9 +60,35 @@ class UnpackImagesTests(unittest.TestCase):
         fake_lz4.decompress.side_effect = RuntimeError("decode failed")
         with mock.patch.object(unpack_images, "_HAS_LZ4", True), \
              mock.patch.object(unpack_images, "_lz4_frame", fake_lz4, create=True), \
-             mock.patch("unpack_images.subprocess.run", return_value=completed):
+              mock.patch("unpack_images.subprocess.run", return_value=completed):
             out = unpack_images._try_lz4(fake_input)
         self.assertEqual(out, fake_output)
+
+    def test_try_lz4_cli_retries_legacy_command_variant(self) -> None:
+        lz4_magic = b"\x04\x22\x4d\x18"
+        fake_input = lz4_magic + b"payload"
+        first = subprocess.CompletedProcess(
+            args=["lz4", "-dc", "-"], returncode=1, stdout=b"", stderr=b"fail"
+        )
+        second = subprocess.CompletedProcess(
+            args=["lz4", "-l", "-dc", "-"], returncode=0, stdout=b"070701cpio", stderr=b""
+        )
+        with mock.patch.object(unpack_images, "_HAS_LZ4", False), \
+             mock.patch("unpack_images.subprocess.run", side_effect=[first, second]) as run_mock:
+            out = unpack_images._try_lz4(fake_input)
+        self.assertEqual(out, b"070701cpio")
+        self.assertEqual(run_mock.call_count, 2)
+
+    def test_try_lz4_cli_accepts_empty_output(self) -> None:
+        lz4_magic = b"\x04\x22\x4d\x18"
+        fake_input = lz4_magic + b"payload"
+        completed = subprocess.CompletedProcess(
+            args=["lz4", "-dc", "-"], returncode=0, stdout=b"", stderr=b""
+        )
+        with mock.patch.object(unpack_images, "_HAS_LZ4", False), \
+             mock.patch("unpack_images.subprocess.run", return_value=completed):
+            out = unpack_images._try_lz4(fake_input)
+        self.assertEqual(out, b"")
 
 
 if __name__ == "__main__":
