@@ -73,9 +73,14 @@ _dir_writable() {
     [ -n "$dir" ] || return 1
     mkdir -p "$dir" 2>/dev/null || true
     [ -d "$dir" ] || return 1
-    : > "$probe" 2>/dev/null || return 1
-    rm -f "$probe" 2>/dev/null || true
-    return 0
+    # Use touch (external command) rather than `: > "$probe"` so that the
+    # shell's own file-open error is not printed to the terminal on mksh/ash
+    # even when 2>/dev/null is appended.
+    if touch "$probe" 2>/dev/null; then
+        rm -f "$probe" 2>/dev/null || true
+        return 0
+    fi
+    return 1
 }
 
 # Locate the best available Magisk binary.
@@ -263,9 +268,9 @@ passing AVB verification through the correct flags"
 
     local stage_dir_candidates
     stage_dir_candidates=$(printf '%s\n' \
-        "/data/local/tmp" \
         "${TMPDIR:-}" \
         "$BOOT_WORK_DIR" \
+        "/data/local/tmp" \
         "${HOME:-}/tmp" \
         "${PWD:-.}")
 
@@ -289,9 +294,10 @@ EOF
     cp "$boot_img" "$tmp_input" 2>/dev/null || \
         ux_abort "Could not copy boot image to staging dir: $magisk_out_dir"
 
-    # Run the patch
+    # Run the patch — set TMPDIR so Magisk writes its output to the same
+    # staging directory that we already confirmed is writable.
     log_exec "magisk_boot_patch" \
-        "$magisk_bin" --boot-patch "$tmp_input"
+        env TMPDIR="$magisk_out_dir" "$magisk_bin" --boot-patch "$tmp_input"
     local patch_rc=$?
 
     # Locate the patched output
