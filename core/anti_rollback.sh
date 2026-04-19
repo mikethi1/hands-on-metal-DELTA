@@ -402,7 +402,28 @@ permanently brick the device via AVB fuse-burning — this check prevents that"
         ux_print ""
     fi
 
-    # ── 7. Final verdict ─────────────────────────────────────
+    # ── 7. Consolidated minimum Magisk version ────────────────
+    # Any active ARP mechanism requires Magisk >= v30.7:
+    #   • May-2026 SPL policy   — PATCHVBMETAFLAG support added in 30.7
+    #   • Tensor bootloader ARB — correct rollback index handling
+    #   • Non-zero AVB rollback index — bootloader enforces rollback
+    #     protection that older Magisk may mishandle
+    # Stored as a numeric version code so magisk_patch.sh can compare
+    # directly without re-deriving conditions.
+    local arb_min_ver="0"
+    if [ "$may2026_active" = "true" ] || [ "$tensor_affected" = "true" ]; then
+        arb_min_ver="$MAY_2026_MAGISK_MIN"
+    fi
+    if [ "$arb_min_ver" = "0" ] && [ -n "$dev_rollback_index" ] \
+            && [ "$dev_rollback_index" != "0" ] \
+            && [ "$dev_rollback_index" != "UNKNOWN" ]; then
+        arb_min_ver="$MAY_2026_MAGISK_MIN"
+    fi
+    _reg_set avb HOM_ARB_MIN_MAGISK_VER "$arb_min_ver"
+    log_var "HOM_ARB_MIN_MAGISK_VER" "$arb_min_ver" \
+        "minimum Magisk version code required by active ARP conditions (0=none)"
+
+    # ── 8. Final verdict ─────────────────────────────────────
 
     if [ "$rollback_risk" = "true" ]; then
         ux_step_result "Anti-Rollback Check" "FAIL" \
