@@ -1309,6 +1309,28 @@ run_selected() {
     echo "Next steps:"
     script_next_steps "$rel" "$rc"
     echo
+
+    # ── After boot image acquisition succeeds, offer to immediately patch ────
+    if [ "$rc" -eq 0 ] && [ "$rel" = "core/boot_image.sh" ]; then
+        local _patch_idx=-1
+        local _j
+        for _j in "${!SCRIPT_LABELS[@]}"; do
+            if [ "${SCRIPT_LABELS[$_j]}" = "core/magisk_patch.sh" ]; then
+                _patch_idx="$_j"
+                break
+            fi
+        done
+        if [ "$_patch_idx" -ge 0 ]; then
+            printf "Patch boot image with Magisk now (option %d — core/magisk_patch.sh)? [y/n]: " \
+                "$((_patch_idx + 1))"
+            local _yn
+            read -r _yn
+            _yn="${_yn//[!a-zA-Z]/}"
+            case "$_yn" in
+                y|Y) run_selected "$_patch_idx" ;;
+            esac
+        fi
+    fi
 }
 
 # ── Upload-on-exit hook ──────────────────────────────────────
