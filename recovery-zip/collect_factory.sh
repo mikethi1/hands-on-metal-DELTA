@@ -182,11 +182,11 @@ if [ -z "$INNER_ZIP_ENTRY" ]; then
         | grep -o '[^ ]*image-[^ ]*\.zip' | head -1 || true)
 fi
 
+_direct_found=0
 if [ -z "$INNER_ZIP_ENTRY" ]; then
     # Some vendors place images directly at the top level of the ZIP.
     # Try extracting the target image(s) directly.
     log "  No inner image-*.zip found; checking for direct top-level images..."
-    local _direct_found=0
     for _img in init_boot.img boot.img dtbo.img vbmeta.img vendor_boot.img; do
         if unzip -l "$FACTORY_ZIP" 2>/dev/null | grep -qE "[[:space:]]${_img}\$"; then
             unzip -joq "$FACTORY_ZIP" "$_img" -d "$_STAGE_DIR" 2>/dev/null || true

@@ -981,7 +981,7 @@ script_completion_success() {
             ;;
         core/anti_rollback.sh)
             echo "Checked the Security Patch Level (SPL) and AVB rollback index."
-            echo "  • Anti-rollback risk assessment stored in HOM_ARB_RISK."
+            echo "  • Anti-rollback risk assessment stored in HOM_ARB_ROLLBACK_RISK."
             ;;
         core/apply_defaults.sh)
             echo "Applied device-family defaults from the partition index to the current profile."
@@ -1010,7 +1010,7 @@ script_completion_success() {
             ;;
         core/magisk_patch.sh)
             echo "Patched the boot image with Magisk for root access."
-            echo "  • Patched image path stored in HOM_PATCHED_IMG."
+            echo "  • Patched image path stored in HOM_PATCHED_IMG_PATH."
             ;;
         core/privacy.sh)
             echo "Privacy-by-default PII redaction helpers loaded."
