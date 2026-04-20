@@ -523,6 +523,197 @@ class ExportEndToEndTests(unittest.TestCase):
         ep.export(self.db_path, None, self.out_dir)
         self.assertTrue((self.out_dir / "deviceinfo").exists())
 
+    def test_export_creates_apkbuild(self) -> None:
+        run_id = self._populate_db()
+        ep.export(self.db_path, run_id, self.out_dir)
+        self.assertTrue((self.out_dir / "APKBUILD").exists())
+        content = (self.out_dir / "APKBUILD").read_text()
+        self.assertIn("pkgname=", content)
+        self.assertIn("google", content)
+
+
+class GenerateApkbuildTests(unittest.TestCase):
+    def _props(self) -> dict[str, str]:
+        return {
+            "ro.product.model":        "Pixel 8 Pro",
+            "ro.product.manufacturer": "Google",
+            "ro.product.device":       "husky",
+            "ro.product.board":        "husky",
+            "ro.product.brand":        "google",
+            "ro.product.cpu.abi":      "arm64-v8a",
+        }
+
+    def test_apkbuild_contains_pkgname(self) -> None:
+        text = ep.generate_apkbuild(self._props())
+        self.assertIn('pkgname="device-google-husky"', text)
+
+    def test_apkbuild_contains_pkgdesc(self) -> None:
+        text = ep.generate_apkbuild(self._props())
+        self.assertIn("Pixel 8 Pro", text)
+
+    def test_apkbuild_arch_aarch64(self) -> None:
+        text = ep.generate_apkbuild(self._props())
+        self.assertIn('arch="aarch64"', text)
+
+    def test_apkbuild_contains_build_and_package(self) -> None:
+        text = ep.generate_apkbuild(self._props())
+        self.assertIn("build()", text)
+        self.assertIn("package()", text)
+        self.assertIn("nonfree_firmware()", text)
+
+    def test_apkbuild_audio_strategies_note(self) -> None:
+        props = self._props()
+        audio = {
+            "standard": ["STRATEGY_MEDIA", "STRATEGY_PHONE"],
+            "vendor":   [{"name": f"vx_{1000+i}", "id": str(1000+i)} for i in range(5)],
+        }
+        text = ep.generate_apkbuild(props, audio_strategies=audio)
+        self.assertIn("vendor strategies", text)
+        self.assertIn("1000", text)
+
+    def test_apkbuild_nfc_note_when_nfc_feature(self) -> None:
+        props = self._props()
+        features = {"android.hardware.nfc", "android.hardware.camera.flash-autofocus"}
+        text = ep.generate_apkbuild(props, features=features)
+        self.assertIn("NFC", text)
+
+    def test_apkbuild_wifi_note_when_wifi_feature(self) -> None:
+        props = self._props()
+        features = {"android.hardware.wifi", "android.hardware.wifi.direct"}
+        text = ep.generate_apkbuild(props, features=features)
+        self.assertIn("Wi-Fi", text)
+
+
+class ParseCpuinfoTests(unittest.TestCase):
+    def test_no_dump_dir_returns_empty(self) -> None:
+        result = ep._parse_cpuinfo(None)
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["clusters"], [])
+
+    def test_parses_clusters(self) -> None:
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as td:
+            proc = Path(td) / "proc"
+            proc.mkdir()
+            # Two A510 + one X3
+            cpuinfo = (
+                "processor\t: 0\nCPU part\t: 0xd46\n\n"
+                "processor\t: 1\nCPU part\t: 0xd46\n\n"
+                "processor\t: 2\nCPU part\t: 0xd4e\n\n"
+            )
+            (proc / "cpuinfo").write_text(cpuinfo)
+            result = ep._parse_cpuinfo(Path(td))
+        self.assertEqual(result["total"], 3)
+        self.assertEqual(len(result["clusters"]), 2)
+        self.assertIn("cortex-a510", result["clusters"][0]["compat"])
+        self.assertIn("cortex-x3",  result["clusters"][1]["compat"])
+
+
+class ParseMeminfoTests(unittest.TestCase):
+    def test_no_dump_dir_returns_zero(self) -> None:
+        self.assertEqual(ep._parse_meminfo(None), 0)
+
+    def test_parses_memtotal(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            proc = Path(td) / "proc"
+            proc.mkdir()
+            (proc / "meminfo").write_text("MemTotal:       8000000 kB\nMemFree: 1000 kB\n")
+            result = ep._parse_meminfo(Path(td))
+        self.assertEqual(result, 8000000 * 1024)
+
+
+class ParseAudioStrategiesTests(unittest.TestCase):
+    def test_none_path_returns_empty(self) -> None:
+        result = ep._parse_audio_strategies(None)
+        self.assertEqual(result["standard"], [])
+        self.assertEqual(result["vendor"], [])
+
+    def test_parses_standard_and_vendor(self) -> None:
+        import tempfile
+        xml_content = '''<?xml version="1.0"?>
+<ComponentTypeSet xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <ComponentType Name="ProductStrategies">
+    <Component Name="STRATEGY_MEDIA" Type="ProductStrategy"
+               Mapping="Name:STRATEGY_MEDIA"/>
+    <Component Name="vx_1000" Type="ProductStrategy"
+               Mapping="Identifier:1000,Name:vx_1000"/>
+    <Component Name="vx_1001" Type="ProductStrategy"
+               Mapping="Identifier:1001,Name:vx_1001"/>
+  </ComponentType>
+</ComponentTypeSet>'''
+        with tempfile.NamedTemporaryFile(suffix=".xml", mode="w", delete=False) as f:
+            f.write(xml_content)
+            fname = f.name
+        try:
+            result = ep._parse_audio_strategies(Path(fname))
+        finally:
+            import os; os.unlink(fname)
+        self.assertIn("STRATEGY_MEDIA", result["standard"])
+        self.assertEqual(len(result["vendor"]), 2)
+        self.assertEqual(result["vendor"][0]["id"], "1000")
+
+    def test_generate_dts_includes_cpus_node(self) -> None:
+        """generate_dts emits a cpus{} block when dump_dir has cpuinfo."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            proc = Path(td) / "proc"
+            proc.mkdir()
+            (proc / "cpuinfo").write_text(
+                "processor\t: 0\nCPU part\t: 0xd46\n\n"
+                "processor\t: 1\nCPU part\t: 0xd4e\n\n"
+            )
+            props = {
+                "ro.product.model": "T", "ro.product.device": "t",
+                "ro.board.platform": "p", "ro.hardware": "h",
+                "ro.build.description": "",
+            }
+            dts = ep.generate_dts(props, [], [], [], {}, [], dump_dir=Path(td))
+        self.assertIn("cpus {", dts)
+        self.assertIn("cortex-a510", dts)
+        self.assertIn("cortex-x3", dts)
+
+    def test_generate_dts_includes_memory_from_meminfo(self) -> None:
+        """generate_dts emits memory@ node from proc/meminfo when iomem is empty."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            proc = Path(td) / "proc"
+            proc.mkdir()
+            (proc / "meminfo").write_text("MemTotal: 4000000 kB\nMemFree: 1000 kB\n")
+            props = {
+                "ro.product.model": "T", "ro.product.device": "t",
+                "ro.board.platform": "p", "ro.hardware": "h",
+                "ro.build.description": "",
+            }
+            dts = ep.generate_dts(props, [], [], [], {}, [], dump_dir=Path(td))
+        self.assertIn("memory@80000000", dts)
+        self.assertIn("device_type", dts)
+
+    def test_generate_deviceinfo_includes_feature_and_audio_comments(self) -> None:
+        props = {
+            "ro.product.model": "T", "ro.product.manufacturer": "X",
+            "ro.product.device": "td", "ro.product.board": "td",
+            "ro.product.brand": "x", "ro.product.name": "td",
+            "ro.build.product": "td", "ro.board.platform": "p",
+            "ro.hardware": "h", "ro.soc.model": "SoC", "ro.soc.manufacturer": "X",
+            "ro.product.cpu.abi": "arm64-v8a", "ro.build.fingerprint": "fp",
+            "ro.product.cpu.abilist": "", "ro.product.cpu.abilist32": "",
+            "ro.product.cpu.abilist64": "", "ro.sf.lcd_density": "420",
+            "persist.sys.sf.native_mode": "0", "ro.boot.hardware": "h",
+            "ro.bootimage.build.fingerprint": "fp", "ro.boot.header_version": "4",
+            "ro.product.first_api_level": "34", "ro.build.characteristics": "nosdcard",
+            "ro.build.date.utc": "0",
+        }
+        features = {"android.hardware.nfc", "android.hardware.wifi"}
+        audio = {
+            "standard": ["STRATEGY_MEDIA"],
+            "vendor": [{"name": "vx_1000", "id": "1000"}],
+        }
+        text = ep.generate_deviceinfo(props, [], audio_strategies=audio)
+        self.assertIn("Audio routing strategies", text)
+        self.assertIn("STRATEGY_MEDIA", text)
+        self.assertIn("1000", text)   # vendor strategy ID shown in range
+
 
 if __name__ == "__main__":
     unittest.main()
