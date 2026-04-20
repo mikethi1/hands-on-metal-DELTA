@@ -1032,7 +1032,7 @@ _download_factory_boot_image() {
     # anti-rollback bricks.
     local inner_build
     inner_build=$(echo "$inner_zip" \
-        | sed -n "s|.*image-${codename}-\\([^./]*\\)\\.zip.*|\\1|p" \
+        | sed -n "s|.*image-${codename}-\\([^/]*\\)\\.zip|\\1|p" \
         | tr '[:upper:]' '[:lower:]')
     if [ -n "$inner_build" ] && [ "$inner_build" != "$build_id_lower" ]; then
         log_warn "Factory ZIP build mismatch: device=$build_id_lower zip=$inner_build"
