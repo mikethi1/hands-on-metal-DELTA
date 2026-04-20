@@ -51,7 +51,7 @@ done
 _hom_sync_repo() {
     local repo_dir="${1:-.}"
     echo "Syncing repository in '$repo_dir'..."
-    if ! git -C "$repo_dir" fetch --all --tags --prune; then
+    if ! git -C "$repo_dir" fetch --tags --prune; then
         echo "ERROR: git fetch failed in '$repo_dir'." >&2
         return 1
     fi
