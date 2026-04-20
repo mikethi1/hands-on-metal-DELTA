@@ -158,7 +158,7 @@ permanently brick the device via AVB fuse-burning — this check prevents that"
             ux_print "     $boot_img"
             log_info "Recovered HOM_BOOT_IMG_PATH via fallback discovery: $boot_img"
         else
-            ux_abort "Anti-rollback check: no boot image found at '$boot_img' — run boot image acquisition first."
+            ux_abort "Anti-rollback check: no boot image found at '$boot_img' -- run boot image acquisition first."
         fi
     fi
 
