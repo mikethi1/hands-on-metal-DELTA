@@ -12,12 +12,46 @@
 #
 # Or clone first and run locally:
 #   bash setup.sh
+#   bash setup.sh --update    # force repo sync first
 #
 # The script is safe to re-run — it skips steps that are
 # already complete (existing clone, existing binaries, etc.).
 # ============================================================
 
 set -e
+
+FORCE_REPO_SYNC=false
+
+usage() {
+    echo "Usage: bash setup.sh [--update|--sync] [--help]"
+    echo "  --update, --sync  Fetch + fast-forward this repo before setup continues."
+    echo "  --help            Show this help and exit."
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --update|--sync)
+            FORCE_REPO_SYNC=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "ERROR: unknown argument: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+_hom_sync_repo() {
+    local repo_dir="${1:-.}"
+    echo "Syncing repository in '$repo_dir'..."
+    git -C "$repo_dir" fetch --all --tags --prune
+    git -C "$repo_dir" pull --ff-only
+}
 
 # ── Helper: auto-install a package if the command is missing ──
 # Usage: _hom_auto_install <command> <pkg_name> [<termux_pkg>]
@@ -92,10 +126,21 @@ unset -f _hom_auto_install
 # ── If we are already inside the repo, use it in-place ────────
 if [ -f "check_deps.sh" ] && [ -d "build" ] && [ -f "build/fetch_all_deps.sh" ]; then
     echo "Running inside an existing hands-on-metal checkout."
+    if [ "$FORCE_REPO_SYNC" = true ]; then
+        if ! _hom_sync_repo "."; then
+            echo "ERROR: --update requested but repository sync failed." >&2
+            exit 1
+        fi
+    fi
 else
     if [ -d "hands-on-metal" ]; then
         echo "Directory 'hands-on-metal' already exists — pulling latest..."
-        if ! git -C hands-on-metal pull --ff-only 2>/dev/null; then
+        if [ "$FORCE_REPO_SYNC" = true ]; then
+            if ! _hom_sync_repo "hands-on-metal"; then
+                echo "ERROR: --update requested but repository sync failed." >&2
+                exit 1
+            fi
+        elif ! _hom_sync_repo "hands-on-metal" 2>/dev/null; then
             echo "  ⚠  Could not update existing clone (network or merge issue)." >&2
             echo "     Continuing with the current version." >&2
         fi
