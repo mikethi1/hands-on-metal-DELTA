@@ -25,7 +25,7 @@ FORCE_REPO_SYNC=true
 
 usage() {
     echo "Usage: bash setup.sh [--no-sync] [--help]"
-    echo "  (default)         Fetch + fast-forward this repo before setup continues."
+    echo "  (default)         Fetch and pull (fast-forward only) before setup continues."
     echo "  --no-sync         Skip repo sync and continue with current checkout."
     echo "  --help            Show this help and exit."
 }
