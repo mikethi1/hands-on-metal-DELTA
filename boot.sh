@@ -125,7 +125,7 @@ source "$REPO_ROOT/core/privacy.sh" 2>/dev/null || true
 #   Settings : SCRIPT_NAME="boot_image", OUT, ENV_REGISTRY,
 #              BOOT_WORK_DIR, PARTITION_INDEX, REPO_ROOT
 #   Relied-on device vars (from ENV_REGISTRY / detect.sh):
-#              HOM_DEV_API_LEVEL, HOM_DEV_BOOT_PART,
+#              HOM_DEV_SDK_INT, HOM_DEV_BOOT_PART,
 #              HOM_DEV_IS_AB, HOM_DEV_CODENAME, HOM_DEV_MODEL
 #   Writes   : HOM_BOOT_IMG_PATH, HOM_BOOT_IMG_SHA256,
 #              HOM_BOOT_PART_SRC, HOM_BOOT_IMG_METHOD

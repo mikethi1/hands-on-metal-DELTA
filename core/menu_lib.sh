@@ -556,8 +556,8 @@ print_device_header() {
         local dev_str="Device │ ${HOM_DEV_MODEL}"
         [ -n "${HOM_DEV_CODENAME:-}" ] \
             && dev_str="${dev_str} (${HOM_DEV_CODENAME})"
-        [ -n "${HOM_DEV_API_LEVEL:-}" ] \
-            && dev_str="${dev_str}  ·  API ${HOM_DEV_API_LEVEL}"
+        [ -n "${HOM_DEV_SDK_INT:-}" ] \
+            && dev_str="${dev_str}  ·  API ${HOM_DEV_SDK_INT}"
         if [ "${HOM_DEV_IS_AB:-}" = "true" ]; then
             dev_str="${dev_str}  ·  A/B"
         elif [ "${HOM_DEV_IS_AB:-}" = "false" ]; then
@@ -810,7 +810,7 @@ startup_scan() {
         HOM_DEV_BOOT_DEV        HOM_DEV_INIT_BOOT_DEV    HOM_DEV_VENDOR_BOOT_DEV
         HOM_DEV_SOC_MFR         HOM_DEV_SOC_MODEL        HOM_DEV_PLATFORM
         HOM_DEV_HARDWARE        HOM_DEV_BOOTLOADER       HOM_DEV_BASEBAND
-        HOM_DEV_SERIAL
+        HOM_DEV_SERIAL          HOM_DEV_KERNEL_VERSION
         HOM_BOOT_IMG_PATH       HOM_BOOT_IMG_SHA256     HOM_BOOT_PART_SRC
         HOM_BOOT_IMG_METHOD
         HOM_PATCHED_IMG_PATH    HOM_PATCHED_IMG_SHA256
@@ -945,7 +945,7 @@ script_completion_success() {
             ;;
         core/anti_rollback.sh)
             echo "Checked the Security Patch Level (SPL) and AVB rollback index."
-            echo "  • Anti-rollback risk assessment stored in HOM_ARB_RISK."
+            echo "  • Anti-rollback risk assessment stored in HOM_ARB_ROLLBACK_RISK."
             ;;
         core/apply_defaults.sh)
             echo "Applied device-family defaults from the partition index to the current profile."
@@ -966,14 +966,14 @@ script_completion_success() {
             ;;
         core/flash.sh)
             echo "Flashed the patched boot image to the device and verified integrity."
-            echo "  • Flash verification flag set (HOM_FLASH_VERIFIED=1)."
+            echo "  • Flash status stored in HOM_FLASH_STATUS and HOM_FLASH_VERIFIED."
             ;;
         core/logging.sh)
             echo "Logging framework loaded successfully (sourced by other scripts)."
             ;;
         core/magisk_patch.sh)
             echo "Patched the boot image with Magisk for root access."
-            echo "  • Patched image path stored in HOM_PATCHED_IMG."
+            echo "  • Patched image path stored in HOM_PATCHED_IMG_PATH."
             ;;
         core/privacy.sh)
             echo "Privacy-by-default PII redaction helpers loaded."
