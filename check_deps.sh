@@ -87,6 +87,11 @@ _hom_optional openssl  "Fallback SHA-256 hashing on device (core scripts)"
 _hom_optional lz4     "Decompressing LZ4-compressed TWRP Nandroid backups (core/boot_image.sh)"
 _hom_optional gzip    "Decompressing gzip-compressed TWRP Nandroid backups (core/boot_image.sh)"
 
+# Python lz4 package — preferred over the CLI for ramdisk decompression in unpack_images.py
+if ! python3 -c "import lz4" 2>/dev/null; then
+    echo "  ⚠  missing (optional): python lz4 package (pip install lz4) — LZ4 ramdisk decompression in pipeline/unpack_images.py"
+fi
+
 echo ""
 
 # ── Auto-fetch Magisk from topjohnwu/Magisk GitHub releases ───

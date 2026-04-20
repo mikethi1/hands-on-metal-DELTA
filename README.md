@@ -99,7 +99,7 @@ All three paths run the same guided state machine. See [docs/INSTALL_HUB.md](doc
 
 | Requirement | Minimum | Notes |
 |-------------|---------|-------|
-| Python | 3.8+ | All pipeline scripts; **stdlib only — no pip deps required** |
+| Python | 3.8+ | All pipeline scripts; optional `lz4` package installed by `setup.sh` |
 | `git` | Any modern version | Cloning the repo and running `fetch_all_deps.sh` |
 | `zip` / `unzip` | Any | Building and extracting flashable ZIPs |
 | `curl` | Any | Downloading Magisk APK and busybox binary |
@@ -113,10 +113,11 @@ All three paths run the same guided state machine. See [docs/INSTALL_HUB.md](doc
 Run `bash check_deps.sh` to verify all dependencies in one step.
 The check runs automatically when using `terminal_menu.sh` or the build scripts.
 
-> **No third-party Python packages are required.**  
-> All pipeline scripts use the Python standard library (`sqlite3`, `argparse`, `json`,
-> `urllib`, `gzip`, `lzma`, `bz2`, `pathlib`, …).
-> Optional packages `lz4` and `zstandard` improve boot image decompression coverage.
+> **`lz4` is installed automatically by `setup.sh`** (`pip install lz4`).  
+> All other pipeline scripts use only the Python standard library (`sqlite3`, `argparse`,
+> `json`, `urllib`, `gzip`, `lzma`, `bz2`, `pathlib`, …).
+> `zstandard` can be added manually (`pip install zstandard`) for Zstandard-compressed
+> boot images.
 
 ---
 

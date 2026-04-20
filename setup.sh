@@ -81,6 +81,16 @@ _hom_auto_install curl     curl
 _hom_auto_install python3  python3   python   # Termux package is "python" but provides python3
 _hom_auto_install tar      tar
 
+# ── Install optional Python packages for the pipeline ──────────
+# lz4 — enables native LZ4 decompression of boot/ramdisk images (unpack_images.py).
+# Soft-fail: if pip is unavailable or the install fails, unpack_images.py falls
+# back to the lz4 CLI tool automatically.
+if ! python3 -c "import lz4" 2>/dev/null; then
+    echo "Installing optional Python package: lz4 (pipeline/unpack_images.py)..."
+    python3 -m pip install --quiet lz4 2>/dev/null \
+        || echo "  ⚠  Could not install python-lz4 via pip — LZ4 boot-image decompression will use the lz4 CLI tool instead."
+fi
+
 # sha256sum OR shasum — at least one must be present
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
     _hom_auto_install sha256sum coreutils
