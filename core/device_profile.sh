@@ -564,6 +564,25 @@ partition naming, and boot security configuration"
         ux_print "     (anti_rollback.sh will cross-check any local factory ZIP)"
     fi
 
+    # ── 9c. Serial number ─────────────────────────────────────
+
+    local serial
+    serial=$(_prop ro.serialno)
+    [ -z "$serial" ] && serial=$(_prop ro.boot.serialno)
+
+    _reg_set device HOM_DEV_SERIAL "$serial"
+    log_var "HOM_DEV_SERIAL" "$serial" "device serial number (ro.serialno)"
+
+    # ── 9d. Kernel version ────────────────────────────────────
+
+    local kernel_ver
+    kernel_ver=$(uname -r 2>/dev/null || echo "unknown")
+
+    _reg_set device HOM_DEV_KERNEL_VERSION "$kernel_ver"
+    log_var "HOM_DEV_KERNEL_VERSION" "$kernel_ver" "running kernel version (uname -r)"
+
+    ux_print "  Kernel     : ${kernel_ver:-unknown}"
+
     # ── 10. Write human-readable profile report ───────────────
 
     {
@@ -580,6 +599,8 @@ partition naming, and boot security configuration"
         echo "Dynamic parts  : $dyn_parts"
         echo "Treble         : $treble_enabled (VNDK $treble_vintf_version)"
         echo "AVB            : v$avb_version state=$avb_state"
+        echo "Serial         : ${serial:-unknown}"
+        echo "Kernel         : ${kernel_ver:-unknown}"
         echo "Bootloader     : ${bootloader_ver:-unknown}"
         echo "Baseband       : ${baseband_ver:-unknown}"
         echo "Tensor ARB     : $tensor_arb_affected"
