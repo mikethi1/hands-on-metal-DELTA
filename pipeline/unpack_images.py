@@ -490,8 +490,9 @@ _RAMDISK_MAGIC_MARKERS: tuple[bytes, ...] = (
     b"\xfd7zXZ\x00",         # xz
     b"\x28\xb5\x2f\xfd",     # zstd
     b"BZ",                   # bzip2
-    b"070701", b"070702", b"070707",  # cpio newc/newcrc/odc
 )
+_CPIO_MAGICS: tuple[bytes, ...] = (b"070701", b"070702", b"070707")
+_RAMDISK_MAGIC_MARKERS = _RAMDISK_MAGIC_MARKERS + _CPIO_MAGICS
 
 
 def _decompress_ramdisk_known(data: bytes) -> bytes | None:
@@ -500,7 +501,7 @@ def _decompress_ramdisk_known(data: bytes) -> bytes | None:
         result = fn(data)
         if result is not None:
             return result
-    if data[:6] in (b"070701", b"070702", b"070707"):
+    if data[:6] in _CPIO_MAGICS:
         return data
     return None
 
