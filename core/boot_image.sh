@@ -652,7 +652,7 @@ _prompt_option5_env_table_mode() {
     #   HOM_OPTION5_ENV_TABLE_FACTORY_LINK
     #   HOM_OPTION5_ENV_TABLE_BOTH_LINK
     #   HOM_OPTION5_ENV_TABLE_SELECTED_LINK
-    local mode="both" input="" input_normalized=""
+    local mode="both" input="" input_normalized="" links_dir_ok=1
     local links_dir="$BOOT_WORK_DIR/env_table_links"
     local real_link="$links_dir/real_hardware_env_table.link"
     local factory_link="$links_dir/factory_image_env_table.link"
@@ -660,23 +660,26 @@ _prompt_option5_env_table_mode() {
     local selected_link="$both_link"
 
     if ! mkdir -p "$links_dir" 2>/dev/null; then
-        log_warn "Could not create env-table links directory: $links_dir. Proceeding with default behavior."
+        log_warn "Could not create env-table links directory: $links_dir. Link placeholders may be unavailable."
+        links_dir_ok=0
     fi
-    if ! ln -sfn /dev/null "$real_link" 2>/dev/null; then
-        log_warn "Could not create /dev/null link: $real_link"
-    fi
-    if ! ln -sfn /dev/null "$factory_link" 2>/dev/null; then
-        log_warn "Could not create /dev/null link: $factory_link"
-    fi
-    if ! ln -sfn /dev/null "$both_link" 2>/dev/null; then
-        log_warn "Could not create /dev/null link: $both_link"
+    if [ "$links_dir_ok" -eq 1 ]; then
+        if ! ln -sfn /dev/null "$real_link" 2>/dev/null; then
+            log_warn "Could not create /dev/null link: $real_link"
+        fi
+        if ! ln -sfn /dev/null "$factory_link" 2>/dev/null; then
+            log_warn "Could not create /dev/null link: $factory_link"
+        fi
+        if ! ln -sfn /dev/null "$both_link" 2>/dev/null; then
+            log_warn "Could not create /dev/null link: $both_link"
+        fi
     fi
 
     ux_print ""
     ux_print "  ┌────────────────────────────────────────────────────────────────────┐"
     ux_print "  │ Option 5 — Environment Table Selection                            │"
     ux_print "  ├────────────────────────────────────────────────────────────────────┤"
-    ux_print "  │ 1) Real hardware themed env table                                 │"
+    ux_print "  │ 1) Real hardware env table                                        │"
     ux_print "  ├────────────────────────────────────────────────────────────────────┤"
     ux_print "  │ 2) Factory image based environment table                          │"
     ux_print "  ├────────────────────────────────────────────────────────────────────┤"
@@ -713,6 +716,7 @@ _prompt_option5_env_table_mode() {
             selected_link="$both_link"
             ;;
         *)
+            log_warn "Invalid env table mode input '$input' — defaulting to both"
             mode="both"
             selected_link="$both_link"
             ;;
