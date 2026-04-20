@@ -204,8 +204,8 @@ bash setup.sh
 option 1 (`build/build_offline_zip.sh`) — or just run `bash build.sh` from
 the repo root, which is the equivalent single-command form.
 
-To force a repository refresh before setup continues, run:
-`bash setup.sh --update`
+`setup.sh` syncs the repository before continuing by default.
+To skip that sync, run: `bash setup.sh --no-sync`
 
 If `git` is not installed the script attempts to install it automatically
 using the system package manager (`apt-get`, `pkg`, `dnf`, `pacman`, or

@@ -12,7 +12,8 @@
 #
 # Or clone first and run locally:
 #   bash setup.sh
-#   bash setup.sh --update    # force repo sync first
+#   bash setup.sh             # syncs repo first by default
+#   bash setup.sh --no-sync   # skip sync and use current checkout
 #
 # The script is safe to re-run — it skips steps that are
 # already complete (existing clone, existing binaries, etc.).
@@ -20,11 +21,13 @@
 
 set -e
 
-FORCE_REPO_SYNC=false
+FORCE_REPO_SYNC=true
 
 usage() {
-    echo "Usage: bash setup.sh [--update|--sync] [--help]"
-    echo "  --update, --sync  Fetch + fast-forward this repo before setup continues."
+    echo "Usage: bash setup.sh [--no-sync] [--help]"
+    echo "  (default)         Fetch + fast-forward this repo before setup continues."
+    echo "  --update, --sync  Explicitly enable repo sync (same as default)."
+    echo "  --no-sync         Skip repo sync and continue with current checkout."
     echo "  --help            Show this help and exit."
 }
 
@@ -32,6 +35,10 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --update|--sync)
             FORCE_REPO_SYNC=true
+            shift
+            ;;
+        --no-sync)
+            FORCE_REPO_SYNC=false
             shift
             ;;
         -h|--help)
@@ -128,7 +135,7 @@ if [ -f "check_deps.sh" ] && [ -d "build" ] && [ -f "build/fetch_all_deps.sh" ];
     echo "Running inside an existing hands-on-metal checkout."
     if [ "$FORCE_REPO_SYNC" = true ]; then
         if ! _hom_sync_repo "."; then
-            echo "ERROR: --update requested but repository sync failed." >&2
+            echo "ERROR: repository sync failed." >&2
             exit 1
         fi
     fi
@@ -137,7 +144,7 @@ else
         echo "Directory 'hands-on-metal' already exists — pulling latest..."
         if [ "$FORCE_REPO_SYNC" = true ]; then
             if ! _hom_sync_repo "hands-on-metal"; then
-                echo "ERROR: --update requested but repository sync failed." >&2
+                echo "ERROR: repository sync failed." >&2
                 exit 1
             fi
         elif ! _hom_sync_repo "hands-on-metal" 2>/dev/null; then
