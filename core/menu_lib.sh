@@ -41,9 +41,14 @@ _repeat_char() {
 }
 
 # ── Load env registry ─────────────────────────────────────────
-_HOM_ENV_REGISTRY="${ENV_REGISTRY:-$HOME/hands-on-metal/env_registry.sh}"
+_hom_env_registry_path() {
+    echo "${ENV_REGISTRY:-${OUT:-$HOME/hands-on-metal}/env_registry.sh}"
+}
+
+_HOM_ENV_REGISTRY="$(_hom_env_registry_path)"
 load_env_registry() {
-    local _reg="${ENV_REGISTRY:-${OUT:-$HOME/hands-on-metal}/env_registry.sh}"
+    local _reg
+    _reg="$(_hom_env_registry_path)"
     if [ -f "$_reg" ]; then
         # shellcheck disable=SC1090
         source "$_reg" 2>/dev/null || true
@@ -162,7 +167,7 @@ check_prereq() {
         device_profile)
             [ -n "${HOM_DEV_MODEL:-}" ] ;;
         env_registry)
-            [ -f "$HOME/hands-on-metal/env_registry.sh" ] 2>/dev/null ;;
+            [ -f "$(_hom_env_registry_path)" ] 2>/dev/null ;;
         android_device)
             [ -n "$(getprop ro.build.display.id 2>/dev/null || true)" ] \
                 || [ -d "/data/data/com.termux" ] 2>/dev/null ;;
@@ -208,7 +213,7 @@ prereq_label() {
         boot_image)       echo "boot image (root DD / backup / GKI / factory / manual)" ;;
         magisk_binary)    echo "Magisk binary" ;;
         device_profile)   echo "device profile (core/device_profile.sh)" ;;
-        env_registry)     echo "environment registry ($HOME/hands-on-metal/env_registry.sh)" ;;
+        env_registry)     echo "environment registry ($(_hom_env_registry_path))" ;;
         android_device)   echo "Android device environment" ;;
         partition_index)  echo "partition index (build/partition_index.json)" ;;
         schema)           echo "database schema (schema/hardware_map.sql)" ;;
@@ -352,7 +357,7 @@ is_already_done() {
         core/flash.sh)
             [ "${HOM_FLASH_STATUS:-}" = "OK" ] 2>/dev/null ;;
         magisk-module/env_detect.sh)
-            [ -f "$HOME/hands-on-metal/env_registry.sh" ] 2>/dev/null ;;
+            [ -f "$(_hom_env_registry_path)" ] 2>/dev/null ;;
         pipeline/unpack_images.py)
             [ -n "${HOM_RAMDISK_DIR:-}" ] \
                 && [ -d "${HOM_RAMDISK_DIR:-/nonexistent}" ] 2>/dev/null ;;
@@ -374,7 +379,8 @@ refresh_status() {
     load_env_registry
     ITEM_STATUS=()
     MISSING_INFO=()
-    local _reg="${ENV_REGISTRY:-${OUT:-$HOME/hands-on-metal}/env_registry.sh}"
+    local _reg
+    _reg="$(_hom_env_registry_path)"
     if [ -f "$_reg" ]; then
         # shellcheck source=/dev/null
         . "$_reg" 2>/dev/null || true
@@ -997,7 +1003,7 @@ script_completion_success() {
             ;;
         magisk-module/env_detect.sh)
             echo "Detected the device environment (shell, tools, Python, Termux)."
-            echo "  • Results saved to $HOME/hands-on-metal/env_registry.sh."
+            echo "  • Results saved to $(_hom_env_registry_path)."
             ;;
         magisk-module/service.sh)
             echo "Boot service executed: environment detection, Termux setup, and data collection."

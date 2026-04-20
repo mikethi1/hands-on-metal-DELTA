@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import unittest
+import gzip
 from pathlib import Path
 from unittest import mock
 
@@ -13,6 +14,19 @@ import unpack_images  # noqa: E402
 
 
 class UnpackImagesTests(unittest.TestCase):
+    def test_decompress_ramdisk_recovers_gzip_with_prefixed_bytes(self) -> None:
+        cpio_payload = b"070701cpio"
+        ramdisk = gzip.compress(cpio_payload)
+        wrapped = (b"\x00" * 256) + ramdisk
+        out = unpack_images.decompress_ramdisk(wrapped)
+        self.assertEqual(out, cpio_payload)
+
+    def test_decompress_ramdisk_recovers_cpio_with_prefixed_bytes(self) -> None:
+        cpio_payload = b"070701cpio"
+        wrapped = b"prefix-junk" + cpio_payload
+        out = unpack_images.decompress_ramdisk(wrapped)
+        self.assertEqual(out, cpio_payload)
+
     def test_try_lz4_uses_cli_fallback_without_python_lz4(self) -> None:
         lz4_magic = b"\x04\x22\x4d\x18"
         fake_input = lz4_magic + b"payload"

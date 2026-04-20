@@ -483,15 +483,62 @@ def _try_bz2(data: bytes) -> bytes | None:
         return None
 
 
-def decompress_ramdisk(data: bytes) -> bytes | None:
-    """Try all known compression formats; return raw cpio bytes or None."""
+_RAMDISK_MAGIC_MARKERS: tuple[bytes, ...] = (
+    b"\x1f\x8b",             # gzip
+    b"\x04\x22\x4d\x18",     # lz4 frame
+    b"\x02\x21\x4c\x18",     # lz4 legacy frame
+    b"\xfd7zXZ\x00",         # xz
+    b"\x28\xb5\x2f\xfd",     # zstd
+    b"BZ",                   # bzip2
+    b"070701", b"070702", b"070707",  # cpio newc/newcrc/odc
+)
+
+
+def _decompress_ramdisk_known(data: bytes) -> bytes | None:
+    """Decode one ramdisk blob if it starts at offset 0."""
     for fn in (_try_gzip, _try_lz4, _try_lz4_block, _try_lzma, _try_zstd, _try_bz2):
         result = fn(data)
         if result is not None:
             return result
-    # Already uncompressed cpio?
     if data[:6] in (b"070701", b"070702", b"070707"):
         return data
+    return None
+
+
+def _candidate_ramdisk_offsets(data: bytes, max_scan: int = 512 * 1024) -> list[int]:
+    """Return unique offsets where a known ramdisk/compression marker appears."""
+    scan_len = min(len(data), max_scan)
+    if scan_len <= 0:
+        return [0]
+
+    offsets: set[int] = {0}
+    head = data[:scan_len]
+    for marker in _RAMDISK_MAGIC_MARKERS:
+        start = 0
+        while True:
+            idx = head.find(marker, start)
+            if idx < 0:
+                break
+            offsets.add(idx)
+            start = idx + 1
+    return sorted(offsets)
+
+
+def decompress_ramdisk(data: bytes) -> bytes | None:
+    """Try all known compression formats; return raw cpio bytes or None."""
+    # Most images place ramdisk payload at offset 0; try this fast path first.
+    direct = _decompress_ramdisk_known(data)
+    if direct is not None:
+        return direct
+
+    # Some partition dumps include small prefix bytes before the actual ramdisk
+    # payload. Scan near the head and retry from candidate offsets.
+    for off in _candidate_ramdisk_offsets(data):
+        if off == 0:
+            continue
+        result = _decompress_ramdisk_known(data[off:])
+        if result is not None:
+            return result
     return None
 
 
