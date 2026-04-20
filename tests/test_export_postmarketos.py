@@ -709,10 +709,27 @@ class ParseAudioStrategiesTests(unittest.TestCase):
             "standard": ["STRATEGY_MEDIA"],
             "vendor": [{"name": "vx_1000", "id": "1000"}],
         }
+        # Pass features to check feature categorisation and audio annotations
         text = ep.generate_deviceinfo(props, [], audio_strategies=audio)
         self.assertIn("Audio routing strategies", text)
         self.assertIn("STRATEGY_MEDIA", text)
         self.assertIn("1000", text)   # vendor strategy ID shown in range
+
+        # Verify feature categorisation with dump_dir that has permissions
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as td:
+            perms = Path(td) / "vendor" / "etc" / "permissions"
+            perms.mkdir(parents=True)
+            (perms / "test.xml").write_text(
+                '<permissions>'
+                '<feature name="android.hardware.nfc"/>'
+                '<feature name="android.hardware.camera"/>'
+                '</permissions>'
+            )
+            props2 = dict(props)
+            text2 = ep.generate_deviceinfo(props2, [], dump_dir=Path(td))
+        self.assertIn("NFC:", text2)
+        self.assertIn("Camera:", text2)
 
 
 if __name__ == "__main__":

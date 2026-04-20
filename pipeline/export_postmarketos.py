@@ -253,7 +253,8 @@ def _generate_cpus_node(cpu_info: dict[str, Any]) -> list[str]:
     ]
     cluster_labels = ["Little", "Mid", "Big", "Prime"]
     for ci, cluster in enumerate(cpu_info["clusters"]):
-        label = cluster_labels[min(ci, len(cluster_labels) - 1)]
+        label = (cluster_labels[ci] if ci < len(cluster_labels)
+                 else f"Cluster {ci}")
         count = cluster["end_cpu"] - cluster["start_cpu"] + 1
         cpu_name = cluster["compat"].split(",")[-1].upper()
         lines.append(f"\t\t/* {label} cluster: {count}x {cpu_name} */")
@@ -622,7 +623,7 @@ def generate_deviceinfo(
             lines.append(f"#   Standard (AOSP): {', '.join(ast['standard'])}")
         if vendor_count:
             v = ast["vendor"]
-            id_range = f"{v[0]['id']}–{v[-1]['id']}" if len(v) > 1 else v[0]["id"]
+            id_range = f"{v[0]['id']}--{v[-1]['id']}" if len(v) > 1 else v[0]["id"]
             lines.append(f"#   Vendor-specific : {vendor_count} strategies"
                          f" (IDs {id_range})")
 
@@ -1114,7 +1115,7 @@ def generate_apkbuild(
         notes.append("# Bluetooth: btbcm / btlinux firmware needed")
     if vendor_strat_count:
         v = ast["vendor"]
-        id_range = (f"{v[0]['id']}–{v[-1]['id']}" if len(v) > 1 else v[0]["id"])
+        id_range = (f"{v[0]['id']}--{v[-1]['id']}" if len(v) > 1 else v[0]["id"])
         std_names = ", ".join(ast.get("standard", []))
         notes.append(
             f"# Audio: {vendor_strat_count} vendor strategies (IDs {id_range}) "
@@ -1226,7 +1227,7 @@ def export(
     audio_strat = _parse_audio_strategies(audio_strategies_xml)
 
     # ── 1. deviceinfo ─────────────────────────────────────────────────────────
-    print("  [1/5] Generating deviceinfo...")
+    print("  [1/6] Generating deviceinfo...")
     di_text = generate_deviceinfo(
         props, modules, sysconfig,
         dump_dir=dump_dir, audio_strategies=audio_strat,
@@ -1234,7 +1235,7 @@ def export(
     (out_dir / "deviceinfo").write_text(di_text, encoding="utf-8")
 
     # ── 2. DTS ────────────────────────────────────────────────────────────────
-    print("  [2/5] Synthesising DTS...")
+    print("  [2/6] Synthesising DTS...")
     dts_text = generate_dts(
         props, dt_nodes, iomem, irqs, pinctrl, modules, sysconfig,
         dump_dir=dump_dir,
@@ -1242,17 +1243,17 @@ def export(
     (out_dir / f"{codename}.dts").write_text(dts_text, encoding="utf-8")
 
     # ── 3. modules-initfs (remaining modules not yet placed in deviceinfo) ────
-    print("  [3/5] Writing modules-initfs...")
+    print("  [3/6] Writing modules-initfs...")
     mod_text = generate_modules_initfs(modules)
     (out_dir / "modules-initfs").write_text(mod_text, encoding="utf-8")
 
     # ── 4. HAL list ───────────────────────────────────────────────────────────
-    print("  [4/5] Writing HAL interface list...")
+    print("  [4/6] Writing HAL interface list...")
     hal_text = generate_hal_list(hals)
     (out_dir / "hal_interfaces.txt").write_text(hal_text, encoding="utf-8")
 
     # ── 5. Hardware summary ───────────────────────────────────────────────────
-    print("  [5/5] Writing hardware block summary...")
+    print("  [5/6] Writing hardware block summary...")
     hw_text = generate_hw_summary(hw_blocks)
     (out_dir / "hardware_summary.txt").write_text(hw_text, encoding="utf-8")
 
