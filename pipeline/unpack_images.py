@@ -684,7 +684,7 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
             break
 
         pos += 110
-        if namesize <= 0 or pos + namesize > len(data):
+        if namesize == 0 or pos + namesize > len(data):
             break
         # Name (null-terminated, padded to 4-byte boundary after header+name)
         name_raw = data[pos:pos + namesize]
@@ -739,7 +739,7 @@ def extract_cpio_odc(data: bytes, out_dir: Path) -> list[str]:
             break
 
         pos += 76
-        if namesize <= 0 or pos + namesize > len(data):
+        if namesize == 0 or pos + namesize > len(data):
             break
         name_raw = data[pos:pos + namesize]
         name = name_raw.rstrip(b"\x00").decode("utf-8", errors="replace")
