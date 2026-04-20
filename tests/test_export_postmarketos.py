@@ -89,6 +89,7 @@ class GenerateDeviceinfoTests(unittest.TestCase):
             "ro.product.model":        "Test Device",
             "ro.product.manufacturer": "ACME",
             "ro.product.device":       "testdevice",
+            "ro.product.board":        "testboard",
             "ro.board.platform":       "testplatform",
             "ro.hardware":             "testhw",
             "ro.product.cpu.abi":      "arm64-v8a",
@@ -107,6 +108,7 @@ class GenerateDeviceinfoTests(unittest.TestCase):
             "ro.bootimage.build.fingerprint": "fp",
             "ro.boot.header_version":  "4",
             "ro.product.first_api_level": "33",
+            "ro.build.characteristics": "nosdcard",
         }
 
     def test_deviceinfo_contains_required_fields(self) -> None:
@@ -125,6 +127,52 @@ class GenerateDeviceinfoTests(unittest.TestCase):
         self.assertIn("deviceinfo_modules_initfs", text)
         self.assertIn("wlan", text)
 
+    def test_new_deviceinfo_fields_present(self) -> None:
+        """All fields matching the pmos-husky reference deviceinfo must appear."""
+        props = self._props()
+        text = ep.generate_deviceinfo(props, [])
+        self.assertIn("deviceinfo_codename", text)
+        self.assertIn("deviceinfo_header_version", text)
+        self.assertIn("deviceinfo_flash_pagesize", text)
+        self.assertIn("deviceinfo_bootimg_qcdt", text)
+        self.assertIn("deviceinfo_flash_fastboot_partition_vbmeta", text)
+        self.assertIn("deviceinfo_flash_fastboot_partition_dtbo", text)
+        self.assertIn("deviceinfo_kernel_cmdline", text)
+        self.assertIn("deviceinfo_rootfs_image_sector_size", text)
+        self.assertIn("deviceinfo_chassis", text)
+        self.assertIn("deviceinfo_external_storage", text)
+
+    def test_kernel_cmdline_from_sysconfig(self) -> None:
+        props = self._props()
+        sysconfig = {"proc.cmdline": "earlycon=exynos4210,0x10870000 console=ttySAC0,115200"}
+        text = ep.generate_deviceinfo(props, [], sysconfig=sysconfig)
+        self.assertIn("earlycon=exynos4210", text)
+        self.assertIn("deviceinfo_kernel_cmdline", text)
+
+    def test_pagesize_from_sysconfig(self) -> None:
+        props = self._props()
+        sysconfig = {"boot.pagesize": "4096"}
+        text = ep.generate_deviceinfo(props, [], sysconfig=sysconfig)
+        self.assertIn("4096", text)
+
+    def test_non_qcom_device_qcdt_false(self) -> None:
+        props = self._props()
+        text = ep.generate_deviceinfo(props, [])
+        self.assertIn('deviceinfo_bootimg_qcdt="false"', text)
+
+    def test_qcom_device_qcdt_true(self) -> None:
+        props = self._props()
+        props["ro.board.platform"] = "qcom_sdm845"
+        text = ep.generate_deviceinfo(props, [])
+        self.assertIn('deviceinfo_bootimg_qcdt="true"', text)
+
+    def test_exynos_dtb_path_format(self) -> None:
+        props = self._props()
+        props["ro.board.platform"] = "zuma"
+        props["ro.product.manufacturer"] = "Google"
+        text = ep.generate_deviceinfo(props, [])
+        self.assertIn("exynos/google/", text)
+
     def test_active_modules_consumed(self) -> None:
         props = self._props()
         modules: list[dict] = [
@@ -141,7 +189,7 @@ class GenerateDeviceinfoTests(unittest.TestCase):
         props = self._props()
         modules: list[dict] = []
         ep.generate_deviceinfo(props, modules)
-        # Key identity props must have been consumed
+        # Key identity props must have been consumed by the generator
         for key in ("ro.product.model", "ro.product.manufacturer",
                     "ro.board.platform", "ro.product.cpu.abi"):
             self.assertNotIn(key, props, f"prop {key!r} was not consumed")
@@ -169,9 +217,9 @@ class GenerateDtsTests(unittest.TestCase):
                 "node_id": 2,
                 "path": "/soc/uart@7af0000",
                 "compatible": "qcom,msm-uartdm",
-                "reg": "",
-                "interrupts": "0 26 4",
-                "clocks": "xo",
+                "reg": "0x0 0x7af0000 0x0 0x1000",
+                "interrupts": "0x0 0x1a 0x4",
+                "clocks": "0x1 0x2",
             },
         ]
         iomem = [
@@ -220,6 +268,45 @@ class GenerateDtsTests(unittest.TestCase):
         iomem = args[2]
         ep.generate_dts(*args)
         self.assertEqual(len(iomem), 0)
+
+    def test_dev_blocks_emit_real_reg_and_interrupts(self) -> None:
+        """reg and interrupts must appear as DTS cell arrays, not comments."""
+        dts = ep.generate_dts(*self._make_args())
+        # reg from binary: "0x0 0x7af0000 0x0 0x1000"
+        self.assertIn("reg = <0x0 0x7af0000 0x0 0x1000>;", dts)
+        # interrupts
+        self.assertIn("interrupts = <0x0 0x1a 0x4>;", dts)
+        # clocks
+        self.assertIn("clocks = <0x1 0x2>;", dts)
+
+    def test_dev_blocks_fallback_to_addr_when_no_reg(self) -> None:
+        """When reg is empty, node @addr is used to build stub reg property."""
+        props = {
+            "ro.product.model": "T", "ro.product.device": "t",
+            "ro.board.platform": "p", "ro.hardware": "h",
+            "ro.build.description": "",
+        }
+        dt_nodes = [{
+            "node_id": 1, "path": "/soc/spi@abc0000",
+            "compatible": "vendor,spi", "reg": "",
+            "interrupts": "", "clocks": "",
+        }]
+        dts = ep.generate_dts(props, dt_nodes, [], [], {}, [])
+        self.assertIn("0xabc0000", dts)
+        self.assertIn("reg = <", dts)
+
+    def test_chosen_node_emitted_with_cmdline(self) -> None:
+        sysconfig = {"proc.cmdline": "earlycon=exynos4210,0x10870000 console=ttySAC0,115200"}
+        dts = ep.generate_dts(*self._make_args(), sysconfig=sysconfig)
+        self.assertIn("chosen {", dts)
+        self.assertIn("bootargs", dts)
+        self.assertIn("earlycon=exynos4210", dts)
+
+    def test_chosen_node_placeholder_when_no_cmdline(self) -> None:
+        dts = ep.generate_dts(*self._make_args())
+        self.assertIn("chosen {", dts)
+        # placeholder comment present when no cmdline
+        self.assertIn("bootargs", dts)
 
 
 class GenerateModulesTests(unittest.TestCase):
@@ -322,6 +409,7 @@ class ExportEndToEndTests(unittest.TestCase):
             "ro.bootimage.build.fingerprint": "google/husky/fp",
             "ro.boot.header_version": "4",
             "ro.product.first_api_level": "33",
+            "ro.build.characteristics": "nosdcard",
         }
         for k, v in props.items():
             cur.execute(

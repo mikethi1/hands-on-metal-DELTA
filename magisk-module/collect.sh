@@ -346,7 +346,7 @@ if [ "$_HOM_USE_OPTION5_SOURCE" = false ]; then
 
     # 11. Protobuf files (can contain hardware configuration)
     log "Collecting .pb files..."
-    find /vendor /odm -name "*.pb" 2>/dev/null | while IFS= read -r f; do
+    find /vendor /odm /first_stage_ramdisk -name "*.pb" 2>/dev/null | while IFS= read -r f; do
         copy_file "$f"
     done
 

@@ -41,9 +41,14 @@ _repeat_char() {
 }
 
 # ── Load env registry ─────────────────────────────────────────
-_HOM_ENV_REGISTRY="${ENV_REGISTRY:-$HOME/hands-on-metal/env_registry.sh}"
+_hom_env_registry_path() {
+    echo "${ENV_REGISTRY:-${OUT:-$HOME/hands-on-metal}/env_registry.sh}"
+}
+
+_HOM_ENV_REGISTRY="$(_hom_env_registry_path)"
 load_env_registry() {
-    local _reg="${ENV_REGISTRY:-${OUT:-$HOME/hands-on-metal}/env_registry.sh}"
+    local _reg
+    _reg="$(_hom_env_registry_path)"
     if [ -f "$_reg" ]; then
         # shellcheck disable=SC1090
         source "$_reg" 2>/dev/null || true
@@ -162,7 +167,7 @@ check_prereq() {
         device_profile)
             [ -n "${HOM_DEV_MODEL:-}" ] ;;
         env_registry)
-            [ -f "${ENV_REGISTRY:-$HOME/hands-on-metal/env_registry.sh}" ] 2>/dev/null ;;
+            [ -f "$(_hom_env_registry_path)" ] 2>/dev/null ;;
         android_device)
             [ -n "$(getprop ro.build.display.id 2>/dev/null || true)" ] \
                 || [ -d "/data/data/com.termux" ] 2>/dev/null ;;
@@ -208,7 +213,7 @@ prereq_label() {
         boot_image)       echo "boot image (root DD / backup / GKI / factory / manual)" ;;
         magisk_binary)    echo "Magisk binary" ;;
         device_profile)   echo "device profile (core/device_profile.sh)" ;;
-        env_registry)     echo "environment registry ($HOME/hands-on-metal/env_registry.sh)" ;;
+        env_registry)     echo "environment registry ($(_hom_env_registry_path))" ;;
         android_device)   echo "Android device environment" ;;
         partition_index)  echo "partition index (build/partition_index.json)" ;;
         schema)           echo "database schema (schema/hardware_map.sql)" ;;
@@ -354,7 +359,7 @@ is_already_done() {
         core/flash.sh)
             [ "${HOM_FLASH_STATUS:-}" = "OK" ] 2>/dev/null ;;
         magisk-module/env_detect.sh)
-            [ -f "${ENV_REGISTRY:-$HOME/hands-on-metal/env_registry.sh}" ] 2>/dev/null ;;
+            [ -f "$(_hom_env_registry_path)" ] 2>/dev/null ;;
         magisk-module/collect.sh)
             [ -n "${HOM_LIVE_DUMP_DIR:-}" ] \
                 && [ -f "${HOM_LIVE_DUMP_DIR:-/nonexistent}/manifest.txt" ] 2>/dev/null ;;
@@ -367,8 +372,8 @@ is_already_done() {
         pipeline/parse_logs.py)
             [ -f "${HOM_PARSED_LOG_PATH:-${OUT:-$HOME/hands-on-metal}/parsed.json}" ] 2>/dev/null ;;
         pipeline/unpack_images.py)
-            [ -d "${HOM_LIVE_DUMP_DIR:-${OUT:-$HOME/hands-on-metal}/live_dump}/ramdisk" ] 2>/dev/null \
-                || [ -d "${HOM_FACTORY_DUMP_DIR:-/nonexistent}/ramdisk" ] 2>/dev/null ;;
+            [ -n "${HOM_RAMDISK_DIR:-}" ] \
+                && [ -d "${HOM_RAMDISK_DIR:-/nonexistent}" ] 2>/dev/null ;;
         pipeline/build_table.py)
             [ -f "${HOM_DB_PATH:-${OUT:-$HOME/hands-on-metal}/hardware_map.sqlite}" ] 2>/dev/null ;;
         pipeline/report.py)
@@ -391,7 +396,8 @@ refresh_status() {
     load_env_registry
     ITEM_STATUS=()
     MISSING_INFO=()
-    local _reg="${ENV_REGISTRY:-${OUT:-$HOME/hands-on-metal}/env_registry.sh}"
+    local _reg
+    _reg="$(_hom_env_registry_path)"
     if [ -f "$_reg" ]; then
         # shellcheck source=/dev/null
         . "$_reg" 2>/dev/null || true
@@ -573,8 +579,8 @@ print_device_header() {
         local dev_str="Device │ ${HOM_DEV_MODEL}"
         [ -n "${HOM_DEV_CODENAME:-}" ] \
             && dev_str="${dev_str} (${HOM_DEV_CODENAME})"
-        [ -n "${HOM_DEV_API_LEVEL:-}" ] \
-            && dev_str="${dev_str}  ·  API ${HOM_DEV_API_LEVEL}"
+        [ -n "${HOM_DEV_SDK_INT:-}" ] \
+            && dev_str="${dev_str}  ·  API ${HOM_DEV_SDK_INT}"
         if [ "${HOM_DEV_IS_AB:-}" = "true" ]; then
             dev_str="${dev_str}  ·  A/B"
         elif [ "${HOM_DEV_IS_AB:-}" = "false" ]; then
@@ -829,6 +835,7 @@ startup_scan() {
         HOM_DEV_VENDOR_BOOT_DEV HOM_DEV_SOC_MFR          HOM_DEV_SOC_MODEL
         HOM_DEV_PLATFORM        HOM_DEV_HARDWARE         HOM_DEV_BOOTLOADER
         HOM_DEV_BASEBAND        HOM_DEV_TENSOR_ARB_AFFECTED
+        HOM_DEV_SERIAL          HOM_DEV_KERNEL_VERSION
         HOM_DEV_FACTORY_ZIP     HOM_DEV_FACTORY_ZIP_MATCH HOM_DEV_FACTORY_BOARD
         HOM_DEV_FACTORY_REQUIRED_BOOTLOADER HOM_DEV_FACTORY_REQUIRED_BASEBAND
         # ── boot_image.sh / collect_factory.sh ────────────────────────
@@ -860,6 +867,7 @@ startup_scan() {
         HOM_RECOVERY_MODE
         # ── upload / fileserver ───────────────────────────────────────
         HOM_FILESERVER_URL      HOM_FILESERVER_TOKEN
+        HOM_RAMDISK_DIR         HOM_UNPACK_DUMP_DIR
     )
     for _var in "${_known_hom_vars[@]}"; do
         local _val="${!_var:-}"
@@ -1034,7 +1042,7 @@ script_completion_success() {
             ;;
         magisk-module/env_detect.sh)
             echo "Detected the device environment (shell, tools, Python, Termux)."
-            echo "  • Results saved to $HOME/hands-on-metal/env_registry.sh."
+            echo "  • Results saved to $(_hom_env_registry_path)."
             ;;
         magisk-module/service.sh)
             echo "Boot service executed: environment detection, Termux setup, and data collection."
@@ -1082,7 +1090,10 @@ script_completion_success() {
             echo "Generated HTML hardware report from the database."
             ;;
         pipeline/unpack_images.py)
+            load_env_registry
             echo "Unpacked boot / vendor-boot images and extracted the ramdisk."
+            echo "  • Extracted ramdisk files: ${HOM_RAMDISK_DIR:-(not yet set — press r to refresh)}"
+            echo "  • HOM_RAMDISK_DIR and HOM_UNPACK_DUMP_DIR written to env_registry."
             ;;
         pipeline/upload.py)
             if [ -n "${GITHUB_TOKEN:-}" ]; then
@@ -1173,7 +1184,8 @@ script_completion_failure() {
             echo "  If the dump lacks sys/kernel/debug/pinctrl/, re-run with root or skip this step." ;;
         pipeline/parse_symbols.py)
             echo "Symbol parsing failed."
-            echo "  Verify --db/--dump/--run-id and that dump has vendor_symbols/*.nm.txt." ;;
+            echo "  vendor_symbols data is only collected when root is available during hardware collection."
+            echo "  If the dump has vendor_symbols/ but no *.nm.txt files, re-run collection with root." ;;
         pipeline/report.py)
             echo "Report generation failed. Verify Python 3 is installed." ;;
         pipeline/unpack_images.py)
@@ -1273,7 +1285,10 @@ script_next_steps() {
         pipeline/report.py)
             echo "  → HTML report generated. Open it in a browser to view results." ;;
         pipeline/unpack_images.py)
-            echo "  → Images unpacked. Proceed with parsing or analysis of the extracted contents." ;;
+            echo "  → Images unpacked. HOM_RAMDISK_DIR is now set in env_registry."
+            echo "  → Run parse_manifests.py (option 7) — it will automatically read"
+            echo "    ramdisk prop files (default.prop, build.prop) via HOM_RAMDISK_DIR."
+            echo "  → Proceed with parsing or analysis of the extracted contents." ;;
         pipeline/upload.py)
             if [ -n "${GITHUB_TOKEN:-}" ]; then
                 echo "  → Bundle uploaded to GitHub Gist. Share the Gist URL with collaborators."
@@ -1328,6 +1343,10 @@ run_selected() {
                 ;;
             pipeline/parse_manifests.py|pipeline/parse_pinctrl.py|pipeline/parse_symbols.py)
                 args_array=(--db "$_db" --dump "$_dump" --run-id "$_run_id")
+                ;;
+            pipeline/unpack_images.py)
+                _bw="${HOM_BOOT_WORK_DIR:-$_out/boot_work}"
+                args_array=(--db "$_db" --dump "$_bw" --run-id "$_run_id")
                 ;;
             pipeline/build_table.py)
                 args_array=(--db "$_db" --dump "$_dump" --mode "$_mode")

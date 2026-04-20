@@ -53,6 +53,7 @@ import argparse
 import hashlib
 import io
 import os
+import re
 import sqlite3
 import struct
 import subprocess
@@ -68,6 +69,12 @@ try:
     _HAS_LZ4 = True
 except ImportError:
     _HAS_LZ4 = False
+
+try:
+    import lz4.block as _lz4_block
+    _HAS_LZ4_BLOCK = True
+except ImportError:
+    _HAS_LZ4_BLOCK = False
 
 try:
     import zstandard as _zstd
@@ -369,6 +376,19 @@ def _try_lz4(data: bytes) -> bytes | None:
         return None
 
 
+def _try_lz4_block(data: bytes) -> bytes | None:
+    """Try decoding raw LZ4 block streams (no frame magic)."""
+    if not _HAS_LZ4_BLOCK:
+        return None
+    try:
+        result = _lz4_block.decompress(data)
+    except Exception:
+        return None
+    if result.startswith((b"070701", b"070702", b"070707")):
+        return result
+    return None
+
+
 def _lz4_stdin_cli_commands() -> tuple[list[str], ...]:
     """Candidate commands for decoding LZ4 data from stdin."""
     return (
@@ -463,15 +483,63 @@ def _try_bz2(data: bytes) -> bytes | None:
         return None
 
 
-def decompress_ramdisk(data: bytes) -> bytes | None:
-    """Try all known compression formats; return raw cpio bytes or None."""
-    for fn in (_try_gzip, _try_lz4, _try_lzma, _try_zstd, _try_bz2):
+_RAMDISK_MAGIC_MARKERS: tuple[bytes, ...] = (
+    b"\x1f\x8b",             # gzip
+    b"\x04\x22\x4d\x18",     # lz4 frame
+    b"\x02\x21\x4c\x18",     # lz4 legacy frame
+    b"\xfd7zXZ\x00",         # xz
+    b"\x28\xb5\x2f\xfd",     # zstd
+    b"BZ",                   # bzip2
+)
+_CPIO_MAGICS: tuple[bytes, ...] = (b"070701", b"070702", b"070707")
+_RAMDISK_MAGIC_MARKERS = _RAMDISK_MAGIC_MARKERS + _CPIO_MAGICS
+
+
+def _decompress_ramdisk_known(data: bytes) -> bytes | None:
+    """Decode one ramdisk blob if it starts at offset 0."""
+    for fn in (_try_gzip, _try_lz4, _try_lz4_block, _try_lzma, _try_zstd, _try_bz2):
         result = fn(data)
         if result is not None:
             return result
-    # Already uncompressed cpio?
-    if data[:6] in (b"070701", b"070702", b"070707"):
+    if data[:6] in _CPIO_MAGICS:
         return data
+    return None
+
+
+def _candidate_ramdisk_offsets(data: bytes, max_scan: int = 512 * 1024) -> list[int]:
+    """Return unique offsets where a known ramdisk/compression marker appears."""
+    scan_len = min(len(data), max_scan)
+    if scan_len <= 0:
+        return [0]
+
+    offsets: set[int] = {0}
+    head = data[:scan_len]
+    for marker in _RAMDISK_MAGIC_MARKERS:
+        start = 0
+        while True:
+            idx = head.find(marker, start)
+            if idx < 0:
+                break
+            offsets.add(idx)
+            start = idx + 1
+    return sorted(offsets)
+
+
+def decompress_ramdisk(data: bytes) -> bytes | None:
+    """Try all known compression formats; return raw cpio bytes or None."""
+    # Most images place ramdisk payload at offset 0; try this fast path first.
+    direct = _decompress_ramdisk_known(data)
+    if direct is not None:
+        return direct
+
+    # Some partition dumps include small prefix bytes before the actual ramdisk
+    # payload. Scan near the head and retry from candidate offsets.
+    for off in _candidate_ramdisk_offsets(data):
+        if off == 0:
+            continue
+        result = _decompress_ramdisk_known(data[off:])
+        if result is not None:
+            return result
     return None
 
 
@@ -485,7 +553,82 @@ TARGET_NAMES = {
     "prop.default", "build.prop",
 }
 TARGET_PREFIXES = ("init.", "ueventd.", "fstab.", "lib/modules/")
-TARGET_SUFFIXES = (".rc", ".prop", ".fstab", ".ko", ".so")
+TARGET_SUFFIXES = (".rc", ".prop", ".fstab", ".ko", ".so", ".pb")
+
+# ── .pb (protobuf) bare-metal value extractor ────────────────────────────────
+# Maps filename substrings → sysconfig category key prefix.
+_PB_CATEGORY: list[tuple[str, str]] = [
+    ("pwrctrl",   "pwrctrl"),
+    ("power",     "pwrctrl"),
+    ("pmu",       "pwrctrl"),
+    ("pin",       "pins"),
+    ("gpio",      "pins"),
+    ("reg",       "reg"),
+    ("regulator", "reg"),
+    ("device",    "deviceinfo"),
+    ("hardware",  "deviceinfo"),
+    ("board",     "deviceinfo"),
+]
+
+_PB_HEX_RE    = re.compile(r"0x[0-9a-fA-F]{4,}")
+_PB_PIN_RE    = re.compile(r"\bgp[phabn]\d+[-_]?\d*\b|\bgpio\d+\b", re.IGNORECASE)
+_PB_PWR_RE    = re.compile(r"\bpd_\w+\b|\bpwrctrl\b|\bpmic\w*\b", re.IGNORECASE)
+_PB_COMPAT_RE = re.compile(r"\b[\w]{2,},[\w-]+\b")
+
+
+def _ingest_pb_file(pb_path: Path, src_path: str, run_id: int,
+                    cur: sqlite3.Cursor) -> None:
+    """Extract bare-metal values from a binary .pb protobuf file.
+
+    Reads the raw bytes, recovers printable ASCII strings ≥ 4 chars,
+    then filters for hardware-relevant patterns (register addresses,
+    pin identifiers, power domains, compatible strings) and stores up
+    to 64 results per file in sysconfig_entry so that export_postmarketos
+    and report.py can surface them.
+    """
+    try:
+        raw = pb_path.read_bytes()
+    except OSError:
+        return
+
+    stem = pb_path.stem.lower()
+    category = "ramdisk_pb"
+    for frag, cat in _PB_CATEGORY:
+        if frag in stem:
+            category = cat
+            break
+
+    # Recover printable ASCII strings (min 4 chars) from binary blob
+    strings: list[str] = []
+    buf: list[str] = []
+    for byte in raw:
+        ch = chr(byte)
+        if 0x20 <= byte < 0x7F:  # printable ASCII
+            buf.append(ch)
+        else:
+            if len(buf) >= 4:
+                strings.append("".join(buf))
+            buf.clear()
+    if len(buf) >= 4:
+        strings.append("".join(buf))
+
+    # Keep only hardware-relevant strings
+    hw_strings: list[str] = []
+    for s in strings:
+        if (_PB_HEX_RE.search(s) or _PB_PIN_RE.search(s)
+                or _PB_PWR_RE.search(s) or _PB_COMPAT_RE.search(s)):
+            hw_strings.append(s)
+
+    for i, val in enumerate(hw_strings[:64]):
+        key = f"pb.{category}.{pb_path.name}.{i}"
+        try:
+            cur.execute(
+                """INSERT OR IGNORE INTO sysconfig_entry
+                   (run_id, source, key, value) VALUES (?,?,?,?)""",
+                (run_id, src_path, key, val[:512]),
+            )
+        except sqlite3.Error:
+            pass
 
 
 def _want_file(name: str) -> bool:
@@ -747,13 +890,35 @@ def _get_env_registry_val(key: str) -> str:
             rest = line[len(key) + 1:]          # everything after '='
             if rest.startswith('"'):
                 parts = rest.split('"', 2)
-                if len(parts) >= 2:
-                    return parts[1]             # value between first pair of "
-                return ""                       # malformed line — no closing quote
+                return parts[1] if len(parts) >= 2 else ""
             return rest.split()[0]              # unquoted value (edge case)
     except OSError:
         pass
     return ""
+
+
+def _set_env_registry_val(key: str, value: str,
+                          category: str = "unpack") -> None:
+    """Write *key*=*value* to ~/hands-on-metal/env_registry.sh.
+
+    Creates the registry file if it does not yet exist.  Any existing line
+    for the same key is replaced so the file stays idempotent across runs.
+    The format matches core/*'s _reg_set() shell helper:
+        KEY="VALUE"  # cat:<category>
+    """
+    reg = Path.home() / "hands-on-metal" / "env_registry.sh"
+    try:
+        reg.parent.mkdir(parents=True, exist_ok=True)
+        existing: list[str] = []
+        if reg.exists():
+            existing = reg.read_text(errors="replace").splitlines()
+        # Drop any previous line for this key.
+        filtered = [ln for ln in existing if not ln.startswith(key + "=")]
+        filtered.append(f'{key}="{value}"  # cat:{category}')
+        reg.write_text("\n".join(filtered) + "\n")
+    except OSError as exc:
+        print(f"  warn: could not write {key} to env_registry: {exc}",
+              file=sys.stderr)
 
 
 def _decompress_image(src: Path, dest_dir: Path) -> Optional[Path]:
@@ -895,6 +1060,21 @@ def process_image(img_path: Path, dump: Path, run_id: int,
 
     print(f"    ↳ boot image v{img.version}, ramdisk={len(img.ramdisk_data)} bytes")
 
+    # Store bare-metal boot image values: kernel cmdline and page size
+    for sc_key, sc_val in (
+        ("boot.pagesize", str(img.page_size)),
+        ("boot.cmdline",  img.cmdline),
+    ):
+        if sc_val and sc_val != "0":
+            try:
+                cur.execute(
+                    """INSERT OR IGNORE INTO sysconfig_entry
+                       (run_id, source, key, value) VALUES (?,?,?,?)""",
+                    (run_id, f"image:{image_rel}", sc_key, sc_val),
+                )
+            except sqlite3.Error:
+                pass
+
     if not img.ramdisk_data:
         result["status"] = "no_ramdisk"
         return result
@@ -919,9 +1099,10 @@ def process_image(img_path: Path, dump: Path, run_id: int,
     result["ramdisk_files"] = files
     print(f"    ↳ extracted {len(files)} relevant files to {out_dir.relative_to(dump)}/")
 
-    # Parse fstab files found in the ramdisk
+    # Parse fstab files and ingest .pb files found in the ramdisk
     for fname in files:
-        if "fstab" in fname.lower():
+        fname_lower = fname.lower()
+        if "fstab" in fname_lower:
             fpath = out_dir / fname.lstrip("/")
             if fpath.exists():
                 text = fpath.read_text(errors="replace")
@@ -929,6 +1110,10 @@ def process_image(img_path: Path, dump: Path, run_id: int,
                                 run_id, cur)
                 if n:
                     print(f"      fstab {fname}: {n} entries")
+        elif fname_lower.endswith(".pb"):
+            fpath = out_dir / fname.lstrip("/")
+            if fpath.exists():
+                _ingest_pb_file(fpath, f"ramdisk:{image_rel}/{fname}", run_id, cur)
 
     # Register extracted files in collected_file
     for fname in files:
@@ -1293,6 +1478,16 @@ def main() -> None:
     db.close()
     print(f"\nDone — {total_files} ramdisk files extracted total.")
     print("Tip: re-run build_table.py or report.py to refresh the database.")
+
+    # Register the extraction paths in env_registry so that downstream
+    # pipeline steps (parse_manifests.py, build_table.py, report.py …)
+    # know where to find the extracted ramdisk files without having to
+    # re-discover them.
+    ramdisk_dir = dump / "ramdisk"
+    if ramdisk_dir.exists():
+        _set_env_registry_val("HOM_RAMDISK_DIR",    str(ramdisk_dir))
+        _set_env_registry_val("HOM_UNPACK_DUMP_DIR", str(dump))
+        print(f"Registered HOM_RAMDISK_DIR={ramdisk_dir} in env_registry.")
 
 
 if __name__ == "__main__":

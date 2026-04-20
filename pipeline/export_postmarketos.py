@@ -89,6 +89,14 @@ def _load_props(cur: sqlite3.Cursor, run_id: int) -> dict[str, str]:
     return {k: (v or "") for k, v in cur.fetchall()}
 
 
+def _load_sysconfig(cur: sqlite3.Cursor, run_id: int) -> dict[str, str]:
+    """Return {key: value} dict of sysconfig_entry rows for the run."""
+    cur.execute(
+        "SELECT key, value FROM sysconfig_entry WHERE run_id=?", (run_id,)
+    )
+    return {k: (v or "") for k, v in cur.fetchall()}
+
+
 def _load_dt_nodes(cur: sqlite3.Cursor, run_id: int) -> list[dict[str, Any]]:
     """Return list of dt_node dicts (working copy, sorted depth-first)."""
     cur.execute(
@@ -202,13 +210,21 @@ def _load_hw_blocks(cur: sqlite3.Cursor, run_id: int) -> list[dict[str, Any]]:
 
 # ── deviceinfo generator ──────────────────────────────────────────────────────
 
-def generate_deviceinfo(props: dict[str, str], modules: list[dict[str, Any]]) -> str:
+def generate_deviceinfo(
+    props: dict[str, str],
+    modules: list[dict[str, Any]],
+    sysconfig: dict[str, str] | None = None,
+) -> str:
     """
     Build the postmarketOS ``deviceinfo`` file content.
 
     Pops every property it uses from *props* and removes every module it
     includes from *modules*, leaving only unconsumed data in both.
+    *sysconfig* carries values from sysconfig_entry (proc.cmdline,
+    boot.pagesize, boot.cmdline) collected by the pipeline.
     """
+    sys = sysconfig or {}
+
     lines: list[str] = [
         "#!/bin/sh",
         "# Reference: <https://postmarketos.org/deviceinfo>",
@@ -227,27 +243,49 @@ def generate_deviceinfo(props: dict[str, str], modules: list[dict[str, Any]]) ->
     device       = _pop_prop(props, "ro.product.device")
     brand        = _pop_prop(props, "ro.product.brand")
 
-    # Also consume related properties so they are counted as used
+    # Consume related properties so they are counted as used
     _pop_prop(props, "ro.product.name")
     _pop_prop(props, "ro.build.product")
+
+    # Codename: prefer ro.product.board, fall back to device
+    board_name   = _pop_prop(props, "ro.product.board")
+    codename     = (board_name or device or "unknown").lower().replace(" ", "_")
+
+    # Year: derive from build date UTC if available
+    build_date   = _pop_prop(props, "ro.build.date.utc")
+    year = ""
+    if build_date and build_date.isdigit():
+        import datetime
+        try:
+            year = str(datetime.datetime.utcfromtimestamp(int(build_date)).year)
+        except (OSError, OverflowError):
+            pass
 
     lines += [
         kv("deviceinfo_format_version", "0"),
         kv("deviceinfo_name", model or device or "Unknown"),
         kv("deviceinfo_manufacturer", manufacturer or brand or "Unknown"),
-        kv("deviceinfo_date", ""),
+        kv("deviceinfo_codename", codename),
+        kv("deviceinfo_year", year),
     ]
 
     # ── Board / platform ─────────────────────────────────────────────────────
     platform     = _pop_prop(props, "ro.board.platform")
     hardware     = _pop_prop(props, "ro.hardware")
-    board        = _pop_prop(props, "ro.product.board")
     _pop_prop(props, "ro.soc.manufacturer")
     soc_model    = _pop_prop(props, "ro.soc.model")
 
-    # Best guess DTB path:  <platform>.dtb or board/<platform>-<board>.dtb
-    if platform and board and board != platform:
-        dtb_guess = f"{platform}-{board}"
+    # Build DTB path following postmarketOS convention for Samsung/Exynos/Google:
+    # exynos/<manufacturer>/<platform>-<board>  or  <platform>-<board>
+    soc_mfr = sys.get("soc.manufacturer", "").lower()
+    if not soc_mfr:
+        soc_mfr = (manufacturer or "").lower()
+    exynos_keywords = ("samsung", "google", "exynos", "gs1", "zuma")
+    if any(kw in soc_mfr or kw in (platform or "").lower() for kw in exynos_keywords):
+        mfr_dir = "google" if "google" in soc_mfr else "samsung"
+        dtb_guess = f"exynos/{mfr_dir}/{platform}-{codename}" if platform else codename
+    elif platform and codename and codename != platform:
+        dtb_guess = f"{platform}-{codename}"
     elif platform:
         dtb_guess = platform
     else:
@@ -258,6 +296,8 @@ def generate_deviceinfo(props: dict[str, str], modules: list[dict[str, Any]]) ->
         "# Board / platform",
         kv("deviceinfo_dtb", dtb_guess),
         kv("deviceinfo_soc", soc_model or platform or hardware or ""),
+        kv("deviceinfo_chassis", _chassis_from_props(props)),
+        kv("deviceinfo_external_storage", _external_storage_from_props(props)),
     ]
 
     # ── Architecture ─────────────────────────────────────────────────────────
@@ -274,8 +314,7 @@ def generate_deviceinfo(props: dict[str, str], modules: list[dict[str, Any]]) ->
     ]
 
     # ── Screen ───────────────────────────────────────────────────────────────
-    # Look for display info props (may not exist in all dumps)
-    w = _pop_prop(props, "ro.sf.lcd_density")   # density proxy — no direct w/h props
+    w = _pop_prop(props, "ro.sf.lcd_density")
     _pop_prop(props, "persist.sys.sf.native_mode")
 
     lines += [
@@ -287,16 +326,14 @@ def generate_deviceinfo(props: dict[str, str], modules: list[dict[str, Any]]) ->
     ]
 
     # ── Kernel modules for initramfs ─────────────────────────────────────────
-    # Consume modules with use_count > 0 (actively loaded) first.
     initfs_mods: list[str] = []
     remaining: list[dict[str, Any]] = []
     for m in modules:
         if m["use_count"] and int(m["use_count"]) > 0:
             initfs_mods.append(m["name"])
-            # row consumed — do NOT append to remaining
         else:
             remaining.append(m)
-    modules[:] = remaining  # mutate caller's list in-place
+    modules[:] = remaining
 
     lines += [
         "",
@@ -305,40 +342,52 @@ def generate_deviceinfo(props: dict[str, str], modules: list[dict[str, Any]]) ->
     ]
 
     # ── Boot image layout ────────────────────────────────────────────────────
-    cmdline = _pop_prop(props, "ro.boot.hardware")
+    _pop_prop(props, "ro.boot.hardware")          # consume; value not reused here
     _pop_prop(props, "ro.bootimage.build.fingerprint")
     hdr_ver = _pop_prop(props, "ro.boot.header_version")
 
     # Android 13+ uses header_version 4 with GKI
+    api_level = _pop_prop(props, "ro.product.first_api_level")
     if not hdr_ver:
-        api_level = _pop_prop(props, "ro.product.first_api_level")
         if api_level and int(api_level) >= 33:
             hdr_ver = "4"
         else:
-            _pop_prop(props, "ro.product.first_api_level")
             hdr_ver = "2"
-    else:
-        _pop_prop(props, "ro.product.first_api_level")
+
+    # Page size: prefer value collected from boot image header, then default
+    raw_pagesize = sys.get("boot.pagesize", "")
+    pagesize = raw_pagesize if raw_pagesize and raw_pagesize != "0" else "4096"
+
+    # Kernel cmdline: prefer /proc/cmdline (live), then boot image header cmdline
+    kernel_cmdline = (sys.get("proc.cmdline", "")
+                      or sys.get("boot.cmdline", ""))
+
+    # Non-Qualcomm device: qcdt is always false
+    is_qcom = "qcom" in (platform or "").lower() or "msm" in (hardware or "").lower()
 
     lines += [
         "",
         "# Boot image",
         kv("deviceinfo_flash_method", "fastboot"),
-        kv("deviceinfo_external_disk", "false"),
+        kv("deviceinfo_flash_fastboot_partition_vbmeta", "vbmeta"),
+        kv("deviceinfo_flash_fastboot_partition_dtbo", "dtbo"),
         kv("deviceinfo_generate_bootimg", "true"),
-        kv("deviceinfo_bootimg_header_version", hdr_ver),
-        kv("deviceinfo_bootimg_pagesize", "4096  # [? verify against mkbootimg]"),
-        kv("deviceinfo_bootimg_base", "0x00000000  # [? verify against mkbootimg]"),
-        kv("deviceinfo_bootimg_offset_ramdisk", "0x01000000  # [?]"),
-        kv("deviceinfo_bootimg_offset_second", "0x00000000  # [?]"),
-        kv("deviceinfo_bootimg_offset_tags", "0x00000100  # [?]"),
+        kv("deviceinfo_header_version", hdr_ver),
+        kv("deviceinfo_flash_pagesize", pagesize),
+        kv("deviceinfo_bootimg_qcdt", "true" if is_qcom else "false"),
     ]
 
-    # ── Kernel cmdline ────────────────────────────────────────────────────────
     lines += [
         "",
-        "# Kernel cmdline  [? extract from boot.img with unpackbootimg]",
-        kv("deviceinfo_kernel_cmdline", ""),
+        "# Kernel cmdline",
+        kv("deviceinfo_kernel_cmdline", kernel_cmdline),
+    ]
+
+    # ── UFS / storage ─────────────────────────────────────────────────────────
+    lines += [
+        "",
+        "# UFS / rootfs",
+        kv("deviceinfo_rootfs_image_sector_size", "4096"),
     ]
 
     # ── Fingerprint for reference ─────────────────────────────────────────────
@@ -351,6 +400,34 @@ def generate_deviceinfo(props: dict[str, str], modules: list[dict[str, Any]]) ->
     return "\n".join(lines) + "\n"
 
 
+def _chassis_from_props(props: dict[str, str]) -> str:
+    """Derive deviceinfo_chassis from ro.build.characteristics."""
+    chars = _pop_prop(props, "ro.build.characteristics")
+    if not chars:
+        return "handset"
+    chars_lower = chars.lower()
+    if "tablet" in chars_lower:
+        return "tablet"
+    if "watch" in chars_lower:
+        return "watch"
+    if "television" in chars_lower or "tv" in chars_lower:
+        return "television"
+    return "handset"
+
+
+def _external_storage_from_props(props: dict[str, str]) -> str:
+    """Derive deviceinfo_external_storage.
+
+    ro.build.characteristics is consumed by _chassis_from_props, which the
+    caller must invoke first.  Any remaining indication of SD-card support
+    is inferred from the model name as a secondary signal.
+    """
+    model = props.get("ro.product.model", "").lower()
+    if "tablet" in model:
+        return "true"
+    return "false"
+
+
 # ── DTS synthesiser ───────────────────────────────────────────────────────────
 
 def generate_dts(
@@ -360,6 +437,7 @@ def generate_dts(
     irqs:     list[dict[str, Any]],
     pinctrl:  dict[str, Any],
     modules:  list[dict[str, Any]],
+    sysconfig: dict[str, str] | None = None,
 ) -> str:
     """
     Synthesise a Device Tree Source from the hardware data.
@@ -367,7 +445,10 @@ def generate_dts(
     Pops / removes consumed rows from each working-copy list/dict.
     The generated DTS is a best-effort scaffold; it will need manual
     completion before it can be compiled and used.
+    *sysconfig* carries proc.cmdline and boot.cmdline from sysconfig_entry.
     """
+    sys = sysconfig or {}
+
     lines: list[str] = [
         "/dts-v1/;",
         "/* Generated by hands-on-metal — review before use */",
@@ -405,6 +486,21 @@ def generate_dts(
         "",
     ]
 
+    # ── chosen node with bootargs ─────────────────────────────────────────────
+    # Prefer /proc/cmdline (live kernel), then boot image header cmdline.
+    kernel_cmdline = sys.get("proc.cmdline", "") or sys.get("boot.cmdline", "")
+    lines += [
+        "\tchosen {",
+    ]
+    if kernel_cmdline:
+        escaped_cmdline = kernel_cmdline.replace('"', '\\"')
+        lines.append(f'\t\tbootargs = "{escaped_cmdline}";')
+    else:
+        lines.append('\t\t/* bootargs = "...";  [? fill from boot image] */')
+    lines += [
+        "\t};",
+        "",
+    ]
     # ── Memory nodes from iomem ───────────────────────────────────────────────
     # Consume rows whose name looks like "System RAM"
     mem_rows: list[dict[str, Any]] = []
@@ -491,22 +587,36 @@ def generate_dts(
         last_part = parts[-1]
         label = _safe_ident(last_part)
 
-        # Try to produce a register address from the node name (often has @addr)
+        # Extract the @addr suffix for the node name (e.g. "uart@10870000")
         at_pos = last_part.find("@")
         reg_addr = last_part[at_pos + 1:] if at_pos != -1 else ""
 
         lines.append(f"\t\t{label}: {last_part} {{")
+
+        # compatible — emit all strings (null-separated in DT, space after decode)
         if compat:
-            first_compat = compat.split()[0].rstrip(",")
-            lines.append(f'\t\t\tcompatible = "{first_compat}";')
-        if reg_addr:
-            lines.append(f"\t\t\treg = <0x0 0x{reg_addr} 0x0 0x1000>; /* size [?] */")
-        elif reg:
-            lines.append(f"\t\t\t/* reg raw: {reg!r} */")
+            compat_list = [c.strip().rstrip(",") for c in compat.split("\x00") if c.strip()]
+            if not compat_list:
+                compat_list = [compat.split()[0].rstrip(",")]
+            compat_str = ", ".join(f'"{c}"' for c in compat_list)
+            lines.append(f"\t\t\tcompatible = {compat_str};")
+
+        # reg — use parsed binary hex cells when available; fall back to @addr stub
+        if reg:
+            lines.append(f"\t\t\treg = <{reg}>;")
+        elif reg_addr:
+            lines.append(
+                f"\t\t\treg = <0x0 0x{reg_addr} 0x0 0x1000>; /* size [?] */"
+            )
+
+        # interrupts — emit as real DTS cells when available
         if interrupts:
-            lines.append(f"\t\t\t/* interrupts: {interrupts!r} */")
+            lines.append(f"\t\t\tinterrupts = <{interrupts}>;")
+
+        # clocks — emit as real DTS cells when available
         if clocks:
-            lines.append(f"\t\t\t/* clocks: {clocks!r} */")
+            lines.append(f"\t\t\tclocks = <{clocks}>;")
+
         lines += [
             "\t\t\tstatus = \"disabled\"; /* [? enable when driver ready] */",
             "\t\t};",
@@ -680,6 +790,7 @@ def export(db_path: Path, run_id: int | None, out_dir: Path) -> None:
     # ── Load all working copies ───────────────────────────────────────────────
     print("  Loading working copies from DB...")
     props     = _load_props(cur, run_id)          # dict  — pops as consumed
+    sysconfig = _load_sysconfig(cur, run_id)      # dict  — bare-metal values
     dt_nodes  = _load_dt_nodes(cur, run_id)       # list  — pops as consumed
     iomem     = _load_iomem(cur, run_id)          # list
     irqs      = _load_irqs(cur, run_id)           # list
@@ -700,12 +811,12 @@ def export(db_path: Path, run_id: int | None, out_dir: Path) -> None:
 
     # ── 1. deviceinfo ─────────────────────────────────────────────────────────
     print("  [1/5] Generating deviceinfo...")
-    di_text = generate_deviceinfo(props, modules)
+    di_text = generate_deviceinfo(props, modules, sysconfig)
     (out_dir / "deviceinfo").write_text(di_text, encoding="utf-8")
 
     # ── 2. DTS ────────────────────────────────────────────────────────────────
     print("  [2/5] Synthesising DTS...")
-    dts_text = generate_dts(props, dt_nodes, iomem, irqs, pinctrl, modules)
+    dts_text = generate_dts(props, dt_nodes, iomem, irqs, pinctrl, modules, sysconfig)
     (out_dir / f"{codename}.dts").write_text(dts_text, encoding="utf-8")
 
     # ── 3. modules-initfs (remaining modules not yet placed in deviceinfo) ────
