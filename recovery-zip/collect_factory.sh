@@ -81,7 +81,7 @@ reg_set() {
 # Record a path into the factory manifest.
 record_file() {
     local dst="$1"
-    echo "${dst#$FACTORY_DUMP_DIR/}" >> "$MANIFEST"
+    echo "${dst#"$FACTORY_DUMP_DIR"/}" >> "$MANIFEST"
 }
 
 cleanup() {
@@ -145,8 +145,11 @@ if [ -z "$FACTORY_ZIP" ] || [ ! -f "$FACTORY_ZIP" ]; then
     fi
 fi
 
-[ -n "$FACTORY_ZIP" ] && [ -f "$FACTORY_ZIP" ] \
-    || die "No factory ZIP found. Set HOM_FACTORY_ZIP=/path/to/factory.zip and re-run."
+if [ -n "$FACTORY_ZIP" ] && [ -f "$FACTORY_ZIP" ]; then
+    :
+else
+    die "No factory ZIP found. Set HOM_FACTORY_ZIP=/path/to/factory.zip and re-run."
+fi
 
 log "  Using factory ZIP: $FACTORY_ZIP"
 reg_set factory HOM_FACTORY_ZIP_PATH "$FACTORY_ZIP"
