@@ -61,6 +61,7 @@ import sys
 import tarfile
 import zipfile
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Optional
 
 # ── Optional compression library imports ────────────────────────────────────
@@ -645,6 +646,17 @@ def _want_file(name: str) -> bool:
     return False
 
 
+def _safe_cpio_member_path(name: str) -> Path | None:
+    """Return a sanitized relative path for CPIO members, or None if unsafe."""
+    stripped = name.lstrip("/")
+    if not stripped:
+        return None
+    pp = PurePosixPath(stripped)
+    if any(part in ("", ".", "..") for part in pp.parts):
+        return None
+    return Path(*pp.parts)
+
+
 def _align4(n: int) -> int:
     return (n + 3) & ~3
 
@@ -665,25 +677,38 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
         def _hex(start: int, length: int = 8) -> int:
             return int(hdr[start:start + length], 16)
 
-        namesize = _hex(94)
-        filesize = _hex(54)
+        try:
+            namesize = _hex(94)
+            filesize = _hex(54)
+        except ValueError:
+            break
 
         pos += 110
+        if namesize == 0 or pos + namesize > len(data):
+            break
         # Name (null-terminated, padded to 4-byte boundary after header+name)
         name_raw = data[pos:pos + namesize]
         name = name_raw.rstrip(b"\x00").decode("utf-8", errors="replace")
-        pos += _align4(110 + namesize) - 110
+        name_step = _align4(110 + namesize) - 110
+        if pos + name_step > len(data):
+            break
+        pos += name_step
 
         if name == "TRAILER!!!":
             break
 
+        if pos + filesize > len(data):
+            break
         file_data = data[pos:pos + filesize]
         pos += _align4(filesize)
 
         if name and _want_file(name):
-            out_path = out_dir / name.lstrip("/")
-            out_path.parent.mkdir(parents=True, exist_ok=True)
+            rel_path = _safe_cpio_member_path(name)
+            if rel_path is None:
+                continue
+            out_path = out_dir / rel_path
             try:
+                out_path.parent.mkdir(parents=True, exist_ok=True)
                 out_path.write_bytes(file_data)
                 extracted.append(name)
             except OSError:
@@ -707,10 +732,15 @@ def extract_cpio_odc(data: bytes, out_dir: Path) -> list[str]:
         def _oct(start: int, length: int) -> int:
             return int(hdr[start:start + length], 8)
 
-        namesize = _oct(59, 6)
-        filesize = _oct(65, 11)
+        try:
+            namesize = _oct(59, 6)
+            filesize = _oct(65, 11)
+        except ValueError:
+            break
 
         pos += 76
+        if namesize == 0 or pos + namesize > len(data):
+            break
         name_raw = data[pos:pos + namesize]
         name = name_raw.rstrip(b"\x00").decode("utf-8", errors="replace")
         pos += namesize
@@ -718,13 +748,18 @@ def extract_cpio_odc(data: bytes, out_dir: Path) -> list[str]:
         if name == "TRAILER!!!":
             break
 
+        if pos + filesize > len(data):
+            break
         file_data = data[pos:pos + filesize]
         pos += filesize
 
         if name and _want_file(name):
-            out_path = out_dir / name.lstrip("/")
-            out_path.parent.mkdir(parents=True, exist_ok=True)
+            rel_path = _safe_cpio_member_path(name)
+            if rel_path is None:
+                continue
+            out_path = out_dir / rel_path
             try:
+                out_path.parent.mkdir(parents=True, exist_ok=True)
                 out_path.write_bytes(file_data)
                 extracted.append(name)
             except OSError:
