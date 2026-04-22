@@ -145,9 +145,7 @@ if [ -z "$FACTORY_ZIP" ] || [ ! -f "$FACTORY_ZIP" ]; then
     fi
 fi
 
-if [ -n "$FACTORY_ZIP" ] && [ -f "$FACTORY_ZIP" ]; then
-    :
-else
+if [ -z "$FACTORY_ZIP" ] || [ ! -f "$FACTORY_ZIP" ]; then
     die "No factory ZIP found. Set HOM_FACTORY_ZIP=/path/to/factory.zip and re-run."
 fi
 
