@@ -31,7 +31,7 @@
 # shellcheck disable=SC2034  # consumed by core/logging.sh when sourced
 SCRIPT_NAME="anti_rollback"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-$HOME/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 
 # The SPL from which Magisk's May-2026 anti-rollback policy activates.
@@ -105,6 +105,30 @@ _read_avb_rollback_index() {
     echo ""
 }
 
+# Best-effort fallback when HOM_BOOT_IMG_PATH is missing or stale.
+# Prefers option-5 output in $OUT/boot_work, then common backup locations.
+_fallback_boot_image_path() {
+    local boot_part candidate
+    boot_part=$(_reg_get HOM_DEV_BOOT_PART)
+    boot_part="${boot_part:-boot}"
+
+    for candidate in \
+        "$OUT/boot_work/${boot_part}_original.img" \
+        "$OUT/boot_work/${boot_part}.img" \
+        "$OUT/boot_work/init_boot_original.img" \
+        "$OUT/boot_work/boot_original.img" \
+        "$OUT/boot_work/init_boot.img" \
+        "$OUT/boot_work/boot.img" \
+        /data/adb/magisk/stock_boot.img; do
+        if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+
+    echo ""
+}
+
 # ── main function ─────────────────────────────────────────────
 
 run_anti_rollback_check() {
@@ -125,7 +149,17 @@ permanently brick the device via AVB fuse-burning — this check prevents that"
     log_var "avb_state"  "$avb_state"  "AVB verified boot state"
 
     if [ -z "$boot_img" ] || [ ! -f "$boot_img" ]; then
-        ux_abort "Anti-rollback check: no boot image found at '$boot_img' — run boot image acquisition first."
+        local recovered_boot_img
+        recovered_boot_img=$(_fallback_boot_image_path)
+        if [ -n "$recovered_boot_img" ] && [ -f "$recovered_boot_img" ]; then
+            boot_img="$recovered_boot_img"
+            _reg_set boot HOM_BOOT_IMG_PATH "$boot_img"
+            ux_print "  ℹ  HOM_BOOT_IMG_PATH was missing/invalid -- using discovered image:"
+            ux_print "     $boot_img"
+            log_info "Recovered HOM_BOOT_IMG_PATH via fallback discovery: $boot_img"
+        else
+            ux_abort "Anti-rollback check: no valid boot image found. Run boot image acquisition first."
+        fi
     fi
 
     # ── 1. Check device SPL vs May 2026 policy ────────────────
@@ -402,7 +436,28 @@ permanently brick the device via AVB fuse-burning — this check prevents that"
         ux_print ""
     fi
 
-    # ── 7. Final verdict ─────────────────────────────────────
+    # ── 7. Consolidated minimum Magisk version ────────────────
+    # Any active ARP mechanism requires Magisk >= v30.7:
+    #   • May-2026 SPL policy   — PATCHVBMETAFLAG support added in 30.7
+    #   • Tensor bootloader ARB — correct rollback index handling
+    #   • Non-zero AVB rollback index — bootloader enforces rollback
+    #     protection that older Magisk may mishandle
+    # Stored as a numeric version code so magisk_patch.sh can compare
+    # directly without re-deriving conditions.
+    local arb_min_ver="0"
+    if [ "$may2026_active" = "true" ] || [ "$tensor_affected" = "true" ]; then
+        arb_min_ver="$MAY_2026_MAGISK_MIN"
+    fi
+    if [ "$arb_min_ver" = "0" ] && [ -n "$dev_rollback_index" ] \
+            && [ "$dev_rollback_index" != "0" ] \
+            && [ "$dev_rollback_index" != "UNKNOWN" ]; then
+        arb_min_ver="$MAY_2026_MAGISK_MIN"
+    fi
+    _reg_set avb HOM_ARB_MIN_MAGISK_VER "$arb_min_ver"
+    log_var "HOM_ARB_MIN_MAGISK_VER" "$arb_min_ver" \
+        "minimum Magisk version code required by active ARP conditions (0=none)"
+
+    # ── 8. Final verdict ─────────────────────────────────────
 
     if [ "$rollback_risk" = "true" ]; then
         ux_step_result "Anti-Rollback Check" "FAIL" \

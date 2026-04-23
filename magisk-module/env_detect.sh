@@ -9,18 +9,18 @@
 # flat env registry at $ENV_REGISTRY so the rest of the
 # pipeline can source it without a database dependency.
 #
-# All writes go to /sdcard/hands-on-metal/env_registry.sh —
+# All writes go to $OUT/env_registry.sh (~/hands-on-metal/env_registry.sh) —
 # a sourceable key=value file.  The pipeline ingests this into
 # the env_var SQLite table later.
 #
 # Safety guarantees (same as collect.sh):
-#   • Never writes outside /sdcard/hands-on-metal/
+#   • Never writes outside $OUT/
 #   • Never modifies any system partition
 # ============================================================
 
 set -u
 
-OUT=/sdcard/hands-on-metal
+OUT="${HOME:-/data/local/tmp}/hands-on-metal"
 ENV_REGISTRY="$OUT/env_registry.sh"
 LOG="$OUT/env_detect.log"
 
@@ -382,7 +382,7 @@ fi
 
 log "Auditing folder permissions..."
 
-for dir_path in /sdcard/hands-on-metal /data/adb /data/local/tmp; do
+for dir_path in "$OUT" /data/adb /data/local/tmp; do
     dir_key="HOM_PERM_$(echo "$dir_path" | sed 's|/|_|g' | sed 's|^_||' | tr 'a-z-' 'A-Z_')"
     if [ -d "$dir_path" ]; then
         # Check read access
@@ -417,12 +417,13 @@ for dir_path in /sdcard/hands-on-metal /data/adb /data/local/tmp; do
 done
 
 # Output directory must be writable — warn loudly if not
-_out_key="HOM_PERM_SDCARD_HANDS_ON_METAL"
-_out_writable=$(grep "^${_out_key}_WRITABLE=" "$ENV_REGISTRY" 2>/dev/null | \
-    cut -d= -f2- | sed 's/^"//;s/"[[:space:]].*//' || echo false)
-if [ "$_out_writable" != "true" ]; then
-    log "ERROR: /sdcard/hands-on-metal is NOT writable — workflow cannot proceed"
+_out_test="$OUT/.hom_perm_check_$$"
+if ! (mkdir -p "$OUT" && touch "$_out_test") 2>/dev/null; then
+    log "ERROR: $OUT is NOT writable — workflow cannot proceed"
+else
+    rm -f "$_out_test"
 fi
+unset _out_test
 
 # ── 7. Key filesystem paths ───────────────────────────────────
 
@@ -588,6 +589,36 @@ if [ "$SDK_INT" -ge 33 ] 2>/dev/null; then
     reg_set api HOM_API_INIT_BOOT "true"
 else
     reg_set api HOM_API_INIT_BOOT "false"
+fi
+
+# ── 12. Summary variables ─────────────────────────────────────
+# Canonical aliases consumed by detect.sh, menu_lib.sh, and collect.sh.
+# Maps the detailed env_detect vars to the simpler names that the rest
+# of the workflow expects so every consumer sees consistent keys.
+
+log "Writing summary variables..."
+
+# HOM_ENV_SHELL — shell environment type string (termux / linux_host / etc.)
+reg_set shell HOM_ENV_SHELL "$HOM_ENV_TYPE"
+
+# HOM_ENV_BUSYBOX — path to busybox binary, or empty if not found
+reg_set shell HOM_ENV_BUSYBOX "$BB"
+
+# HOM_ENV_PYTHON — canonical Python binary path, or empty if none found
+reg_set shell HOM_ENV_PYTHON "$CANONICAL"
+
+# HOM_ENV_TERMUX — "true" when Termux is installed, "false" otherwise
+if [ -n "$TERMUX_PREFIX" ]; then
+    reg_set shell HOM_ENV_TERMUX "true"
+else
+    reg_set shell HOM_ENV_TERMUX "false"
+fi
+
+# HOM_ENV_ROOT — "true" when running as uid 0, "false" otherwise
+if [ "$EXEC_UID" = "0" ]; then
+    reg_set shell HOM_ENV_ROOT "true"
+else
+    reg_set shell HOM_ENV_ROOT "false"
 fi
 
 # ── done ─────────────────────────────────────────────────────

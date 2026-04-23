@@ -80,7 +80,7 @@ chmod +x tools/busybox-arm64
 # Magisk binaries (download the Magisk apk and extract)
 # Magisk APK is a zip; the binaries are inside it.
 # Example for Magisk 30.7:
-_TMP="${TMPDIR:-/tmp}"
+_TMP="${TMPDIR:-${HOME:-.}/tmp}"
 curl -L -o "$_TMP/magisk.apk" \
   https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk
 unzip -jo "$_TMP/magisk.apk" 'lib/arm64-v8a/libmagisk.so' -d "$_TMP/"

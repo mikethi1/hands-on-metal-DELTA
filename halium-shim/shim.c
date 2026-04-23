@@ -16,7 +16,7 @@
  *   - binder_write_read ioctl    — Binder IPC transactions
  *
  * Output:
- *   JSON-lines written to $HOM_SHIM_LOG (default: /tmp/hom_shim.jsonl)
+ *   JSON-lines written to $HOM_SHIM_LOG (default: $HOME/tmp/hom_shim.jsonl)
  *   Each line is one intercepted event, ordered by monotonic clock.
  *
  * Decoding ioctl command codes (Linux _IOC macros):
@@ -65,7 +65,20 @@ static uint64_t     g_call_idx    = 0;
 static void shim_log_init(void) {
     if (g_log) return;
     const char *path = getenv("HOM_SHIM_LOG");
-    if (!path) path = "/tmp/hom_shim.jsonl";
+    static char default_path[1024];
+    if (!path || !*path) {
+        const char *home = getenv("HOME");
+        if (home && *home) {
+            int path_len = snprintf(default_path, sizeof(default_path), "%s/tmp/hom_shim.jsonl", home);
+            if (path_len < 0 || (size_t)path_len >= sizeof(default_path)) {
+                fprintf(stderr, "hom_shim: HOME path too long, falling back to ./tmp/hom_shim.jsonl\n");
+                snprintf(default_path, sizeof(default_path), "./tmp/hom_shim.jsonl");
+            }
+        } else {
+            snprintf(default_path, sizeof(default_path), "./tmp/hom_shim.jsonl");
+        }
+        path = default_path;
+    }
     g_log = fopen(path, "a");
     if (!g_log) g_log = stderr;
 }

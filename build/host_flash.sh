@@ -405,7 +405,7 @@ _resolve_target_serial() {
     fi
 
     if [ "$mode" = "adb" ]; then
-        devices=$(adb devices 2>/dev/null | grep -E '\t(device|recovery|sideload)' | awk '{print $1}')
+        devices=$(adb devices 2>/dev/null | grep -E '[[:space:]](device|recovery|sideload)$' | awk '{print $1}')
     else
         devices=$(fastboot devices 2>/dev/null | awk '{print $1}')
     fi
@@ -581,17 +581,17 @@ check_host_prereqs() {
 check_device_adb() {
     if [ -n "$HOM_TARGET_SERIAL" ]; then
         # Check specific serial
-        adb devices 2>/dev/null | grep -qE "^${HOM_TARGET_SERIAL}\s+(device|recovery|sideload)"
+        adb devices 2>/dev/null | grep -qE "^${HOM_TARGET_SERIAL}[[:space:]]+(device|recovery|sideload)$"
     else
         local count
-        count=$(adb devices 2>/dev/null | grep -cE '\t(device|recovery|sideload)' || true)
+        count=$(adb devices 2>/dev/null | grep -cE '[[:space:]](device|recovery|sideload)$' || true)
         [ "$count" -gt 0 ]
     fi
 }
 
 check_device_fastboot() {
     if [ -n "$HOM_TARGET_SERIAL" ]; then
-        fastboot devices 2>/dev/null | grep -qE "^${HOM_TARGET_SERIAL}\s"
+        fastboot devices 2>/dev/null | grep -qE "^${HOM_TARGET_SERIAL}[[:space:]]"
     else
         local count
         count=$(fastboot devices 2>/dev/null | grep -cE 'fastboot' || true)
@@ -1790,7 +1790,7 @@ run_c3() {
 
         # Check if already in recovery/sideload
         local state
-        state=$(adb devices 2>/dev/null | grep -E "^${HOM_TARGET_SERIAL:-[^\t]+}\s" | grep -oE '(recovery|sideload)' | head -1 || true)
+        state=$(adb devices 2>/dev/null | grep -E "^${HOM_TARGET_SERIAL:-[^[:space:]]+}[[:space:]]" | grep -oE '(recovery|sideload)' | head -1 || true)
         if [ "$state" = "sideload" ]; then
             ok "TARGET already in sideload mode"
         elif [ "$state" = "recovery" ]; then
@@ -1849,7 +1849,7 @@ run_c3() {
     echo "  Next steps (on TARGET device):"
     echo "    1. TARGET reboots automatically after the installer finishes"
     echo "    2. On TARGET: open Magisk app → confirm root"
-    echo "    3. On TARGET: check /sdcard/hands-on-metal/ for hardware data"
+    echo "    3. On TARGET: check ~/hands-on-metal/ for hardware data"
     echo ""
 }
 

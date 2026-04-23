@@ -99,7 +99,7 @@ All three paths run the same guided state machine. See [docs/INSTALL_HUB.md](doc
 
 | Requirement | Minimum | Notes |
 |-------------|---------|-------|
-| Python | 3.8+ | All pipeline scripts; **stdlib only — no pip deps required** |
+| Python | 3.8+ | All pipeline scripts; optional `lz4` package installed by `setup.sh` |
 | `git` | Any modern version | Cloning the repo and running `fetch_all_deps.sh` |
 | `zip` / `unzip` | Any | Building and extracting flashable ZIPs |
 | `curl` | Any | Downloading Magisk APK and busybox binary |
@@ -113,10 +113,11 @@ All three paths run the same guided state machine. See [docs/INSTALL_HUB.md](doc
 Run `bash check_deps.sh` to verify all dependencies in one step.
 The check runs automatically when using `terminal_menu.sh` or the build scripts.
 
-> **No third-party Python packages are required.**  
-> All pipeline scripts use the Python standard library (`sqlite3`, `argparse`, `json`,
-> `urllib`, `gzip`, `lzma`, `bz2`, `pathlib`, …).
-> Optional packages `lz4` and `zstandard` improve boot image decompression coverage.
+> **`lz4` is installed automatically by `setup.sh`** (`pip install lz4`).  
+> All other pipeline scripts use only the Python standard library (`sqlite3`, `argparse`,
+> `json`, `urllib`, `gzip`, `lzma`, `bz2`, `pathlib`, …).
+> `zstandard` can be added manually (`pip install zstandard`) for Zstandard-compressed
+> boot images.
 
 ---
 
@@ -204,6 +205,9 @@ bash setup.sh
 option 1 (`build/build_offline_zip.sh`) — or just run `bash build.sh` from
 the repo root, which is the equivalent single-command form.
 
+`setup.sh` syncs the repository before continuing by default.
+To skip that sync, run: `bash setup.sh --no-sync`
+
 If `git` is not installed the script attempts to install it automatically
 using the system package manager (`apt-get`, `pkg`, `dnf`, `pacman`, or
 `brew` / `xcode-select`). If automatic installation fails, it prints
@@ -218,6 +222,9 @@ The script is safe to re-run — it skips steps that are already complete.
 4. Create `dist/hands-on-metal-full-bundle-<ver>.zip` — a single ZIP containing the complete repo snapshot, all tools, both flashable ZIPs, and SHA-256 checksums
 
 ### 2 — Build the flashable ZIPs only (no binary downloads)
+
+> **Tip:** All examples below assume the repo is at `~/hands-on-metal`. If you
+> cloned it elsewhere, replace `~/hands-on-metal` with the actual path.
 
 If you already have the binaries in `tools/` or want device-side binaries:
 

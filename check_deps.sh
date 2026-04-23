@@ -87,6 +87,13 @@ _hom_optional openssl  "Fallback SHA-256 hashing on device (core scripts)"
 _hom_optional lz4     "Decompressing LZ4-compressed TWRP Nandroid backups (core/boot_image.sh)"
 _hom_optional gzip    "Decompressing gzip-compressed TWRP Nandroid backups (core/boot_image.sh)"
 
+# Python lz4 package — preferred over the CLI for ramdisk decompression in unpack_images.py
+if ! python3 -c "import lz4" 2>/dev/null; then
+    echo "  ⚠  missing (optional): python lz4 package (pip install lz4) — LZ4 ramdisk decompression in pipeline/unpack_images.py"
+else
+    echo "  ✓  python lz4 package"
+fi
+
 echo ""
 
 # ── Auto-fetch Magisk from topjohnwu/Magisk GitHub releases ───
@@ -106,14 +113,15 @@ _hom_fetch_magisk() {
 
     # Already fetched? Nothing to do.
     if [ -f "$tools_dir/magisk64" ] && [ -f "$tools_dir/magisk32" ] \
-            && [ -f "$tools_dir/magiskinit64" ]; then
+            && [ -f "$tools_dir/magiskinit64" ] \
+            && [ -f "$tools_dir/magiskboot" ] && [ -f "$tools_dir/boot_patch.sh" ]; then
         echo "  ✓  Magisk binaries already present in tools/"
         return 0
     fi
 
     local version="${HOM_MAGISK_VERSION:-v30.7}"
     local url="https://github.com/topjohnwu/Magisk/releases/download/${version}/Magisk-${version}.apk"
-    local tmp="${TMPDIR:-/tmp}"
+    local tmp="${TMPDIR:-${HOME:-.}/tmp}"
     local apk="$tmp/hands-on-metal-magisk-${version}.apk"
 
     mkdir -p "$tools_dir" "$tmp"
@@ -131,9 +139,11 @@ _hom_fetch_magisk() {
         echo "  ✓  Magisk APK cached at $apk"
     fi
 
-    # Extract magisk64 / magisk32 / magiskinit64 from the APK.
+    # Extract magisk64 / magisk32 / magiskinit64 / magiskboot from the APK.
     # Magisk v26+ renamed libmagisk{64,32}.so → libmagisk.so under each ABI;
     # try the new path first, then fall back to the old one.
+    # Magisk v26+ removed --boot-patch from the main binary; boot patching
+    # requires magiskboot + boot_patch.sh (works without root).
     _hom_extract_magisk() {
         local dest="$1"; shift
         local p
@@ -158,11 +168,22 @@ _hom_fetch_magisk() {
         'lib/armeabi-v7a/libmagisk32.so' || extract_ok=false
     _hom_extract_magisk "$tools_dir/magiskinit64" \
         'lib/arm64-v8a/libmagiskinit.so' || extract_ok=false
+    _hom_extract_magisk "$tools_dir/magiskboot" \
+        'lib/arm64-v8a/libmagiskboot.so' || extract_ok=false
+
+    # boot_patch.sh + util_functions.sh — the actual patching scripts
+    if unzip -jo "$apk" 'assets/boot_patch.sh' -d "$tools_dir/" >/dev/null 2>&1; then
+        chmod +x "$tools_dir/boot_patch.sh"
+    else
+        echo "  ⚠  boot_patch.sh not found in APK assets." >&2
+        extract_ok=false
+    fi
+    unzip -jo "$apk" 'assets/util_functions.sh' -d "$tools_dir/" >/dev/null 2>&1 || true
 
     unset -f _hom_extract_magisk
 
     if [ "$extract_ok" = true ]; then
-        echo "  ✓  Magisk binaries extracted to tools/ (magisk64, magisk32, magiskinit64)"
+        echo "  ✓  Magisk binaries extracted to tools/ (magisk64, magisk32, magiskinit64, magiskboot, boot_patch.sh)"
     else
         echo "  ⚠  Magisk APK downloaded but extraction failed (unexpected APK layout)." >&2
     fi
