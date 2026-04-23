@@ -150,6 +150,15 @@ class UnpackImagesTests(unittest.TestCase):
             out = unpack_images._try_lz4_block(fake_input)
         self.assertIsNone(out)
 
+    def test_try_lz4_block_returns_raw_output(self) -> None:
+        fake_input = b"raw-lz4-block-data"
+        fake_block = mock.Mock()
+        fake_block.decompress.return_value = b"not-a-cpio-payload"
+        with mock.patch.object(unpack_images, "_HAS_LZ4_BLOCK", True), \
+             mock.patch.object(unpack_images, "_lz4_block", fake_block, create=True):
+            out = unpack_images._try_lz4_block(fake_input)
+        self.assertEqual(out, b"not-a-cpio-payload")
+
     def test_extract_cpio_newc_malformed_header_does_not_raise(self) -> None:
         bad = b"070701" + (b"Z" * 104)
         with tempfile.TemporaryDirectory() as td:
@@ -166,6 +175,16 @@ class UnpackImagesTests(unittest.TestCase):
             out = unpack_images.extract_cpio(archive, out_dir)
             self.assertEqual(out, [])
             self.assertFalse((out_dir.parent / "outside.prop").exists())
+
+    def test_extract_cpio_newc_rejects_windows_backslash_path(self) -> None:
+        archive = (
+            self._newc_entry(r"..\outside.prop", b"leak")
+            + self._newc_entry("TRAILER!!!", b"")
+        )
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = Path(td)
+            out = unpack_images.extract_cpio(archive, out_dir)
+            self.assertEqual(out, [])
 
 
 if __name__ == "__main__":
