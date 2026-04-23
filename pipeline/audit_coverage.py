@@ -28,8 +28,8 @@ the pipeline.
 
 Usage:
   python pipeline/audit_coverage.py --static
-  python pipeline/audit_coverage.py --dump ./live_dump
-  python pipeline/audit_coverage.py --static --dump ./live_dump --out audit.md
+  python pipeline/audit_coverage.py --dump ./boot_work
+  python pipeline/audit_coverage.py --static --dump ./boot_work --out audit.md
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ PARSER_SCRIPTS = sorted(
 
 
 # ── Static cross-reference data ─────────────────────────────────────────────
-# Each entry is (relative path under live_dump/, producing script).
+# Each entry is (relative path under the dump root, producing script).
 # Keep this list in sync when collect.sh / collect_recovery.sh change.
 COLLECTED_ARTIFACTS: list[tuple[str, str]] = [
     # Mode A — live root-adaptive collector
@@ -588,7 +588,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--static", action="store_true",
                     help="Emit the static cross-reference gap report.")
     ap.add_argument("--dump", default=None,
-                    help="Path to a live_dump/ directory to audit for "
+                    help="Path to a dump directory (prefer boot_work/) to audit for "
                          "missing/empty artefacts.")
     ap.add_argument("--out", default=None,
                     help="Write the report to a file (default: stdout).")
@@ -599,7 +599,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if not args.static and not args.dump:
-        # Default to both static and (if available) ./live_dump
+        # Default to both static and (if available) ./boot_work
         args.static = True
 
     static_data = None

@@ -119,7 +119,11 @@ if [ ! -f "$ENV_REGISTRY" ] || \
     _uid=$(id -u 2>/dev/null || echo 9999)
     _node="unprivileged"
     if [ "$_uid" = "0" ]; then
-        [ -d /data/adb/magisk ] && _node="root_magisk" || _node="root_other"
+        if [ -d /data/adb/magisk ]; then
+            _node="root_magisk"
+        else
+            _node="root_other"
+        fi
     fi
     [ -f "$ENV_REGISTRY" ] || : > "$ENV_REGISTRY"
     reg_set shell HOM_EXEC_NODE "$_node"
@@ -346,7 +350,7 @@ if [ "$_HOM_USE_OPTION5_SOURCE" = false ]; then
 
     # 11. Protobuf files (can contain hardware configuration)
     log "Collecting .pb files..."
-    find /vendor /odm -name "*.pb" 2>/dev/null | while IFS= read -r f; do
+    find /vendor /odm /first_stage_ramdisk -name "*.pb" 2>/dev/null | while IFS= read -r f; do
         copy_file "$f"
     done
 

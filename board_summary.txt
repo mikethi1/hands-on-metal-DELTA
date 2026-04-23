@@ -1,0 +1,9 @@
+ro.board.platform=zuma
+ro.hardware=husky
+ro.product.board=husky
+ro.product.device=husky
+ro.product.model=Pixel 8 Pro
+ro.build.fingerprint=google/husky/husky:16/CP1A.260305.018/14887507:user/release-keys
+ro.vendor.build.fingerprint=google/husky/husky:16/CP1A.260305.018/14887507:user/release-keys
+ro.soc.manufacturer=Google
+ro.soc.model=Tensor G3
