@@ -18,46 +18,19 @@ set -u
 OUT=/sdcard/hands-on-metal/live_dump
 LOG=$OUT/collect.log
 MANIFEST=$OUT/manifest.txt
-ENV_REGISTRY=/sdcard/hands-on-metal/env_registry.sh
 
 # ── helpers ──────────────────────────────────────────────────
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG"; }
 
-# Resolve a path to its real absolute path (no symlinks)
-real_abs() {
-    local p="$1"
-    if command -v readlink >/dev/null 2>&1; then
-        readlink -f "$p" 2>/dev/null || echo "$p"
-    else
-        echo "$p"
-    fi
-}
-
-# Write/update a key in the shared env registry
-reg_set() {
-    local cat="$1" key="$2" val="$3"
-    local tmp="${ENV_REGISTRY}.tmp"
-    grep -v "^${key}=" "$ENV_REGISTRY" > "$tmp" 2>/dev/null || true
-    printf '%s="%s"  # cat:%s\n' "$key" "$val" "$cat" >> "$tmp"
-    mv "$tmp" "$ENV_REGISTRY"
-}
-
-# copy a single file, preserving the relative path under $OUT.
-# Also records the real absolute path (readlink -f) to the manifest
-# so symlink chains in /vendor or /system are transparent.
+# copy a single file, preserving the relative path under $OUT
 copy_file() {
     local src="$1"
     local dst="$OUT$src"
     [ -f "$src" ] || return 0
     mkdir -p "$(dirname "$dst")"
-    if cp -p "$src" "$dst" 2>/dev/null; then
+    cp -p "$src" "$dst" 2>/dev/null && \
         echo "$src" >> "$MANIFEST"
-        # Record real absolute path alongside the nominal path
-        local rp
-        rp=$(real_abs "$src")
-        [ "$rp" != "$src" ] && echo "REALPATH:$src=$rp" >> "$MANIFEST"
-    fi
 }
 
 # recursively mirror a directory (read-only, no symlink follow)
@@ -145,108 +118,6 @@ done
 copy_virtual_dir /sys/class/firmware-info
 copy_virtual_dir /sys/bus/i2c/devices
 copy_virtual_dir /sys/bus/spi/devices
-
-# ── Hardware data sanity check ────────────────────────────────
-# Detect sandbox/CI and Termux environments where /sys/class/regulator
-# and /sys/class/display contain no real hardware data.  Log the first
-# 10 regulator entries found so users can immediately see whether real
-# voltage data was captured.  Record HOM_HW_ENV in the registry so
-# failure_analysis.py can adjust its expectations accordingly.
-_check_hw_data_sanity() {
-    local hw_env="android_rooted"
-    local warn_lines=""
-
-    # ── Termux detection ─────────────────────────────────────
-    # Running inside Termux (even with tsu/sudo) means we are in the
-    # Android userspace without kernel-level sysfs write access.
-    if [ -n "${TERMUX_VERSION:-}" ] || \
-       [ -d "/data/data/com.termux/files/usr" ] || \
-       [ -d "/data/user/0/com.termux/files/usr" ]; then
-        hw_env="termux"
-        warn_lines="${warn_lines}
-[WARN ] Running inside Termux (TERMUX_VERSION=${TERMUX_VERSION:-unknown}).
-[WARN ] Sysfs regulator/display paths are readable but reflect the host
-[WARN ] kernel, not a Magisk-rooted context. Real microvolts data is only
-[WARN ] available when collect.sh runs as root via Magisk service.sh."
-    fi
-
-    # ── Sandbox / CI detection ────────────────────────────────
-    # A sandbox host (GitHub Actions, Docker, etc.) has no Android props
-    # and no /system/build.prop, so getprop returns nothing useful.
-    if [ -z "$(getprop ro.product.model 2>/dev/null)" ] && \
-       [ ! -f /system/build.prop ]; then
-        hw_env="sandbox_ci"
-        warn_lines="${warn_lines}
-[WARN ] No Android properties found (getprop ro.product.model is empty).
-[WARN ] This host appears to be a sandbox or CI environment, not an Android
-[WARN ] device. Hardware data collected here will be placeholder / dummy
-[WARN ] values and cannot be used for device compatibility analysis."
-    fi
-
-    # ── Regulator entries (first 10) ──────────────────────────
-    local reg_base="$OUT/sys/class/regulator"
-    local reg_count=0
-    local real_mv_count=0
-    log "--- Regulator data sanity check (first 10 entries) ---"
-    if [ -d "$reg_base" ]; then
-        for reg_dir in "$reg_base"/regulator.*; do
-            [ -d "$reg_dir" ] || continue
-            reg_count=$((reg_count + 1))
-            [ "$reg_count" -gt 10 ] && break
-            local reg_name mv_val
-            reg_name=$(cat "$reg_dir/name" 2>/dev/null || echo "(no name)")
-            mv_val=$(cat "$reg_dir/microvolts" 2>/dev/null || echo "(no microvolts)")
-            log "  regulator.$((reg_count)): name=$reg_name  microvolts=$mv_val"
-            # Count entries that have a real numeric voltage
-            case "$mv_val" in
-                [0-9]*) real_mv_count=$((real_mv_count + 1)) ;;
-            esac
-        done
-    fi
-    if [ "$reg_count" -eq 0 ]; then
-        log "[WARN ] No regulator entries found under $reg_base"
-        warn_lines="${warn_lines}
-[WARN ] /sys/class/regulator collected no entries — display adapter voltages
-[WARN ] will be missing from the analysis. See docs/TROUBLESHOOTING.md
-[WARN ] section 'Empty or dummy hardware data' for remediation."
-    elif [ "$real_mv_count" -eq 0 ]; then
-        log "[WARN ] $reg_count regulator(s) found but none have a microvolts file."
-        log "[WARN ] All entries are likely kernel placeholders (e.g. regulator-dummy)."
-        warn_lines="${warn_lines}
-[WARN ] Regulators present but no microvolts data found ($reg_count entries,
-[WARN ] 0 with real voltages). Display-adapter voltage analysis will be
-[WARN ] unavailable. See docs/TROUBLESHOOTING.md 'Empty or dummy hardware data'."
-    else
-        log "[OK   ] $reg_count regulator(s) found, $real_mv_count with real microvolts data."
-    fi
-
-    # ── Display class check ───────────────────────────────────
-    local disp_base="$OUT/sys/class/display"
-    if [ ! -d "$disp_base" ] || [ -z "$(ls "$disp_base" 2>/dev/null)" ]; then
-        log "[WARN ] /sys/class/display collected no entries."
-        warn_lines="${warn_lines}
-[WARN ] /sys/class/display is empty. Display adapter sysfs data is missing.
-[WARN ] On a real rooted device this directory lists panel/adapter nodes."
-    fi
-
-    # ── Emit summary ──────────────────────────────────────────
-    log "--- End regulator sanity check ---"
-    if [ -n "$warn_lines" ]; then
-        log "======================================================"
-        log "HARDWARE DATA WARNING — hw_env=$hw_env"
-        printf '%s\n' "$warn_lines" | while IFS= read -r wl; do
-            [ -n "$wl" ] && log "$wl"
-        done
-        log "See docs/TROUBLESHOOTING.md § 'Empty or dummy hardware data'"
-        log "======================================================"
-    fi
-
-    # Record the detected environment so downstream tools can adapt
-    reg_set collect HOM_HW_ENV "$hw_env"
-    reg_set collect HOM_HW_REGULATOR_COUNT "$reg_count"
-    reg_set collect HOM_HW_REGULATOR_REAL_MV_COUNT "$real_mv_count"
-}
-_check_hw_data_sanity
 
 # 9. VINTF manifests
 log "Collecting VINTF manifests..."
@@ -396,30 +267,6 @@ for boot_part in boot vendor_boot recovery init_boot; do
 done
 
 # done
-
-# ── Emit collection-path env vars to the shared registry ─────
-log "Updating env registry with collection paths..."
-reg_set path HOM_LIVE_DUMP_DIR "$(real_abs "$OUT")"
-reg_set path HOM_MANIFEST "$(real_abs "$MANIFEST")"
-reg_set path HOM_COLLECT_LOG "$(real_abs "$LOG")"
-
-# Record the real absolute paths of the key collected artefacts
-for named in "$OUT/getprop.txt" "$OUT/lshal.txt" "$OUT/dmesg.txt" \
-             "$OUT/lsmod.txt" "$OUT/board_summary.txt" \
-             "$OUT/encryption_state.txt"; do
-    [ -f "$named" ] || continue
-    key="HOM_ARTEFACT_$(basename "$named" | tr '.' '_' | tr 'a-z' 'A-Z')"
-    reg_set path "$key" "$(real_abs "$named")"
-done
-
-# Record real paths of any boot images collected
-for boot_part in boot vendor_boot recovery init_boot; do
-    img="$OUT/boot_images/${boot_part}.img"
-    [ -f "$img" ] || continue
-    key="HOM_BOOT_IMG_$(echo "$boot_part" | tr 'a-z-' 'A-Z_')"
-    reg_set path "$key" "$(real_abs "$img")"
-done
-
 TOTAL=$(wc -l < "$MANIFEST")
 log "=== Collection complete: $TOTAL files captured ==="
 log "Output: $OUT"
