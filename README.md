@@ -140,21 +140,6 @@ python pipeline/build_table.py \
 python pipeline/report.py --db hardware_map.sqlite
 ```
 
-### Optional — Run scripts from an interactive terminal menu
-
-If you prefer a single launcher in terminal, use:
-
-```bash
-bash terminal_menu.sh
-```
-
-The menu lists all shell scripts (`build/`, `core/`, `magisk-module/`, `recovery-zip/`)
-and all pipeline Python scripts (`pipeline/*.py`), then lets you run any of them
-with optional arguments.
-
-Note: argument input is space-separated; embedded space quoting is not supported
-inside the menu prompt.
-
 ---
 
 ## Dependency stack
