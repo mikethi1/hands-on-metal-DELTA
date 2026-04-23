@@ -53,6 +53,28 @@ _ota_reg_get() {
         cut -d= -f2- | sed 's/^"//;s/"[[:space:]].*//'
 }
 
+_service_preflight() {
+    local req
+    for req in \
+        "$CORE/logging.sh" \
+        "$CORE/ux.sh" \
+        "$CORE/state_machine.sh" \
+        "$CORE/privacy.sh" \
+        "$MODULE_DIR/env_detect.sh" \
+        "$MODULE_DIR/setup_termux.sh" \
+        "$MODULE_DIR/collect.sh"; do
+        if [ ! -f "$req" ]; then
+            _ota_log "[PREREQ_FAIL] Missing required script: $req"
+            return 1
+        fi
+        if [ ! -r "$req" ]; then
+            _ota_log "[PREREQ_FAIL] Unreadable script: $req (fix mode/context)"
+            return 1
+        fi
+    done
+    return 0
+}
+
 if [ -f "$ENV_REGISTRY" ]; then
     _ota_sdk_cached=$(_ota_reg_get HOM_DEV_SDK_INT)
     _ota_spl_cached=$(_ota_reg_get HOM_DEV_SPL)
@@ -99,6 +121,12 @@ if [ -f "$ENV_REGISTRY" ]; then
 fi
 
 if [ ! -f "$SENTINEL" ]; then
+    if ! _service_preflight; then
+        _ota_log "Aborting service run due to missing/unreadable prerequisites."
+        # shellcheck disable=SC2317  # exit path is used when script is executed (not sourced)
+        return 1 2>/dev/null || exit 1
+    fi
+
     # Mark collected first so a crash mid-run does not loop forever.
     # Delete the sentinel manually if a fresh re-run is needed.
     touch "$SENTINEL"
