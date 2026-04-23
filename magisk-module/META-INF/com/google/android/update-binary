@@ -1,94 +1,40 @@
 #!/sbin/sh
 # magisk-module/META-INF/com/google/android/update-binary
 # ============================================================
-# Magisk module installer — hands-on-metal root workflow.
-#
-# This script is executed by Magisk's module framework when the
-# user flashes the ZIP through the Magisk app.
-#
-# Execution order:
-#   1. Verify Magisk version (>=25000)
-#   2. Extract all module files to $MODPATH
-#   3. Source customize.sh which runs the full guided workflow:
-#        device profile → boot image acquire → anti-rollback
-#        → Magisk patch → flash → reboot
-#
-# Environment provided by Magisk:
-#   OUTFD        — file descriptor for ui_print output
-#   ZIPFILE      — path to the installed ZIP archive
-#   MODPATH      — destination module directory
-#   MAGISK_VER_CODE — numeric Magisk version
+# Magisk module installer script.
+# This runs inside Magisk's module installation framework when
+# the user flashes the ZIP via the Magisk app.
 # ============================================================
 
 SKIPUNZIP=1
 MODPATH="${MODPATH:-/data/adb/modules/hands-on-metal-collector}"
 
-# ── TWRP-compatible ui_print ──────────────────────────────────
-ui_print() {
-    echo "ui_print $1" > /proc/self/fd/"$OUTFD"
-    echo "ui_print "   > /proc/self/fd/"$OUTFD"
-}
-
-abort() {
-    ui_print ""
-    ui_print "ABORT: $1"
-    ui_print ""
-    exit 1
-}
+ui_print() { echo "ui_print $1" >&"$OUTFD"; }
+abort()    { ui_print "ABORT: $1"; exit 1; }
 
 ui_print ""
-ui_print "╔══════════════════════════════════════════╗"
-ui_print "║   hands-on-metal  Root Workflow          ║"
-ui_print "╚══════════════════════════════════════════╝"
+ui_print "************************************"
+ui_print " hands-on-metal Hardware Collector  "
+ui_print "************************************"
 ui_print ""
 
-# ── version check ─────────────────────────────────────────────
+# Verify Magisk version is recent enough
 [ "$MAGISK_VER_CODE" -ge 25000 ] 2>/dev/null || \
-    abort "Magisk 25000+ required (found: $MAGISK_VER_CODE)"
+    abort "Magisk 25+ required (found $MAGISK_VER_CODE)"
 
-ui_print "- Magisk version: $MAGISK_VER_CODE OK"
-
-# ── extract all module files ──────────────────────────────────
-ui_print "- Extracting module files to $MODPATH ..."
-
-mkdir -p "$MODPATH"
-
+# Extract module files
+ui_print "- Extracting module files..."
 unzip -o "$ZIPFILE" \
-    "module.prop" \
-    "service.sh" \
-    "collect.sh" \
-    "env_detect.sh" \
-    "setup_termux.sh" \
-    "customize.sh" \
-    -d "$MODPATH" >/dev/null 2>&1 || abort "Extraction of module files failed"
+    module.prop \
+    collect.sh \
+    service.sh \
+    -d "$MODPATH" \
+    >&2 || abort "Extraction failed"
 
-# Extract the shared core scripts
-mkdir -p "$MODPATH/core"
-unzip -o "$ZIPFILE" "core/*" -d "$MODPATH" >/dev/null 2>&1 || true
+# Make scripts executable
+chmod 0755 "$MODPATH/collect.sh" "$MODPATH/service.sh"
 
-# Extract the build/partition index (used for offline fallback)
-mkdir -p "$MODPATH/build"
-unzip -o "$ZIPFILE" "build/partition_index.json" \
-    -d "$MODPATH" >/dev/null 2>&1 || true
-
-# Make every shell script executable
-find "$MODPATH" -name "*.sh" -exec chmod 0755 {} \; 2>/dev/null
-
-ui_print "- Module files extracted"
-
-# ── run guided installation workflow ─────────────────────────
-# customize.sh is sourced in the Magisk installer context.
-# It will use the core/* scripts to drive the full workflow.
-if [ -f "$MODPATH/customize.sh" ]; then
-    ui_print "- Running installation wizard..."
-    # shellcheck source=/dev/null
-    . "$MODPATH/customize.sh"
-else
-    ui_print "- customize.sh not found; skipping wizard"
-    ui_print "  Collection will run on next boot via service.sh"
-fi
-
-ui_print ""
-ui_print "- Module installed at $MODPATH"
-ui_print "- Logs: /sdcard/hands-on-metal/logs/"
+ui_print "- Module installed to $MODPATH"
+ui_print "- Collection will run on next boot"
+ui_print "- Output: /sdcard/hands-on-metal/live_dump/"
 ui_print ""

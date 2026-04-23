@@ -1,53 +1,51 @@
 #!/sbin/sh
 # recovery-zip/META-INF/com/google/android/update-binary
 # ============================================================
-# Hands-on-metal — Full Recovery Installer
+# Hands-on-metal — Mode B: Recovery Image Strip
+# Runs inside OrangeFox or TWRP.
 #
-# Runs inside TWRP or OrangeFox when the ZIP is flashed.
-# This path is for devices WITHOUT Magisk already installed.
+# Safety guarantees:
+#   • All partitions mounted READ-ONLY (mount -o ro)
+#   • boot / dtbo / vbmeta partitions are NEVER written to
+#   • boot / vendor_boot / recovery images are DD-copied READ-ONLY
+#     for offline ramdisk extraction on the host PC
+#   • SHA-256 checksums verified before and after each operation
+#   • All output goes to /sdcard/hands-on-metal/image_dump/
+#   • Partitions unmounted even if extraction fails (trap)
 #
-# Guided workflow:
-#   1. Environment detection (shell, tools, paths)
-#   2. Device profile (model, API level, A/B, SAR, AVB, Treble)
-#   3. Boot image acquisition (auto-discover or user-specified)
-#   4. Anti-rollback check (May-2026+ protection)
-#   5. Magisk patch (using bundled offline Magisk binary/apk)
-#   6. Flash patched boot image to device
-#   7. Install hands-on-metal Magisk module
-#   8. Collect recovery hardware data
-#   9. Reboot into system
-#
-# Each step prints:
-#   • What it does and WHY it is needed
-#   • Progress indication
-#   • Full result and log path
-#
-# Safety:
-#   • Boot partitions read-only before patching step
-#   • Pre/post flash SHA-256 verification
-#   • Anti-rollback check blocks flashing if risky
-#   • Logs everything to /sdcard/hands-on-metal/logs/
+# Encryption handling:
+#   • Detects FDE (dm-crypt) and FBE (file-based encryption)
+#   • Attempts TWRP/OrangeFox native decryption via 'twrp decrypt'
+#     or 'fox_mgr decrypt' when the device is encrypted
+#   • Falls back to dm-crypt device-mapper setup if recovery APIs
+#     are unavailable, using the key file if provided via $HOM_KEY
+#   • Records encryption metadata even when decryption is not possible
 # ============================================================
 
 OUTFD=$2
 ZIPFILE=$3
 
-OUT=/sdcard/hands-on-metal
-LOG_DIR="$OUT/logs"
-ENV_REGISTRY="$OUT/env_registry.sh"
-STATE_FILE="/tmp/hom_install_state"
-BOOT_WORK_DIR="$OUT/boot_work"
+OUT=/sdcard/hands-on-metal/image_dump
+BOOT_OUT=$OUT/boot_images      # raw DD copies of boot images
+LOG=$OUT/recovery_collect.log
+MANIFEST=$OUT/manifest.txt
 
-export OUTFD ZIPFILE OUT LOG_DIR ENV_REGISTRY STATE_FILE BOOT_WORK_DIR
-
-# ── TWRP ui_print ─────────────────────────────────────────────
+# ── TWRP / OrangeFox UI print ─────────────────────────────────
 ui_print() {
-    printf 'ui_print %s\n' "$*" > /proc/self/fd/"$OUTFD"
-    printf 'ui_print \n'         > /proc/self/fd/"$OUTFD"
+    echo "ui_print $*" > /proc/self/fd/"$OUTFD"
+    echo "         " > /proc/self/fd/"$OUTFD"
 }
 
-set_progress() {
-    printf 'set_progress %s\n' "$1" > /proc/self/fd/"$OUTFD"
+# ── Logging helper ────────────────────────────────────────────
+log() {
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" | tee -a "$LOG"
+}
+
+abort() {
+    ui_print "ABORT: $1"
+    log "ABORT: $1"
+    do_cleanup
+    exit 1
 }
 
 # ── Busybox bootstrap ─────────────────────────────────────────
@@ -56,156 +54,382 @@ mkdir -p "$BBDIR"
 unzip -o "$ZIPFILE" "tools/busybox-arm64" -d "$BBDIR" >/dev/null 2>&1
 BB="$BBDIR/tools/busybox-arm64"
 if [ ! -x "$BB" ]; then
-    BB=$(command -v busybox 2>/dev/null || command -v busybox64 2>/dev/null || true)
+    BB=$(which busybox 2>/dev/null || which busybox64 2>/dev/null)
+    [ -n "$BB" ] || abort "busybox not found; cannot continue safely"
 fi
-[ -n "$BB" ] && chmod 0755 "$BB" 2>/dev/null || BB=""
+chmod 0755 "$BB"
 
-# ── Extract all scripts to a temp working directory ───────────
-WORK_DIR=/tmp/hom_work
-mkdir -p "$WORK_DIR"
-unzip -o "$ZIPFILE" "core/*" "magisk-module/*" "build/*" -d "$WORK_DIR" >/dev/null 2>&1
+sha256() { "$BB" sha256sum "$1" | awk '{print $1}'; }
+sha256_dev_4m() {
+    "$BB" dd if="$1" bs=4096 count=1024 2>/dev/null | "$BB" sha256sum | awk '{print $1}'
+}
 
-CORE="$WORK_DIR/core"
-MAGISK_MODULE_DIR="$WORK_DIR/magisk-module"
-PARTITION_INDEX="$WORK_DIR/build/partition_index.json"
-export CORE MAGISK_MODULE_DIR PARTITION_INDEX
+# ── Partition detection ────────────────────────────────────────
+find_part() {
+    local name="$1"
+    for p in \
+        "/dev/block/bootdevice/by-name/$name" \
+        "/dev/block/by-name/$name" \
+        "/dev/block/platform/*/by-name/$name" \
+        "/dev/block/mapper/$name" ; do
+        for g in $p; do
+            [ -b "$g" ] && { echo "$g"; return 0; }
+        done
+    done
+    return 1
+}
 
-# Extract bundled Magisk binary (if offline bundle was built)
-mkdir -p "$WORK_DIR/tools"
-unzip -o "$ZIPFILE" "tools/magisk*" -d "$WORK_DIR" >/dev/null 2>&1
-BUNDLED_MAGISK="$WORK_DIR/tools/magisk64"
-BUNDLED_MAGISK32="$WORK_DIR/tools/magisk32"
-[ -f "$BUNDLED_MAGISK" ]   && chmod 0755 "$BUNDLED_MAGISK"
-[ -f "$BUNDLED_MAGISK32" ] && chmod 0755 "$BUNDLED_MAGISK32"
-export BUNDLED_MAGISK BUNDLED_MAGISK32
+# ── Cleanup / unmount trap ────────────────────────────────────
+MOUNTED_DIRS=""
+DM_DEVS=""
 
-# ── Bootstrap core scripts ────────────────────────────────────
+do_cleanup() {
+    log "Cleanup: unmounting partitions..."
+    for d in $MOUNTED_DIRS; do
+        umount "$d" 2>/dev/null && log "  unmounted $d" || log "  warn: $d"
+        rmdir "$d" 2>/dev/null
+    done
+    log "Cleanup: removing dm-crypt devices..."
+    for dm in $DM_DEVS; do
+        dmsetup remove "$dm" 2>/dev/null && log "  removed dm $dm"
+    done
+}
+trap do_cleanup EXIT
 
-mkdir -p "$OUT" "$LOG_DIR" "$BOOT_WORK_DIR"
-[ -f "$ENV_REGISTRY" ] || : > "$ENV_REGISTRY"
+# ── Encryption detection ──────────────────────────────────────
+# Returns: "fde", "fbe", "none"
+detect_encryption() {
+    local dev="$1"
 
-SCRIPT_NAME="recovery_installer"
-export SCRIPT_NAME
+    # Check vold properties first (most reliable in recovery)
+    local state
+    state=$(getprop ro.crypto.state 2>/dev/null)
+    local type
+    type=$(getprop ro.crypto.type 2>/dev/null)
 
-# shellcheck source=/dev/null
-. "$CORE/logging.sh"
-# shellcheck source=/dev/null
-. "$CORE/ux.sh"
-# shellcheck source=/dev/null
-. "$CORE/state_machine.sh"
+    if [ "$state" = "encrypted" ]; then
+        if [ "$type" = "file" ]; then
+            echo "fbe"; return
+        else
+            echo "fde"; return
+        fi
+    fi
 
-log_banner "hands-on-metal Recovery Installer (RUN_ID=$RUN_ID)"
+    # Fallback: check the block device header for FDE magic (0xD0B5B1C4)
+    local magic
+    magic=$("$BB" dd if="$dev" bs=1 count=4 skip=0 2>/dev/null | od -A n -t x1 | tr -d ' \n')
+    if [ "$magic" = "c4b1b5d0" ]; then
+        echo "fde"; return
+    fi
 
-# ── Header ────────────────────────────────────────────────────
+    # Check for FBE: look for encrypted fstab options on mounted /vendor or /odm
+    if grep -qE "fileencryption=|wrappedkey" /vendor/etc/fstab.* 2>/dev/null; then
+        echo "fbe"; return
+    fi
 
-ux_print ""
-ux_print "╔══════════════════════════════════════════╗"
-ux_print "║   hands-on-metal  Recovery Installer     ║"
-ux_print "║   Guided Magisk Root Workflow            ║"
-ux_print "╚══════════════════════════════════════════╝"
-ux_print ""
-ux_print "Logs: $LOG_DIR/"
-ux_print ""
+    echo "none"
+}
 
-set_progress "0.05"
+# ── FDE decryption via TWRP / OrangeFox native API ───────────
+# TWRP exposes: twrp decrypt <password>
+# OrangeFox:    twrp decrypt <password>  (same binary, same API)
+# Returns 0 if decrypted, 1 if failed / not applicable
+attempt_recovery_decrypt() {
+    local password="$1"
 
-# ── Step 1: Environment Detection ─────────────────────────────
+    if command -v twrp >/dev/null 2>&1; then
+        log "  Attempting TWRP native decryption..."
+        twrp decrypt "$password" 2>/dev/null && return 0
+        log "  TWRP decrypt returned non-zero; partition may use different key"
+        return 1
+    fi
 
-ux_step_info "Environment Detection" \
-    "Probes available shell tools, block device layout, and crypto state" \
-    "Without knowing what tools are available we cannot safely locate \
-partitions or run the patch workflow"
+    log "  'twrp' command not available in this recovery; skipping native decrypt"
+    return 1
+}
 
-SCRIPT_NAME="env_detect" sh "$MAGISK_MODULE_DIR/env_detect.sh"
-sm_set_state "ENV_DETECTED"
-ux_step_result "Environment Detection" "OK"
-set_progress "0.15"
+# ── dm-crypt setup (fallback when recovery API unavailable) ───
+# Uses the key from $HOM_KEY environment variable (hex string) or
+# a key file pointed to by $HOM_KEY_FILE.
+# This sets up a read-only dm-crypt mapping so we can mount the
+# decrypted partition without altering the original block device.
+setup_dm_crypt_ro() {
+    local dev="$1"
+    local dm_name="$2"
+    local key_hex="$3"   # 64-char hex = 256-bit AES key
 
-# ── Step 2: Device Profile ────────────────────────────────────
+    # Get device size in 512-byte sectors
+    local sectors
+    sectors=$(blockdev --getsz "$dev" 2>/dev/null)
+    [ -n "$sectors" ] || return 1
 
-SCRIPT_NAME="device_profile"
-export SCRIPT_NAME
-# shellcheck source=/dev/null
-. "$CORE/device_profile.sh"
-run_device_profile
-sm_set_state "DEVICE_PROFILED"
-set_progress "0.25"
+    log "  Setting up dm-crypt RO mapping: $dm_name (sectors=$sectors)"
 
-# ── Step 3: Boot Image Acquisition ───────────────────────────
+    # "0 <sectors> crypt aes-cbc-essiv:sha256 <key> 0 <dev> 0"
+    # We request read-only access by mapping without the --allow-discards flag
+    echo "0 $sectors crypt aes-cbc-essiv:sha256 $key_hex 0 $dev 0" | \
+        dmsetup create "$dm_name" --readonly 2>/dev/null || return 1
 
-SCRIPT_NAME="boot_image"
-export SCRIPT_NAME
-# shellcheck source=/dev/null
-. "$CORE/boot_image.sh"
-run_boot_image_acquire
-sm_set_state "BOOT_IMG_ACQUIRED"
-set_progress "0.40"
+    DM_DEVS="$DM_DEVS $dm_name"
+    echo "/dev/mapper/$dm_name"
+    return 0
+}
 
-# ── Step 4: Anti-Rollback Check ──────────────────────────────
+# ── Copy helpers ───────────────────────────────────────────────
+copy_from_mount() {
+    local mntdir="$1"
+    local relpath="$2"
+    local src="$mntdir$relpath"
+    local dst="$OUT/partitions$relpath"
+    [ -e "$src" ] || return 0
+    "$BB" mkdir -p "$("$BB" dirname "$dst")"
+    "$BB" cp -p "$src" "$dst" 2>/dev/null && echo "$relpath" >> "$MANIFEST"
+}
 
-SCRIPT_NAME="anti_rollback"
-export SCRIPT_NAME
-# shellcheck source=/dev/null
-. "$CORE/anti_rollback.sh"
-run_anti_rollback_check
-sm_set_state "ANTI_ROLLBACK_CHECKED"
-set_progress "0.55"
+copy_dir_from_mount() {
+    local mntdir="$1"
+    local reldir="$2"
+    local src="$mntdir$reldir"
+    [ -d "$src" ] || return 0
+    "$BB" find "$src" -type f 2>/dev/null | while IFS= read -r f; do
+        local rel="${f#$mntdir}"
+        copy_from_mount "$mntdir" "$rel"
+    done
+}
 
-# ── Step 5: Magisk Patch ──────────────────────────────────────
+# ── Mount partition and extract ────────────────────────────────
+mount_and_extract() {
+    local part_name="$1"
+    local mntdir="/tmp/hom_${part_name}"
 
-SCRIPT_NAME="magisk_patch"
-export SCRIPT_NAME
-# shellcheck source=/dev/null
-. "$CORE/magisk_patch.sh"
-run_magisk_patch
-sm_set_state "BOOT_IMG_PATCHED"
-set_progress "0.70"
+    local dev
+    dev=$(find_part "$part_name") || {
+        log "Partition $part_name not found, skipping"
+        return 0
+    }
 
-# ── Step 6: Flash + Install ───────────────────────────────────
+    log "Found $part_name at $dev"
 
-SCRIPT_NAME="flash"
-export SCRIPT_NAME
-# shellcheck source=/dev/null
-. "$CORE/flash.sh"
+    local pre_sum
+    pre_sum=$(sha256_dev_4m "$dev")
+    log "  pre-mount checksum (4MiB): $pre_sum"
 
-ux_step_info "Flash + Module Install" \
-    "Writes the patched boot image and installs the Magisk module" \
-    "This permanently enables root access and installs the hardware collection module"
+    # ── Encryption handling ──────────────────────────────────
+    local enc_type
+    enc_type=$(detect_encryption "$dev")
+    log "  encryption type: $enc_type"
+    echo "enc_type.$part_name=$enc_type" >> "$OUT/enc_info.txt"
 
-sm_set_state "FLASH_QUEUED"
-run_flash_recovery_path
-sm_set_state "FLASHED"
-set_progress "0.85"
+    local mount_dev="$dev"
 
-# ── Step 7: Recovery Hardware Collection ─────────────────────
+    if [ "$enc_type" = "fde" ]; then
+        ui_print "  ! $part_name is FDE-encrypted"
+        log "  FDE detected on $part_name"
 
-ux_step_info "Recovery Hardware Collection" \
-    "Mounts partitions read-only and collects hardware metadata, fstab, VINTF manifests" \
-    "This data feeds the offline analysis pipeline (python pipeline/)"
+        local decrypted=0
 
-SCRIPT_NAME="collect_recovery" sh "$WORK_DIR/recovery-zip/collect_recovery.sh" \
-    2>>"$LOG_DIR/collect_recovery_recovery.log" || \
-    log_warn "collect_recovery.sh returned non-zero (data may be partial)"
+        # Try TWRP/OrangeFox native decrypt first
+        if attempt_recovery_decrypt "${HOM_PASSWORD:-}"; then
+            # After native decrypt, dm-crypt mapping appears under /dev/block/dm-*
+            local dm_dev
+            dm_dev=$(find_part "${part_name}" 2>/dev/null || true)
+            # Check /dev/block/mapper/ for decrypted block
+            for mapper_dev in /dev/block/dm-* /dev/mapper/${part_name}; do
+                [ -b "$mapper_dev" ] && { dm_dev="$mapper_dev"; break; }
+            done
+            if [ -n "$dm_dev" ] && [ -b "$dm_dev" ]; then
+                mount_dev="$dm_dev"
+                log "  Using decrypted device: $dm_dev"
+                decrypted=1
+            fi
+        fi
 
-set_progress "0.95"
+        # Fallback: manual dm-crypt setup if HOM_KEY is provided
+        if [ "$decrypted" -eq 0 ] && [ -n "${HOM_KEY:-}" ]; then
+            local dm_name="hom_${part_name}"
+            local mapped
+            mapped=$(setup_dm_crypt_ro "$dev" "$dm_name" "$HOM_KEY")
+            if [ $? -eq 0 ] && [ -b "$mapped" ]; then
+                mount_dev="$mapped"
+                log "  Using manual dm-crypt RO device: $mapped"
+                decrypted=1
+            fi
+        fi
 
-# ── Done ──────────────────────────────────────────────────────
+        if [ "$decrypted" -eq 0 ]; then
+            log "  warn: FDE decryption not possible; collecting raw metadata only"
+            ui_print "  ! Could not decrypt $part_name — pass HOM_PASSWORD or HOM_KEY"
+            # Record the fact for the pipeline
+            echo "fde_undecrypted.$part_name=1" >> "$OUT/enc_info.txt"
+            return 0
+        fi
+    fi
 
-sm_set_state "COMPLETE"
-set_progress "1.00"
+    # FBE: individual files are encrypted but the partition mounts fine.
+    # The recovery environment has the metadata key so encrypted files
+    # appear as encrypted blobs; we collect what we can.
+    if [ "$enc_type" = "fbe" ]; then
+        log "  FBE: partition mounts normally; encrypted files will appear as ciphertext"
+        echo "fbe_detected.$part_name=1" >> "$OUT/enc_info.txt"
+    fi
 
-ux_section "Recovery Installation Complete"
-ux_print "  Boot image: patched and flashed"
-ux_print "  Magisk module: installed"
-ux_print "  Hardware data: $OUT/"
-ux_print "  Full logs: $LOG_DIR/"
-ux_print ""
-ux_print "  After reboot:"
-ux_print "    1. Open Magisk app — confirm root is active"
-ux_print "    2. Reboot → check /sdcard/hands-on-metal/live_dump/"
-ux_print ""
+    "$BB" mkdir -p "$mntdir"
+    local mounted=0
+    for fstype in ext4 f2fs erofs squashfs; do
+        if mount -t "$fstype" -o ro,nosuid,nodev "$mount_dev" "$mntdir" 2>/dev/null; then
+            mounted=1
+            log "  mounted as $fstype"
+            break
+        fi
+    done
 
-log_banner "Recovery installer complete"
+    if [ "$mounted" -eq 0 ]; then
+        mount -o ro,nosuid,nodev "$mount_dev" "$mntdir" 2>/dev/null || {
+            log "  skip: $part_name not mountable after decryption attempt"
+            rmdir "$mntdir" 2>/dev/null
+            return 0
+        }
+    fi
 
-# Cleanup temp work directory
-rm -rf "$WORK_DIR" "$BBDIR" 2>/dev/null || true
+    MOUNTED_DIRS="$MOUNTED_DIRS $mntdir"
+    log "  Extracting files from $part_name..."
+
+    # VINTF manifests
+    copy_dir_from_mount "$mntdir" "/etc/vintf"
+    copy_from_mount     "$mntdir" "/etc/manifest.xml"
+    copy_dir_from_mount "$mntdir" "/etc/sysconfig"
+    copy_dir_from_mount "$mntdir" "/etc/permissions"
+
+    # fstab files (critical for encryption flag detection)
+    "$BB" find "$mntdir/etc" -name "fstab*" 2>/dev/null | while IFS= read -r f; do
+        copy_from_mount "$mntdir" "${f#$mntdir}"
+    done
+
+    # Protobuf configs
+    "$BB" find "$mntdir" -name "*.pb" 2>/dev/null | while IFS= read -r f; do
+        copy_from_mount "$mntdir" "${f#$mntdir}"
+    done
+
+    # Init RC files
+    copy_dir_from_mount "$mntdir" "/etc/init"
+
+    # SELinux policies
+    copy_dir_from_mount "$mntdir" "/etc/selinux"
+
+    # Vendor libraries (up to 10 MiB each)
+    "$BB" find "$mntdir/lib64" "$mntdir/lib" \
+         -name "*.so" 2>/dev/null | while IFS= read -r f; do
+        local size
+        size=$("$BB" stat -c %s "$f" 2>/dev/null || echo 0)
+        if [ "$size" -le 10485760 ]; then
+            copy_from_mount "$mntdir" "${f#$mntdir}"
+        fi
+    done
+
+    copy_dir_from_mount "$mntdir" "/bin"
+
+    # Post-mount checksum sanity (block device must not have changed)
+    local post_sum
+    post_sum=$(sha256_dev_4m "$dev")
+    if [ "$pre_sum" != "$post_sum" ]; then
+        log "  ERROR: checksum mismatch for $part_name (pre != post)!"
+        log "    pre : $pre_sum"
+        log "    post: $post_sum"
+    else
+        log "  checksum OK for $part_name"
+    fi
+
+    umount "$mntdir" 2>/dev/null && MOUNTED_DIRS="${MOUNTED_DIRS//$mntdir/}"
+    rmdir  "$mntdir" 2>/dev/null
+    log "  Done with $part_name"
+}
+
+# ── Boot image extraction (read-only DD copy) ──────────────────
+# We NEVER write to boot/dtbo/vbmeta.  We only READ them by DD
+# and save the raw image so the host-side pipeline can unpack
+# the ramdisk offline without touching the device's partitions.
+extract_boot_image() {
+    local part_name="$1"
+
+    local dev
+    dev=$(find_part "$part_name") || {
+        log "Boot partition $part_name not found, skipping"
+        return 0
+    }
+
+    log "Extracting boot image: $part_name from $dev"
+    ui_print "  - Copying $part_name image (read-only)..."
+
+    "$BB" mkdir -p "$BOOT_OUT"
+    local out_img="$BOOT_OUT/${part_name}.img"
+
+    # Record checksum before
+    local pre_sum
+    pre_sum=$(sha256_dev_4m "$dev")
+    log "  pre-dd checksum: $pre_sum"
+
+    # DD the entire partition read-only
+    "$BB" dd if="$dev" of="$out_img" bs=4096 2>/dev/null
+    local dd_rc=$?
+
+    if [ "$dd_rc" -ne 0 ]; then
+        log "  warn: dd of $part_name returned $dd_rc"
+    else
+        local img_sum
+        img_sum=$(sha256 "$out_img")
+        log "  image sha256: $img_sum"
+        echo "boot_image.$part_name=$out_img" >> "$MANIFEST"
+        echo "boot_image.$part_name.sha256=$img_sum" >> "$OUT/enc_info.txt"
+    fi
+
+    # Verify source block device unchanged
+    local post_sum
+    post_sum=$(sha256_dev_4m "$dev")
+    if [ "$pre_sum" != "$post_sum" ]; then
+        log "  ERROR: source checksum changed after dd — hardware issue?"
+    else
+        log "  source block checksum OK (unchanged)"
+    fi
+
+    log "  Done: $part_name"
+}
+
+# ── Main ──────────────────────────────────────────────────────
+
+ui_print ""
+ui_print "************************************"
+ui_print " hands-on-metal Recovery Collector  "
+ui_print "************************************"
+ui_print ""
+ui_print "Output: $OUT"
+ui_print ""
+
+mkdir -p "$OUT/partitions" "$BOOT_OUT"
+: > "$LOG"
+: > "$MANIFEST"
+: > "$OUT/enc_info.txt"
+
+log "=== Mode B: Recovery collection start ==="
+
+# 1. Extract boot images (read-only DD — host unpacks ramdisk offline)
+ui_print "- Extracting boot images (read-only)..."
+for boot_part in boot vendor_boot recovery init_boot; do
+    extract_boot_image "$boot_part"
+done
+
+# 2. Mount and extract file system partitions (with encryption handling)
+for part in vendor odm product; do
+    ui_print "- Processing partition: $part"
+    mount_and_extract "$part"
+done
+
+TOTAL=$("$BB" wc -l < "$MANIFEST")
+log "=== Recovery collection complete: $TOTAL entries ==="
+ui_print ""
+ui_print "Done! $TOTAL entries captured."
+ui_print ""
+ui_print "Next steps on your host PC:"
+ui_print "  1. Transfer /sdcard/hands-on-metal/ to PC"
+ui_print "  2. python pipeline/build_table.py --mode B --dump <image_dump>"
+ui_print "     (automatically unpacks ramdisks and parses fstab encryption flags)"
+ui_print ""
