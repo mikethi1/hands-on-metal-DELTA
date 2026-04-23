@@ -44,7 +44,7 @@ class UploadTests(unittest.TestCase):
 
     def test_confirm_repo_upload_yes_flag_skips_prompt(self) -> None:
         with mock.patch("builtins.input") as input_mock:
-            self.assertTrue(upload.confirm_repo_upload(True))
+            self.assertTrue(upload.confirm_repo_upload(yes=True))
         input_mock.assert_not_called()
 
     def test_confirm_repo_upload_defaults_to_no(self) -> None:
