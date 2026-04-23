@@ -72,6 +72,7 @@ SCRIPT_NAME="boot_image"
 OUT="${OUT:-$HOME/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 BOOT_WORK_DIR="$OUT/boot_work"
+OPTION5_PARTITIONS_DIR="${OPTION5_PARTITIONS_DIR:-$BOOT_WORK_DIR/partitions}"
 _HOM_RESOLVED_ROOT="${REPO_ROOT:-${MODPATH:-}}"
 if [ -n "$_HOM_RESOLVED_ROOT" ]; then
     PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_RESOLVED_ROOT/build/partition_index.json}"
@@ -189,6 +190,39 @@ _has_cmd() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Return 0 if $1 appears as a whole line in the newline-separated list $2.
+_in_list() {
+    printf '%s\n' "$2" | grep -qxF "$1" 2>/dev/null
+}
+
+# Heuristic: try to extract a build ID string from a raw boot/init_boot image.
+# Scans the binary for common Android build property patterns embedded in the
+# image (works best on LZ4-legacy or uncompressed ramdisks; may return empty
+# for GZip-compressed ramdisks).
+# Echoes the build ID (e.g. "CP1A.260305.018"), or empty if not detectable.
+_extract_build_id_from_image() {
+    local file="$1" result=""
+    [ -f "$file" ] || { echo ""; return 0; }
+
+    # 1. ro.build.id=VALUE (prop.default / default.prop in the ramdisk)
+    result=$(grep -a -m1 -o 'ro\.build\.id=[^[:space:][:cntrl:]/]*' \
+        "$file" 2>/dev/null | sed 's/ro\.build\.id=//' || true)
+    [ -n "$result" ] && { echo "$result"; return 0; }
+
+    # 2. ro.build.fingerprint=brand/product/device:ver/BUILD_ID/incr:type/keys
+    #    The build ID is field 4 when split on '/'.
+    result=$(grep -a -m1 -o 'ro\.build\.fingerprint=[^[:space:][:cntrl:]]*' \
+        "$file" 2>/dev/null | cut -d/ -f4 || true)
+    [ -n "$result" ] && { echo "$result"; return 0; }
+
+    # 3. Kernel command line: androidboot.buildid=VALUE
+    result=$(grep -a -m1 -o 'androidboot\.buildid=[^[:space:]]*' \
+        "$file" 2>/dev/null | sed 's/androidboot\.buildid=//' || true)
+    [ -n "$result" ] && { echo "$result"; return 0; }
+
+    echo ""
+}
+
 # ── dependency self-check ─────────────────────────────────────
 # Validates that the tools THIS script needs are present.
 # Logs missing optional tools so acquisition paths that depend
@@ -217,8 +251,17 @@ _boot_image_check_deps() {
         ux_print "  ⚠  Missing optional tools:$missing_optional"
     fi
 
-    _reg_set boot HOM_BOOT_IMG_HAS_CURL  "$(_has_cmd curl  && echo true || echo false)"
-    _reg_set boot HOM_BOOT_IMG_HAS_UNZIP "$(_has_cmd unzip && echo true || echo false)"
+    if _has_cmd curl; then
+        _reg_set boot HOM_BOOT_IMG_HAS_CURL "true"
+    else
+        _reg_set boot HOM_BOOT_IMG_HAS_CURL "false"
+    fi
+
+    if _has_cmd unzip; then
+        _reg_set boot HOM_BOOT_IMG_HAS_UNZIP "true"
+    else
+        _reg_set boot HOM_BOOT_IMG_HAS_UNZIP "false"
+    fi
 }
 
 # ── pre-placed image scanner ─────────────────────────────────
@@ -241,7 +284,10 @@ _boot_image_check_deps() {
 # Decompression is handled by the caller in run_boot_image_acquire.
 
 _find_pre_placed_image() {
+    # $1 = boot partition name (boot / init_boot)
+    # $2 = (optional) newline-separated list of paths already seen/declined — skipped
     local boot_part="$1"
+    local excluded="${2:-}"
     local candidate
 
     # ── Direct image files in standard locations ──────────────
@@ -253,6 +299,7 @@ _find_pre_placed_image() {
         "/sdcard/${boot_part}.img" \
         "/data/local/tmp/${boot_part}.img"; do
         if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+            _in_list "$candidate" "$excluded" && continue
             echo "$candidate"
             return 0
         fi
@@ -267,6 +314,7 @@ _find_pre_placed_image() {
         "/data/adb/magisk/stock_boot.img" \
         "/data/adb/magisk/stock_boot_${boot_part}.img"; do
         if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+            _in_list "$candidate" "$excluded" && continue
             log_info "Found Magisk stock boot backup: $candidate"
             echo "$candidate"
             return 0
@@ -294,6 +342,7 @@ _find_pre_placed_image() {
         # Uncompressed .win (preferred)
         for candidate in "$bdir"/*/*/"${boot_part}.emmc.win"; do
             if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                _in_list "$candidate" "$excluded" && continue
                 log_info "Found TWRP backup boot image: $candidate"
                 echo "$candidate"
                 return 0
@@ -302,6 +351,7 @@ _find_pre_placed_image() {
         # Gzip compressed .win.gz
         for candidate in "$bdir"/*/*/"${boot_part}.emmc.win.gz"; do
             if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                _in_list "$candidate" "$excluded" && continue
                 log_info "Found compressed TWRP backup: $candidate (gzip)"
                 echo "$candidate"
                 return 0
@@ -310,6 +360,7 @@ _find_pre_placed_image() {
         # LZ4 compressed .win.lz4
         for candidate in "$bdir"/*/*/"${boot_part}.emmc.win.lz4"; do
             if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                _in_list "$candidate" "$excluded" && continue
                 log_info "Found compressed TWRP backup: $candidate (lz4)"
                 echo "$candidate"
                 return 0
@@ -318,6 +369,7 @@ _find_pre_placed_image() {
         # Some recoveries use plain .img naming
         for candidate in "$bdir"/*/*/"${boot_part}.img"; do
             if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                _in_list "$candidate" "$excluded" && continue
                 log_info "Found recovery backup boot image: $candidate"
                 echo "$candidate"
                 return 0
@@ -332,6 +384,7 @@ _find_pre_placed_image() {
         [ -d "$bdir" ] 2>/dev/null || continue
         for candidate in "$bdir"/*/"${boot_part}.img"; do
             if [ -f "$candidate" ] && [ -s "$candidate" ]; then
+                _in_list "$candidate" "$excluded" && continue
                 log_info "Found CWM/Nandroid backup: $candidate"
                 echo "$candidate"
                 return 0
@@ -576,6 +629,128 @@ _confirm_yn() {
     esac
 }
 
+_confirm_yn_timeout() {
+    # $1 = prompt text, $2 = timeout seconds (default 30).
+    # Returns 0 for yes (or on timeout — auto-proceeds), 1 for no.
+    local prompt="$1" timeout="${2:-30}" answer=""
+    if [ -t 0 ]; then
+        printf '\n%s [Y/n] (auto-yes in %ss): ' "$prompt" "$timeout" >&2
+        # shellcheck disable=SC3045  # read -t: mksh/bash/busybox-ash extension
+        if read -r -t "$timeout" answer </dev/tty 2>/dev/null; then
+            : # got an answer before timeout
+        else
+            printf '\n  (no response — proceeding automatically)\n' >&2
+            answer="Y"
+        fi
+    else
+        answer="Y"
+    fi
+    case "$answer" in
+        ''|y|Y|yes|YES|Yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+_prompt_option5_env_table_mode() {
+    # Prompt user to choose env-table mode for option 5 after boot-image
+    # detection output is shown.
+    #
+    # Writes:
+    #   HOM_OPTION5_ENV_TABLE_MODE
+    #   HOM_OPTION5_ENV_TABLE_REAL_LINK
+    #   HOM_OPTION5_ENV_TABLE_FACTORY_LINK
+    #   HOM_OPTION5_ENV_TABLE_BOTH_LINK
+    #   HOM_OPTION5_ENV_TABLE_SELECTED_LINK
+    local mode="both"
+    local input=""
+    local input_normalized=""
+    local links_dir_ok=1
+    local links_dir="$BOOT_WORK_DIR/env_table_links"
+    local real_link="$links_dir/real_hardware_env_table.link"
+    local factory_link="$links_dir/factory_image_env_table.link"
+    local both_link="$links_dir/both_env_tables.link"
+    local selected_link="$both_link"
+    local real_link_display="" factory_link_display="" both_link_display=""
+
+    if ! mkdir -p "$links_dir" 2>/dev/null; then
+        log_warn "Could not create env-table links directory: $links_dir. Link placeholders may be unavailable."
+        links_dir_ok=0
+    fi
+    if [ "$links_dir_ok" -eq 1 ]; then
+        local _entry _label _path
+        for _entry in \
+            "real:$real_link" \
+            "factory:$factory_link" \
+            "both:$both_link"; do
+            _label="${_entry%%:*}"
+            _path="${_entry#*:}"
+            if ! ln -sfn /dev/null "$_path" 2>/dev/null; then
+                log_warn "Could not create /dev/null link ($_label): $_path"
+            fi
+        done
+    fi
+
+    real_link_display=$(printf '%s' "$real_link" | tr -d '\r\n')
+    factory_link_display=$(printf '%s' "$factory_link" | tr -d '\r\n')
+    both_link_display=$(printf '%s' "$both_link" | tr -d '\r\n')
+
+    ux_print ""
+    ux_print "  ┌────────────────────────────────────────────────────────────────────┐"
+    ux_print "  │ Option 5 — Environment Table Selection                            │"
+    ux_print "  ├────────────────────────────────────────────────────────────────────┤"
+    ux_print "  │ 1) Real hardware environment table                                │"
+    ux_print "  ├────────────────────────────────────────────────────────────────────┤"
+    ux_print "  │ 2) Factory image based environment table                          │"
+    ux_print "  ├────────────────────────────────────────────────────────────────────┤"
+    ux_print "  │ 3) Both environment tables                                        │"
+    ux_print "  ├────────────────────────────────────────────────────────────────────┤"
+    ux_print "  │ Links: see below (placeholder links)                              │"
+    ux_print "  └────────────────────────────────────────────────────────────────────┘"
+    ux_print "    real   : $real_link_display"
+    ux_print "    factory: $factory_link_display"
+    ux_print "    both   : $both_link_display"
+
+    if [ -t 0 ] 2>/dev/null; then
+        ux_prompt input \
+            "Choose env table mode [1=real, 2=factory, 3=both]" \
+            "3"
+    else
+        input="3"
+        log_info "Non-interactive mode: defaulting option 5 env table mode to both"
+    fi
+
+    input_normalized=$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]')
+
+    case "$input_normalized" in
+        1|real|hardware)
+            mode="real_hardware"
+            selected_link="$real_link"
+            ;;
+        2|factory|factory_image)
+            mode="factory_image"
+            selected_link="$factory_link"
+            ;;
+        3|both)
+            mode="both"
+            selected_link="$both_link"
+            ;;
+        *)
+            log_warn "Invalid env table mode input '$input' — defaulting to both"
+            mode="both"
+            selected_link="$both_link"
+            ;;
+    esac
+
+    _reg_set boot HOM_OPTION5_ENV_TABLE_MODE "$mode"
+    _reg_set boot HOM_OPTION5_ENV_TABLE_REAL_LINK "$real_link"
+    _reg_set boot HOM_OPTION5_ENV_TABLE_FACTORY_LINK "$factory_link"
+    _reg_set boot HOM_OPTION5_ENV_TABLE_BOTH_LINK "$both_link"
+    _reg_set boot HOM_OPTION5_ENV_TABLE_SELECTED_LINK "$selected_link"
+
+    ux_print "  ✓  Selected env table mode: $mode"
+    ux_print "     Active link: $selected_link"
+}
+
 _prompt_local_user_image() {
     # $1=boot_part, $2=codename, $3=build_id_lower
     # Echoes resolved path (or empty) on stdout.
@@ -683,21 +858,65 @@ _is_google_device_supported() {
 # already-extracted inner image-*.zip into "$BOOT_WORK_DIR/partitions/".
 #
 # This complements the single Magisk-target image returned by
-# _download_factory_boot_image: callers still get back the one image
-# they need to patch, but the user also ends up with boot.img,
-# init_boot.img, vendor_boot.img, dtbo.img, vbmeta*.img and
-# recovery.img on disk for flashing / recovery / inspection.
+# _download_factory_boot_image when the user explicitly opts in:
+# callers still get back the one image they need to patch, and can
+# also choose to extract boot.img, init_boot.img, vendor_boot.img,
+# dtbo.img, vbmeta*.img and recovery.img for recovery / inspection.
 #
 # Writes ONLY to stderr (via ux_print / log_info) so it is safe to
 # call from inside a function whose stdout is captured via $(...).
 #
 # Usage: _extract_all_partitions_from_inner_zip <inner_zip_path>
+_find_zip_member_by_basename() {
+    # $1 = zip path
+    # $2 = basename to find (e.g., boot.img)
+    local zip_path="$1"
+    local base_name="$2"
+    [ -f "$zip_path" ] || return 1
+    _has_cmd unzip || return 1
+
+    local member
+    member=$(
+        unzip -Z1 "$zip_path" 2>/dev/null \
+            | awk -v n="$base_name" '
+                {
+                    m=$0
+                    sub(/^.*\//, "", m)
+                    if (m == n) {
+                        print $0
+                        exit
+                    }
+                }'
+    )
+    [ -n "$member" ] || return 1
+    printf '%s\n' "$member"
+    return 0
+}
+
+_extract_zip_member_by_basename() {
+    # $1 = zip path
+    # $2 = basename to extract (e.g., vendor_boot.img)
+    # $3 = output directory
+    local zip_path="$1"
+    local base_name="$2"
+    local out_dir="$3"
+    local member=""
+
+    member=$(_find_zip_member_by_basename "$zip_path" "$base_name" || true)
+    [ -n "$member" ] || return 1
+    mkdir -p "$out_dir" 2>/dev/null || return 1
+    unzip -joq "$zip_path" "$member" -d "$out_dir" 2>/dev/null || return 1
+    [ -s "$out_dir/$base_name" ]
+}
+
 _extract_all_partitions_from_inner_zip() {
+    # $1 = path to inner image-*.zip
+    # $2 = optional output directory for extracted partition images
     local inner_zip_path="$1"
+    local part_dir="${2:-$OPTION5_PARTITIONS_DIR}"
     [ -f "$inner_zip_path" ] || return 1
     _has_cmd unzip || return 1
 
-    local part_dir="$BOOT_WORK_DIR/partitions"
     mkdir -p "$part_dir" 2>/dev/null || return 1
 
     # Standard boot-chain images shipped in Google factory inner ZIPs.
@@ -705,38 +924,26 @@ _extract_all_partitions_from_inner_zip() {
     # entries are tolerated silently.
     local candidates="boot.img init_boot.img vendor_boot.img dtbo.img vbmeta.img vbmeta_system.img vbmeta_vendor.img recovery.img"
 
-    # Listing once is cheaper than probing each name with unzip.
-    local listing
-    listing=$(unzip -l "$inner_zip_path" 2>/dev/null || true)
-    [ -n "$listing" ] || return 1
-
     local extracted_count=0
     local extracted_names=""
     local img
     for img in $candidates; do
-        # Match the image name as a whole token in the listing
-        # (avoids false hits like "boot.img.lz4" when only boot.img
-        # was asked for).
-        if printf '%s\n' "$listing" | grep -Eq "[[:space:]]${img}\$"; then
-            if unzip -joq "$inner_zip_path" "$img" \
-                    -d "$part_dir" 2>/dev/null \
-                    && [ -s "$part_dir/$img" ]; then
-                extracted_count=$((extracted_count + 1))
-                extracted_names="$extracted_names $img"
-                log_info "Extracted partition image: $img -> $part_dir/$img"
-            else
-                log_warn "Failed to extract $img from inner ZIP"
-            fi
+        if _extract_zip_member_by_basename "$inner_zip_path" "$img" "$part_dir"; then
+            extracted_count=$((extracted_count + 1))
+            extracted_names="$extracted_names $img"
+            log_info "Extracted partition image: $img -> $part_dir/$img"
         fi
     done
 
     if [ "$extracted_count" -gt 0 ]; then
+        _reg_set boot HOM_OPTION5_PARTITIONS_DIR "$part_dir"
         ux_print "  ✓  Extracted $extracted_count partition image(s) to $part_dir"
         ux_print "    ${extracted_names# }"
         return 0
     fi
 
     log_warn "No standard partition images found inside inner ZIP"
+    _reg_set boot HOM_OPTION5_PARTITIONS_DIR ""
     return 1
 }
 
@@ -755,7 +962,6 @@ _download_factory_boot_image() {
     build_id_lower=$(echo "$build_id" | tr '[:upper:]' '[:lower:]')
 
     local factory_zip
-    local downloaded_here=0
 
     if [ -n "$local_zip" ] && [ -f "$local_zip" ] && [ -s "$local_zip" ]; then
         # User-supplied (or auto-detected) local factory ZIP — no download.
@@ -766,8 +972,7 @@ _download_factory_boot_image() {
         _has_cmd curl || { log_warn "curl not available — cannot download factory image"; return 1; }
 
         local factory_url="https://dl.google.com/dl/android/aosp/${codename}-${build_id_lower}-factory.zip"
-        factory_zip="$_TMP/hom_factory_${codename}_${build_id_lower}.zip"
-        downloaded_here=1
+        factory_zip="$BOOT_WORK_DIR/factory_${codename}_${build_id_lower}.zip"
 
         ux_print "  Downloading Google factory image..."
         ux_print "  URL: $factory_url"
@@ -790,12 +995,15 @@ _download_factory_boot_image() {
         rm -f "$curl_log"
     fi
 
+    _reg_set boot HOM_OPTION5_FACTORY_ZIP_PATH "$factory_zip"
+
     # Google factory ZIPs are ZIP-in-ZIP:
     #   outer: {codename}-{build_id}/image-{codename}-{build_id}.zip
     # The inner ZIP contains boot.img, init_boot.img, etc.
 
-    local extract_dir="$_TMP/hom_factory_extract"
+    local extract_dir="$BOOT_WORK_DIR/factory_extract"
     mkdir -p "$extract_dir"
+    _reg_set boot HOM_OPTION5_EXTRACT_DIR "$extract_dir"
 
     # Step 1: extract the inner image-*.zip from the outer ZIP
     local inner_zip
@@ -815,14 +1023,12 @@ _download_factory_boot_image() {
                 -d "$extract_dir" 2>/dev/null; then
             local found="$extract_dir/${boot_part}.img"
             if [ -f "$found" ] && [ -s "$found" ]; then
+                _reg_set boot HOM_OPTION5_EXTRACTED_IMG_PATH "$found"
                 echo "$found"
-                [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
                 return 0
             fi
         fi
         log_warn "Could not locate ${boot_part}.img inside factory ZIP"
-        [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-        rm -rf "$extract_dir"
         return 1
     fi
 
@@ -835,7 +1041,7 @@ _download_factory_boot_image() {
     # anti-rollback bricks.
     local inner_build
     inner_build=$(echo "$inner_zip" \
-        | sed -n "s|.*image-${codename}-\\([^./]*\\)\\.zip.*|\\1|p" \
+        | sed -n "s|.*image-${codename}-\\([^/]*\\)\\.zip|\\1|p" \
         | tr '[:upper:]' '[:lower:]')
     if [ -n "$inner_build" ] && [ "$inner_build" != "$build_id_lower" ]; then
         log_warn "Factory ZIP build mismatch: device=$build_id_lower zip=$inner_build"
@@ -847,14 +1053,10 @@ _download_factory_boot_image() {
         if [ -t 0 ] 2>/dev/null; then
             if ! _confirm_yn "Continue with mismatched factory ZIP anyway?"; then
                 log_warn "User aborted due to factory ZIP build mismatch"
-                [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-                rm -rf "$extract_dir"
                 return 1
             fi
         else
             log_warn "Non-interactive: refusing mismatched factory ZIP"
-            [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-            rm -rf "$extract_dir"
             return 1
         fi
     elif [ -n "$inner_build" ]; then
@@ -864,27 +1066,34 @@ _download_factory_boot_image() {
 
     unzip -joq "$factory_zip" "$inner_zip" -d "$extract_dir" 2>/dev/null || {
         log_warn "Failed to extract inner ZIP from factory image"
-        [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-        rm -rf "$extract_dir"
         return 1
     }
 
     local inner_zip_path
     inner_zip_path="$extract_dir/$(basename "$inner_zip")"
+    _reg_set boot HOM_OPTION5_INNER_ZIP_PATH "$inner_zip_path"
 
     # Step 2: extract boot.img or init_boot.img from inner ZIP
-    if unzip -joq "$inner_zip_path" "${boot_part}.img" \
-            -d "$extract_dir" 2>/dev/null; then
+    local partitions_dir="$OPTION5_PARTITIONS_DIR"
+    if _extract_zip_member_by_basename "$inner_zip_path" "${boot_part}.img" "$extract_dir"; then
         local target_img="$extract_dir/${boot_part}.img"
         if [ -f "$target_img" ] && [ -s "$target_img" ]; then
             ux_print "  ✓  Extracted ${boot_part}.img from factory image"
-            # Also extract the rest of the standard boot-chain images
-            # (boot, init_boot, vendor_boot, dtbo, vbmeta*, recovery)
-            # into BOOT_WORK_DIR/partitions/ for flashing / recovery.
-            _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
+            # Optional: extract the full boot-chain image set only if
+            # the user explicitly asks for it.
+            local extract_extra="no"
+            if [ -t 0 ] 2>/dev/null; then
+                ux_prompt extract_extra \
+                    "  Extract additional partition images too (boot/vendor_boot/dtbo/vbmeta/recovery)? [yes/no]" \
+                    "no"
+            else
+                log_info "Non-interactive mode: skipping additional partition extraction"
+            fi
+            if [ "$extract_extra" = "yes" ] || [ "$extract_extra" = "y" ]; then
+                _extract_all_partitions_from_inner_zip "$inner_zip_path" "$partitions_dir" || true
+            fi
+            _reg_set boot HOM_OPTION5_EXTRACTED_IMG_PATH "$target_img"
             echo "$target_img"
-            [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-            rm -f "$inner_zip_path"
             return 0
         fi
     fi
@@ -896,24 +1105,29 @@ _download_factory_boot_image() {
         ux_print "  ⚠  init_boot.img not present in this factory image."
         ux_print "     This firmware may pre-date Android 13 / API 33."
         ux_print "     Falling back to boot.img."
-        if unzip -joq "$inner_zip_path" "boot.img" \
-                -d "$extract_dir" 2>/dev/null; then
+        if _extract_zip_member_by_basename "$inner_zip_path" "boot.img" "$extract_dir"; then
             local fallback_img="$extract_dir/boot.img"
             if [ -f "$fallback_img" ] && [ -s "$fallback_img" ]; then
                 ux_print "  ✓  Extracted boot.img as fallback"
-                _extract_all_partitions_from_inner_zip "$inner_zip_path" || true
+                local extract_extra="no"
+                if [ -t 0 ] 2>/dev/null; then
+                    ux_prompt extract_extra \
+                        "  Extract additional partition images too (boot/vendor_boot/dtbo/vbmeta/recovery)? [yes/no]" \
+                        "no"
+                else
+                    log_info "Non-interactive mode: skipping additional partition extraction"
+                fi
+                if [ "$extract_extra" = "yes" ] || [ "$extract_extra" = "y" ]; then
+                    _extract_all_partitions_from_inner_zip "$inner_zip_path" "$partitions_dir" || true
+                fi
+                _reg_set boot HOM_OPTION5_EXTRACTED_IMG_PATH "$fallback_img"
                 echo "$fallback_img"
-                [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-                rm -f "$inner_zip_path"
                 return 0
             fi
         fi
     fi
 
     log_warn "Failed to extract ${boot_part}.img from factory image"
-    [ "$downloaded_here" -eq 1 ] && rm -f "$factory_zip"
-    rm -f "$inner_zip_path"
-    rm -rf "$extract_dir"
     return 1
 }
 
@@ -926,6 +1140,11 @@ run_boot_image_acquire() {
         "Magisk must patch this image before flashing; we need a local copy to work with"
 
     mkdir -p "$BOOT_WORK_DIR" "$_TMP"
+    _reg_set boot HOM_OPTION5_FACTORY_ZIP_PATH ""
+    _reg_set boot HOM_OPTION5_EXTRACT_DIR ""
+    _reg_set boot HOM_OPTION5_INNER_ZIP_PATH ""
+    _reg_set boot HOM_OPTION5_EXTRACTED_IMG_PATH ""
+    _reg_set boot HOM_OPTION5_PARTITIONS_DIR ""
 
     # ── 0. Self-contained dependency check ────────────────────
 
@@ -989,6 +1208,19 @@ run_boot_image_acquire() {
         ux_print "  Will try pre-placed image or factory download..."
     fi
 
+    # Retrieve device build and codename here — needed in both step 2
+    # (pre-placed image build-ID matching) and step 3 (local/factory file).
+    local codename build_id build_id_lower=""
+    codename=$(_reg_get HOM_DEV_DEVICE)
+    build_id=$(_reg_get HOM_DEV_BUILD_ID)
+    # Fallback: try reading build ID from system properties directly
+    if [ -z "$build_id" ]; then
+        build_id=$(getprop ro.build.id 2>/dev/null || true)
+    fi
+    if [ -n "$build_id" ]; then
+        build_id_lower=$(echo "$build_id" | tr '[:upper:]' '[:lower:]')
+    fi
+
     # ── 2. Pre-placed image file ──────────────────────────────
     # Scans: boot_work dir, /sdcard/Download, Magisk stock backup,
     # TWRP/OrangeFox/PBRP/SHRP/RedWolf/CWM/Nandroid backup folders.
@@ -1005,14 +1237,58 @@ run_boot_image_acquire() {
         ux_print "    (boot_work, /sdcard/Download, Magisk stock backup,"
         ux_print "     TWRP, OrangeFox, PBRP, SHRP, RedWolf, CWM, Nandroid)"
 
-        local pre_placed
-        pre_placed=$(_find_pre_placed_image "$boot_part" 2>/dev/null || true)
+        local pre_placed skipped_images="" _pp_accepted
+        while true; do
+            pre_placed=$(_find_pre_placed_image "$boot_part" "$skipped_images" 2>/dev/null || true)
+            [ -n "$pre_placed" ] || break
 
-        if [ -n "$pre_placed" ]; then
-            ux_print "  ✓  Found image: $pre_placed"
             log_info "Pre-placed/backup image found: $pre_placed"
 
-            # Handle TWRP compressed backups
+            # ── Build-ID check ────────────────────────────────
+            # Try to extract the build ID embedded in the image binary.
+            local img_build img_build_lower=""
+            img_build=$(_extract_build_id_from_image "$pre_placed")
+            if [ -n "$img_build" ]; then
+                img_build_lower=$(echo "$img_build" | tr '[:upper:]' '[:lower:]')
+            fi
+
+            # ── User confirmation ─────────────────────────────
+            _pp_accepted=0  # default: accepted (non-interactive / no build info)
+            if [ -t 0 ] 2>/dev/null; then
+                if [ -n "$img_build" ] && [ -n "$build_id_lower" ]; then
+                    if [ "$img_build_lower" = "$build_id_lower" ]; then
+                        # Build match: show info, auto-proceed after 30 s
+                        ux_print "  ✓  Found image: $pre_placed"
+                        ux_print "     Image build : $img_build"
+                        ux_print "     Device build: $build_id"
+                        ux_print "     ✓  Builds match."
+                        log_info "Build ID match: image=$img_build device=$build_id"
+                        _confirm_yn_timeout "Use this image (builds match)?" || _pp_accepted=1
+                    else
+                        # Build mismatch: show both numbers, require explicit Y/N
+                        ux_print "  ⚠  Found image: $pre_placed"
+                        ux_print "     Image build : $img_build"
+                        ux_print "     Device build: $build_id"
+                        ux_print "     Builds do NOT match — a mismatched image may cause"
+                        ux_print "     boot failures or anti-rollback bricks."
+                        log_warn "Build ID mismatch: image=$img_build device=$build_id"
+                        _confirm_yn "Use this image despite build mismatch?" || _pp_accepted=1
+                    fi
+                else
+                    # Build ID not determinable from image binary
+                    ux_print "  ✓  Found image: $pre_placed"
+                    _confirm_yn "Use this detected image: $pre_placed?" || _pp_accepted=1
+                fi
+            fi
+
+            if [ "$_pp_accepted" -ne 0 ]; then
+                log_info "User declined image $pre_placed — searching for next candidate"
+                # Append path on its own line so _in_list can match it exactly.
+                skipped_images="$(printf '%s\n%s' "$skipped_images" "$pre_placed")"
+                continue
+            fi
+
+            # ── Copy / decompress ─────────────────────────────
             case "$pre_placed" in
                 *.win.gz)
                     ux_print "  Decompressing gzip TWRP backup..."
@@ -1076,26 +1352,21 @@ run_boot_image_acquire() {
             else
                 log_warn "Copy/decompress of pre-placed image failed"
             fi
-        else
-            ux_print "  No pre-placed or backup ${boot_part}.img found."
+            break
+        done
+
+        if [ -z "$acquire_method" ]; then
+            ux_print "  No usable pre-placed or backup ${boot_part}.img found."
         fi
     fi
+
+    # Prompt exactly after boot-image detection output is shown.
+    _prompt_option5_env_table_mode
 
     # ── 3. Local user file (boot.img / init_boot.img / factory ZIP)
     #       or Google factory image download (Pixel devices) ──────
 
     if [ -z "$acquire_method" ]; then
-        local codename build_id build_id_lower=""
-        codename=$(_reg_get HOM_DEV_DEVICE)
-        build_id=$(_reg_get HOM_DEV_BUILD_ID)
-        # Fallback: try reading build ID from system properties directly
-        if [ -z "$build_id" ]; then
-            build_id=$(getprop ro.build.id 2>/dev/null || true)
-        fi
-        if [ -n "$build_id" ]; then
-            build_id_lower=$(echo "$build_id" | tr '[:upper:]' '[:lower:]')
-        fi
-
         # ── 3a. Ask the user for a local file first (img or zip) ──
         local user_path=""
         user_path=$(_prompt_local_user_image "$boot_part" "$codename" "$build_id_lower")
@@ -1116,7 +1387,6 @@ run_boot_image_acquire() {
                         "$codename" "$boot_part" "$build_id" "$user_path" || true)
                     if [ -n "$extracted_img" ] && [ -f "$extracted_img" ] && [ -s "$extracted_img" ]; then
                         cp "$extracted_img" "$out_img"
-                        rm -f "$extracted_img"
                         boot_dev="local_factory_zip:$user_path"
                         acquire_method="local_factory_zip"
                         ux_print "  ✓  Extracted ${boot_part}.img from local factory ZIP"

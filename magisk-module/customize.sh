@@ -37,14 +37,36 @@ export OUT ENV_REGISTRY STATE_FILE LOG_DIR ZIPFILE
 SCRIPT_NAME="customize"
 export SCRIPT_NAME
 
+_require_sourceable() {
+    local script="$1"
+    if [ ! -f "$script" ]; then
+        echo "FATAL: missing required script: $script" >&2
+        exit 1
+    fi
+    if [ ! -r "$script" ]; then
+        echo "FATAL: required script is not readable: $script" >&2
+        echo "Fix module file permissions/contexts, then retry." >&2
+        exit 1
+    fi
+}
+
+for _req in \
+    "$CORE/logging.sh" \
+    "$CORE/ux.sh" \
+    "$CORE/state_machine.sh" \
+    "$CORE/privacy.sh" \
+    "$MODPATH/env_detect.sh"; do
+    _require_sourceable "$_req"
+done
+
 # shellcheck source=/dev/null
-. "$CORE/logging.sh"
+. "$CORE/logging.sh" || { echo "FATAL: failed to source $CORE/logging.sh" >&2; exit 1; }
 # shellcheck source=/dev/null
-. "$CORE/ux.sh"
+. "$CORE/ux.sh" || { echo "FATAL: failed to source $CORE/ux.sh" >&2; exit 1; }
 # shellcheck source=/dev/null
-. "$CORE/state_machine.sh"
+. "$CORE/state_machine.sh" || { echo "FATAL: failed to source $CORE/state_machine.sh" >&2; exit 1; }
 # shellcheck source=/dev/null
-. "$CORE/privacy.sh"
+. "$CORE/privacy.sh" || { echo "FATAL: failed to source $CORE/privacy.sh" >&2; exit 1; }
 
 mkdir -p "$OUT" "$LOG_DIR"
 log_banner "hands-on-metal root workflow (Magisk path)"
@@ -54,11 +76,11 @@ sm_print_status
 
 _source_core() {
     local script="$CORE/$1"
-    if [ -f "$script" ]; then
+    if [ -f "$script" ] && [ -r "$script" ]; then
         # shellcheck source=/dev/null
         . "$script"
     else
-        ux_abort "Missing core script: $script"
+        ux_abort "Missing or unreadable core script: $script"
     fi
 }
 

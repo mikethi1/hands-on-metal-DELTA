@@ -181,6 +181,10 @@ for bprop in \
     /system/build.prop \
     /vendor/build.prop; do
     [ -f "$bprop" ] || continue
+    if [ ! -r "$bprop" ]; then
+        log "  Skipping unreadable $bprop (permission denied)"
+        continue
+    fi
     log "  Reading $bprop"
     copy_file "$bprop"
     # Extract the key hardware/board properties directly
@@ -224,10 +228,20 @@ copy_dir /proc/device-tree
 reg_set_path recovery HOM_PROC_DEVICE_TREE "/proc/device-tree"
 
 # Extract compatible string (root of the hardware identity)
-COMPAT=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -1 || true)
+if [ -r /proc/device-tree/compatible ]; then
+    COMPAT=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -1 || true)
+else
+    COMPAT=""
+    log "  /proc/device-tree/compatible is not readable"
+fi
 [ -n "$COMPAT" ] && reg_set recovery HOM_DT_COMPATIBLE "$COMPAT"
 
-MODEL=$(tr '\0' ' ' < /proc/device-tree/model 2>/dev/null || true)
+if [ -r /proc/device-tree/model ]; then
+    MODEL=$(tr '\0' ' ' < /proc/device-tree/model 2>/dev/null || true)
+else
+    MODEL=""
+    log "  /proc/device-tree/model is not readable"
+fi
 [ -n "$MODEL" ] && reg_set recovery HOM_DT_MODEL "$MODEL"
 
 # ── 6. dtbo.img raw image (for offline dtc decompilation) ────

@@ -14,6 +14,9 @@
 #   • tools/magisk64        — Magisk binary for offline patch
 #   • tools/magisk32        — 32-bit Magisk binary (older devices)
 #   • tools/magiskinit64    — Magisk init binary
+#   • tools/magiskboot64    — Magisk boot image tool
+#   • tools/magisk_init_ld64, magisk_stub.apk, magisk_boot_patch.sh, magisk_util_functions.sh
+#                           — assets required for boot_patch.sh fallback path
 #
 # Usage:
 #   bash build/build_offline_zip.sh
@@ -107,9 +110,17 @@ chmod 0755 "$STAGE/core/"*.sh
 mkdir -p "$STAGE/build"
 cp "$BUILD_DIR/partition_index.json" "$STAGE/build/"
 
+# Schema
+mkdir -p "$STAGE/schema"
+cp "$REPO_ROOT/schema/hardware_map.sql" "$STAGE/schema/"
+
 # Tools (busybox, Magisk binaries — best-effort)
 mkdir -p "$STAGE/tools"
-for tool in busybox-arm64 magisk64 magisk32 magiskinit64; do
+for tool in \
+    busybox-arm64 \
+    magisk64 magisk32 magiskinit64 \
+    magiskboot64 magisk_init_ld64 \
+    magisk_stub.apk magisk_boot_patch.sh magisk_util_functions.sh; do
     if [ -f "$TOOLS_DIR/$tool" ]; then
         cp "$TOOLS_DIR/$tool" "$STAGE/tools/"
         echo "  Bundled: $tool"
@@ -130,6 +141,7 @@ trap 'rm -rf "$STAGE" "$MODULE_STAGE"' EXIT
 # Module files
 cp -r "$STAGE/core"   "$MODULE_STAGE/"
 cp -r "$STAGE/build"  "$MODULE_STAGE/"
+cp -r "$STAGE/schema" "$MODULE_STAGE/"
 cp -r "$STAGE/tools"  "$MODULE_STAGE/"
 
 # Magisk module files
@@ -164,6 +176,7 @@ trap 'rm -rf "$STAGE" "$MODULE_STAGE" "$RECOVERY_STAGE"' EXIT
 # Core + tools + recovery-zip + magisk-module scripts (all needed by update-binary)
 cp -r "$STAGE/core"          "$RECOVERY_STAGE/"
 cp -r "$STAGE/build"         "$RECOVERY_STAGE/"
+cp -r "$STAGE/schema"        "$RECOVERY_STAGE/"
 cp -r "$STAGE/tools"         "$RECOVERY_STAGE/"
 cp -r "$STAGE/recovery-zip"  "$RECOVERY_STAGE/"
 

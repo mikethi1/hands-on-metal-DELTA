@@ -27,6 +27,7 @@ OUT="${HOME:-/data/local/tmp}/hands-on-metal/live_dump"
 LOG=$OUT/collect.log
 MANIFEST=$OUT/manifest.txt
 ENV_REGISTRY="${HOME:-/data/local/tmp}/hands-on-metal/env_registry.sh"
+BOOT_WORK_ROOT="${HOME:-/data/local/tmp}/hands-on-metal/boot_work"
 
 # ── helpers ──────────────────────────────────────────────────
 
@@ -95,6 +96,12 @@ copy_virtual_dir() {
     done
 }
 
+count_img_files() {
+    local dir="$1"
+    [ -d "$dir" ] || { echo 0; return 0; }
+    find "$dir" -maxdepth 1 -type f -name "*.img" 2>/dev/null | wc -l | tr -d ' '
+}
+
 # ── main ─────────────────────────────────────────────────────
 
 mkdir -p "$OUT"
@@ -112,7 +119,11 @@ if [ ! -f "$ENV_REGISTRY" ] || \
     _uid=$(id -u 2>/dev/null || echo 9999)
     _node="unprivileged"
     if [ "$_uid" = "0" ]; then
-        [ -d /data/adb/magisk ] && _node="root_magisk" || _node="root_other"
+        if [ -d /data/adb/magisk ]; then
+            _node="root_magisk"
+        else
+            _node="root_other"
+        fi
     fi
     [ -f "$ENV_REGISTRY" ] || : > "$ENV_REGISTRY"
     reg_set shell HOM_EXEC_NODE "$_node"
@@ -128,6 +139,28 @@ if [ "$_HOM_IS_ROOT" = false ]; then
     log "[INFO ] Running WITHOUT root — some data sources will be skipped"
     log "[INFO ] Root-only: dmesg, /sys/kernel/debug/pinctrl, block device DD,"
     log "[INFO ]            vendor library symbols, readelf sections"
+fi
+
+# Prefer option-5 extracted images/vars as a data source when running without
+# root. If option-5 output is absent (or execution is root), keep the existing
+# live-filesystem behavior.
+_HOM_OPTION5_IMG_COUNT=0
+_HOM_HAS_BOOT_WORK=false
+if [ -d "$BOOT_WORK_ROOT" ]; then
+    _HOM_HAS_BOOT_WORK=true
+    _HOM_OPTION5_IMG_COUNT=$(count_img_files "$BOOT_WORK_ROOT")
+    if [ -d "$BOOT_WORK_ROOT/partitions" ]; then
+        _HOM_PARTITIONS_IMG_COUNT=$(count_img_files "$BOOT_WORK_ROOT/partitions")
+        _HOM_OPTION5_IMG_COUNT=$((_HOM_OPTION5_IMG_COUNT + _HOM_PARTITIONS_IMG_COUNT))
+    fi
+fi
+_HOM_USE_OPTION5_SOURCE=false
+if [ "$_HOM_IS_ROOT" = false ] && [ "$_HOM_OPTION5_IMG_COUNT" -gt 0 ]; then
+    _HOM_USE_OPTION5_SOURCE=true
+    log "[INFO ] Using option-5 extracted images as primary data source (count=$_HOM_OPTION5_IMG_COUNT)."
+    log "[INFO ] Live /vendor,/odm,/system filesystem scans are skipped in non-root mode."
+else
+    log "[INFO ] Using live filesystem as primary data source."
 fi
 log "Device: $(getprop ro.product.model)"
 
@@ -298,52 +331,58 @@ _check_hw_data_sanity() {
 _check_hw_data_sanity
 
 # 9. VINTF manifests
-log "Collecting VINTF manifests..."
-for f in /vendor/etc/manifest.xml \
-          /system/etc/vintf/manifest.xml \
-          /odm/etc/manifest.xml; do
-    copy_file "$f"
-done
-copy_dir /vendor/etc/vintf
-copy_dir /system/etc/vintf
-copy_dir /odm/etc/vintf
+if [ "$_HOM_USE_OPTION5_SOURCE" = false ]; then
+    log "Collecting VINTF manifests..."
+    for f in /vendor/etc/manifest.xml \
+              /system/etc/vintf/manifest.xml \
+              /odm/etc/manifest.xml; do
+        copy_file "$f"
+    done
+    copy_dir /vendor/etc/vintf
+    copy_dir /system/etc/vintf
+    copy_dir /odm/etc/vintf
 
-# 10. Sysconfig XMLs
-log "Collecting sysconfig..."
-copy_dir /vendor/etc/sysconfig
-copy_dir /system/etc/sysconfig
-copy_dir /odm/etc/sysconfig
+    # 10. Sysconfig XMLs
+    log "Collecting sysconfig..."
+    copy_dir /vendor/etc/sysconfig
+    copy_dir /system/etc/sysconfig
+    copy_dir /odm/etc/sysconfig
 
-# 11. Protobuf files (can contain hardware configuration)
-log "Collecting .pb files..."
-find /vendor /odm -name "*.pb" 2>/dev/null | while IFS= read -r f; do
-    copy_file "$f"
-done
+    # 11. Protobuf files (can contain hardware configuration)
+    log "Collecting .pb files..."
+    find /vendor /odm /first_stage_ramdisk -name "*.pb" 2>/dev/null | while IFS= read -r f; do
+        copy_file "$f"
+    done
 
-# 12. Compatibility matrices
-log "Collecting compatibility matrices..."
-copy_dir /vendor/etc/vintf
-copy_dir /system/etc/vintf
-copy_file /vendor/etc/compatibility_matrix.xml
-copy_file /system/etc/compatibility_matrix.xml
+    # 12. Compatibility matrices
+    # compatibility_matrix*.xml files are included by the VINTF directory
+    # copies done in section 9 above
+    # (/vendor/etc/vintf, /system/etc/vintf, /odm/etc/vintf).
+    # Some devices also place top-level compatibility_matrix.xml in /vendor/etc
+    # or /system/etc, so copy those explicitly as well.
+    copy_file /vendor/etc/compatibility_matrix.xml
+    copy_file /system/etc/compatibility_matrix.xml
 
-# 13. HAL / permissions XMLs
-log "Collecting HAL permission XMLs..."
-copy_dir /vendor/etc/permissions
-copy_dir /system/etc/permissions
-copy_dir /odm/etc/permissions
+    # 13. HAL / permissions XMLs
+    log "Collecting HAL permission XMLs..."
+    copy_dir /vendor/etc/permissions
+    copy_dir /system/etc/permissions
+    copy_dir /odm/etc/permissions
 
-# 14. Vendor init RC files (contain service definitions, HAL paths)
-log "Collecting RC files..."
-find /vendor/etc/init /odm/etc/init /system/etc/init \
-     -name "*.rc" 2>/dev/null | while IFS= read -r f; do
-    copy_file "$f"
-done
+    # 14. Vendor init RC files (contain service definitions, HAL paths)
+    log "Collecting RC files..."
+    find /vendor/etc/init /odm/etc/init /system/etc/init \
+         -name "*.rc" 2>/dev/null | while IFS= read -r f; do
+        copy_file "$f"
+    done
 
-# 15. SELinux policies (device-specific rules reveal hardware names)
-log "Collecting SELinux policies..."
-copy_file /vendor/etc/selinux/plat_sepolicy_vers.txt
-copy_dir /vendor/etc/selinux
+    # 15. SELinux policies (device-specific rules reveal hardware names)
+    log "Collecting SELinux policies..."
+    copy_file /vendor/etc/selinux/plat_sepolicy_vers.txt
+    copy_dir /vendor/etc/selinux
+else
+    log "[SKIP ] Live VINTF/sysconfig/.pb/permissions/RC/SELinux filesystem scans (using option-5 source)"
+fi
 
 # 16. Symbol lists from vendor libraries (text nm output, usually requires root)
 if [ "$_HOM_IS_ROOT" = true ]; then
@@ -436,11 +475,15 @@ copy_virtual_dir /sys/module/dm_crypt
 copy_virtual_dir /sys/module/dm_verity
 
 # fstab files from all locations (contain fileencryption= / encryptable= flags)
-log "Collecting fstab files..."
-find /vendor /odm /system /first_stage_ramdisk \
-     -name "fstab*" 2>/dev/null | while IFS= read -r f; do
-    copy_file "$f"
-done
+if [ "$_HOM_USE_OPTION5_SOURCE" = false ]; then
+    log "Collecting fstab files..."
+    find /vendor /odm /system /first_stage_ramdisk \
+         -name "fstab*" 2>/dev/null | while IFS= read -r f; do
+        copy_file "$f"
+    done
+else
+    log "[SKIP ] Live fstab filesystem scan (using option-5 source)"
+fi
 
 # 21. Live ramdisk extraction from the running boot partition (requires root)
 if [ "$_HOM_IS_ROOT" = true ]; then
@@ -479,11 +522,95 @@ else
     log "[SKIP ] Boot partition DD requires root"
 fi
 
+# Reuse option-5 extracted images as fallback input
+# Option 5 (core/boot_image.sh) stores extracted images under:
+#   ~/hands-on-metal/boot_work/
+#   ~/hands-on-metal/boot_work/partitions/
+# Pull them into this dump so option 20 (unpack_images.py) can use both
+# the boot image and any additional extracted partition images.
+if [ "$_HOM_HAS_BOOT_WORK" = true ]; then
+    log "Importing pre-extracted option-5 images from $BOOT_WORK_ROOT..."
+    mkdir -p "$OUT/boot_images" "$OUT/partitions"
+
+    imported_count=0
+
+    # Single-image outputs from option 5 (prefer current collect output if present)
+    for src in \
+        "$BOOT_WORK_ROOT"/boot_original.img \
+        "$BOOT_WORK_ROOT"/init_boot_original.img \
+        "$BOOT_WORK_ROOT"/boot.img \
+        "$BOOT_WORK_ROOT"/init_boot.img \
+        "$BOOT_WORK_ROOT"/vendor_boot.img \
+        "$BOOT_WORK_ROOT"/recovery.img; do
+        [ -f "$src" ] || continue
+        base=$(basename "$src")
+        case "$base" in
+            # Option 5 stores the target acquisition as *_original.img.
+            # We normalize to canonical partition names for downstream
+            # parsers (boot.img / init_boot.img). Existing collected files
+            # are never overwritten because we copy only when destination
+            # does not already exist.
+            boot_original.img)      dest_name="boot.img" ;;
+            init_boot_original.img) dest_name="init_boot.img" ;;
+            *)              dest_name="$base" ;;
+        esac
+        dest="$OUT/boot_images/$dest_name"
+        if [ ! -s "$dest" ] && cp -p "$src" "$dest" 2>/dev/null; then
+            echo "boot_images/$dest_name" >> "$MANIFEST"
+            imported_count=$((imported_count + 1))
+            log "  imported fallback image: $dest_name"
+        elif [ ! -s "$dest" ]; then
+            log "  [WARN ] failed to import fallback image: $src"
+        fi
+    done
+
+    # Full partition-set extraction from option 5
+    if [ -d "$BOOT_WORK_ROOT/partitions" ]; then
+        for src in "$BOOT_WORK_ROOT"/partitions/*.img; do
+            [ -f "$src" ] || continue
+            base=$(basename "$src")
+            part_dst="$OUT/partitions/$base"
+            if [ ! -s "$part_dst" ] && cp -p "$src" "$part_dst" 2>/dev/null; then
+                echo "partitions/$base" >> "$MANIFEST"
+                imported_count=$((imported_count + 1))
+                log "  imported partition image: $base"
+            elif [ ! -s "$part_dst" ]; then
+                log "  [WARN ] failed to import partition image: $src"
+            fi
+
+            # Keep common boot-chain images in boot_images/ too for compatibility
+            case "$base" in
+                boot.img|init_boot.img|vendor_boot.img|recovery.img)
+                    boot_dst="$OUT/boot_images/$base"
+                    if [ ! -s "$boot_dst" ] && cp -p "$src" "$boot_dst" 2>/dev/null; then
+                        echo "boot_images/$base" >> "$MANIFEST"
+                        imported_count=$((imported_count + 1))
+                    elif [ ! -s "$boot_dst" ]; then
+                        log "  [WARN ] failed to mirror partition image into boot_images/: $src"
+                    fi
+                    ;;
+            esac
+        done
+    fi
+
+    if [ "$imported_count" -gt 0 ]; then
+        log "Imported $imported_count fallback image file(s) from option-5 output."
+    else
+        log "No additional fallback images imported from option-5 output."
+    fi
+fi
+
 # ── Emit collection-path env vars to the shared registry ─────
 log "Updating env registry with collection paths..."
 reg_set path HOM_LIVE_DUMP_DIR "$(real_abs "$OUT")"
 reg_set path HOM_MANIFEST "$(real_abs "$MANIFEST")"
 reg_set path HOM_COLLECT_LOG "$(real_abs "$LOG")"
+if [ "$_HOM_USE_OPTION5_SOURCE" = true ]; then
+    reg_set collect HOM_COLLECT_DATA_SOURCE "option5_images"
+else
+    reg_set collect HOM_COLLECT_DATA_SOURCE "live_filesystem"
+fi
+reg_set collect HOM_COLLECT_OPTION5_IMG_COUNT "$_HOM_OPTION5_IMG_COUNT"
 
 # Record the real absolute paths of the key collected artefacts
 for named in "$OUT/getprop.txt" "$OUT/lshal.txt" "$OUT/dmesg.txt" \
