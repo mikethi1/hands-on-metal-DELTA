@@ -1,0 +1,1 @@
+/data/data/com.termux/files/home/hands-on-metal/magisk-module/collect.sh: line 140: lshal: command not found

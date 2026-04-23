@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # magisk-module/service.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Magisk module service script — runs on every boot with root.
 #
@@ -26,7 +27,7 @@ MODULE_DIR=/data/adb/modules/hands-on-metal-collector
 SENTINEL="$MODULE_DIR/.collected"
 CORE="$MODULE_DIR/core"
 
-OUT=/sdcard/hands-on-metal
+OUT="${HOME:-/data/local/tmp}/hands-on-metal"
 ENV_REGISTRY="$OUT/env_registry.sh"
 LOG_DIR="$OUT/logs"
 STATE_FILE="$MODULE_DIR/.install_state"
@@ -50,6 +51,28 @@ _ota_log() {
 _ota_reg_get() {
     grep "^${1}=" "$ENV_REGISTRY" 2>/dev/null | \
         cut -d= -f2- | sed 's/^"//;s/"[[:space:]].*//'
+}
+
+_service_preflight() {
+    local req
+    for req in \
+        "$CORE/logging.sh" \
+        "$CORE/ux.sh" \
+        "$CORE/state_machine.sh" \
+        "$CORE/privacy.sh" \
+        "$MODULE_DIR/env_detect.sh" \
+        "$MODULE_DIR/setup_termux.sh" \
+        "$MODULE_DIR/collect.sh"; do
+        if [ ! -f "$req" ]; then
+            _ota_log "[PREREQ_FAIL] Missing required script: $req"
+            return 1
+        fi
+        if [ ! -r "$req" ]; then
+            _ota_log "[PREREQ_FAIL] Unreadable script: $req (fix mode/context)"
+            return 1
+        fi
+    done
+    return 0
 }
 
 if [ -f "$ENV_REGISTRY" ]; then
@@ -98,6 +121,12 @@ if [ -f "$ENV_REGISTRY" ]; then
 fi
 
 if [ ! -f "$SENTINEL" ]; then
+    if ! _service_preflight; then
+        _ota_log "Aborting service run due to missing/unreadable prerequisites."
+        # shellcheck disable=SC2317  # exit path is used when script is executed (not sourced)
+        return 1 2>/dev/null || exit 1
+    fi
+
     # Mark collected first so a crash mid-run does not loop forever.
     # Delete the sentinel manually if a fresh re-run is needed.
     touch "$SENTINEL"
@@ -106,10 +135,15 @@ if [ ! -f "$SENTINEL" ]; then
         SCRIPT_NAME="service"
         export SCRIPT_NAME
 
-        # Bootstrap logging
+        # Bootstrap logging — paths are dynamic at install time
+        # shellcheck disable=SC1091
         . "$CORE/logging.sh"
+        # shellcheck disable=SC1091
         . "$CORE/ux.sh"
+        # shellcheck disable=SC1091
         . "$CORE/state_machine.sh"
+        # shellcheck disable=SC1091
+        . "$CORE/privacy.sh"
 
         log_banner "service.sh boot run (RUN_ID=$RUN_ID)"
         sm_print_status

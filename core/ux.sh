@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/ux.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # User-experience helpers — printing, prompting, instructions.
 # Works in three contexts:
@@ -35,12 +36,25 @@ _ux_outfd() {
 }
 
 # ── public: print one line to user ───────────────────────────
+# UX output is written to:
+#   • TWRP/recovery UI (via OUTFD), if available
+#   • stderr (visible in adb shell / Termux)
+#   • the script's log files (tagged [UX]) — but NOT re-emitted to
+#     stderr by the logger, otherwise the user sees every UX line
+#     twice (once direct, once as "[…INFO…] [UX] …").
 ux_print() {
     local msg="$*"
     _ux_outfd "$msg"
-    # Also always write to stderr (visible in adb shell / Termux)
+    # Always write to stderr (visible in adb shell / Termux)
     printf '%s\n' "$msg" >&2
-    log_info "[UX] $msg"
+    # Mirror to log files only (avoid duplicate stderr emission).
+    if command -v _hom_ts >/dev/null 2>&1; then
+        local _ux_ts _ux_line
+        _ux_ts=$(_hom_ts)
+        _ux_line="[$_ux_ts][INFO ][${SCRIPT_NAME:-unknown}] [UX] $msg"
+        printf '%s\n' "$_ux_line" >> "${SCRIPT_LOG:-/dev/null}" 2>/dev/null || true
+        printf '%s\n' "$_ux_line" >> "${MASTER_LOG:-/dev/null}" 2>/dev/null || true
+    fi
 }
 
 # ── public: separator line ────────────────────────────────────

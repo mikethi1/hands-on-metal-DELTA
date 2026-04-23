@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/privacy.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Privacy-by-default redaction for hands-on-metal.
 #
@@ -109,7 +110,7 @@ _hom_value_looks_like_pii() {
 # Returns 0 if the name matches a PII pattern, 1 otherwise.
 hom_is_pii_name() {
     local name
-    name=$(printf '%s' "$1" | tr 'a-z' 'A-Z')
+    name=$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')
     local pat
     for pat in $_HOM_PII_NAME_PATTERNS; do
         [ -z "$pat" ] && continue

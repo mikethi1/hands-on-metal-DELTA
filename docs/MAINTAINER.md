@@ -36,6 +36,9 @@ hands-on-metal/
 │   ├── build_offline_zip.sh  Build script
 │   └── partition_index.json  Offline partition naming database
 │
+├── check_deps.sh            Host-side dependency checker
+├── terminal_menu.sh         Interactive terminal launcher
+│
 ├── docs/
 │   ├── INSTALL.md            User guide (Magisk path)
 │   ├── RECOVERY_INSTALL.md   User guide (recovery path)
@@ -54,7 +57,10 @@ hands-on-metal/
 
 ```bash
 # Linux
-apt-get install zip unzip  # or brew install zip on macOS
+apt-get install zip unzip curl git tar  # or brew install zip on macOS
+
+# Verify everything is installed:
+bash check_deps.sh
 ```
 
 ### 2. Obtain optional bundled tools
@@ -68,20 +74,21 @@ mkdir -p tools/
 
 # Busybox (static arm64 — required for recovery path)
 curl -L -o tools/busybox-arm64 \
-  https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox_ARM64
+  https://busybox.net/downloads/binaries/1.31.0-defconfig-multiarch-musl/busybox-armv8l
 chmod +x tools/busybox-arm64
 
 # Magisk binaries (download the Magisk apk and extract)
 # Magisk APK is a zip; the binaries are inside it.
-# Example for Magisk 27.0:
-curl -L -o /tmp/magisk.apk \
-  https://github.com/topjohnwu/Magisk/releases/download/v27.0/Magisk-v27.0.apk
-unzip -j /tmp/magisk.apk 'lib/arm64-v8a/libmagisk64.so' -d /tmp/
-cp /tmp/libmagisk64.so tools/magisk64
+# Example for Magisk 30.7:
+_TMP="${TMPDIR:-${HOME:-.}/tmp}"
+curl -L -o "$_TMP/magisk.apk" \
+  https://github.com/topjohnwu/Magisk/releases/download/v30.7/Magisk-v30.7.apk
+unzip -jo "$_TMP/magisk.apk" 'lib/arm64-v8a/libmagisk.so' -d "$_TMP/"
+cp "$_TMP/libmagisk.so" tools/magisk64
 chmod +x tools/magisk64
 
-unzip -j /tmp/magisk.apk 'lib/armeabi-v7a/libmagisk32.so' -d /tmp/
-cp /tmp/libmagisk32.so tools/magisk32
+unzip -jo "$_TMP/magisk.apk" 'lib/armeabi-v7a/libmagisk.so' -d "$_TMP/"
+cp "$_TMP/libmagisk.so" tools/magisk32
 chmod +x tools/magisk32
 ```
 
@@ -90,7 +97,9 @@ chmod +x tools/magisk32
 ### 3. Run the build script
 
 ```bash
-bash build/build_offline_zip.sh
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh)
+# After completion, press 's' for the suggested next step: option 3 (build/host_flash.sh)
 # Output in dist/:
 #   hands-on-metal-magisk-module-v1.0.0.zip
 #   hands-on-metal-recovery-v1.0.0.zip
@@ -100,13 +109,15 @@ bash build/build_offline_zip.sh
 With a custom version:
 
 ```bash
-bash build/build_offline_zip.sh --version v2.0.0
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh), then enter arguments: --version v2.0.0
 ```
 
 Without tool validation warnings:
 
 ```bash
-bash build/build_offline_zip.sh --no-tools
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh), then enter arguments: --no-tools
 ```
 
 ---
@@ -229,9 +240,9 @@ manifest_step "my_step_name" "OK" "optional note"
 
 ## Anti-rollback policy notes (May 2026)
 
-Starting with security patch level 2026-05-01, Android's AVB anti-rollback protection becomes more strictly enforced and Magisk adopted a policy update to match. The relevant Magisk patch flags are:
+Starting with security patch level 2026-05-07, Android's AVB anti-rollback protection becomes more strictly enforced and Magisk adopted a policy update to match. The relevant Magisk patch flags are:
 
-- `PATCHVBMETAFLAG=true` — patches the vbmeta flag byte in the boot image header, which is required for the device to boot the patched image without failing AVB verification on SPL >= 2026-05-01.
+- `PATCHVBMETAFLAG=true` — patches the vbmeta flag byte in the boot image header, which is required for the device to boot the patched image without failing AVB verification on SPL >= 2026-05-07.
 - `KEEPVERITY=true` — for A/B devices, must not strip dm-verity signatures.
 - `KEEPFORCEENCRYPT=true` — preserves the `forceencrypt` flag so /data remains encrypted.
 
@@ -263,7 +274,7 @@ shellcheck core/*.sh magisk-module/*.sh recovery-zip/collect_recovery.sh
 
 1. Update `magisk-module/module.prop` version.
 2. Update `build/partition_index.json` `_updated` field.
-3. Run `bash build/build_offline_zip.sh --version vX.Y.Z`.
+3. Run `bash terminal_menu.sh` → select option 1 (`build/build_offline_zip.sh`), enter arguments: `--version vX.Y.Z`.
 4. Verify ZIPs: `sha256sum -c dist/checksums-vX.Y.Z.sha256`.
 5. Tag the commit: `git tag vX.Y.Z`.
 6. Upload `dist/*.zip` and `dist/checksums-*.sha256` to the GitHub release.

@@ -12,13 +12,13 @@ Usage:
   # Open a new issue:
   python pipeline/github_notify.py \\
       --repo mikethi/hands-on-metal \\
-      --analysis /tmp/analysis.json \\
+      --analysis ~/tmp/analysis.json \\
       --run-id 20260101T120000Z
 
   # Comment on an existing issue:
   python pipeline/github_notify.py \\
       --repo mikethi/hands-on-metal \\
-      --analysis /tmp/analysis.json \\
+      --analysis ~/tmp/analysis.json \\
       --issue 42
 
 Environment variables:

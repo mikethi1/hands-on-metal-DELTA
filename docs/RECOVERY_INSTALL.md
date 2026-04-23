@@ -35,7 +35,9 @@ Obtain `hands-on-metal-recovery-<version>.zip` from the [releases page](https://
 
 ```bash
 # On a Linux/macOS host with zip installed
-bash build/build_offline_zip.sh
+bash terminal_menu.sh
+# Select option 1 (build/build_offline_zip.sh)
+# After completion, press 's' for the suggested next step
 # Output: dist/hands-on-metal-recovery-<version>.zip
 ```
 
@@ -163,6 +165,107 @@ The installer also collects hardware metadata, VINTF manifests, and fstab files 
 2. If Magisk app is not installed, download it from [github.com/topjohnwu/Magisk/releases](https://github.com/topjohnwu/Magisk/releases) and install the APK.
 3. Verify root: open a terminal (Termux) and run `su`.
 4. Review logs at `/sdcard/hands-on-metal/logs/`.
+
+---
+
+## Where user input is required
+
+The recovery ZIP installer runs inside TWRP/OrangeFox. **Recovery always
+has root** (`uid=0`), so the installer has full access to block devices.
+Because TWRP's flash context is **non-interactive** (stdin is not a TTY),
+all fallback prompts use safe defaults automatically — **you will never see
+a text prompt** during a TWRP flash or ADB sideload.
+
+### Your environment: root ✓, recovery ✓
+
+This is the most capable environment — both root and recovery are available:
+
+| Capability | Status | Prereq ID¹ |
+|-----------|:---:|---|
+| Root access | ✓ Always in recovery | `root` |
+| Android device | ✓ Running on device | `android_device` |
+| Recovery environment | ✓ TWRP / OrangeFox | — |
+| Boot image | Acquired automatically (via root DD) | `boot_image` |
+
+¹ Prereq IDs match `terminal_menu.sh` → `get_prereqs_for_script()`.
+
+### Boot image acquisition — automatic fallback chain
+
+All four methods are available. In TWRP's non-interactive context, fallback
+prompts use defaults silently — **no text prompts ever appear**:
+
+| # | Method | Prereqs | User input in TWRP? |
+|---|--------|---------|:-:|
+| 1 | **Root DD** — copy live boot partition | `root` `android_device` | None — automatic |
+| 2 | **Pre-placed file** — scan `/sdcard/Download/` | `android_device` | None — automatic |
+| 3 | **Factory download** (Pixel only) | `android_device` network `cmd:curl` `cmd:unzip` | None — auto-accepts (non-interactive) |
+| 4 | **Manual path fallback** | `android_device` (+ `root` for block devices) | None — auto-uses `/sdcard/Download/boot.img` |
+
+> **In Mode B with recovery, method 1 succeeds in the vast majority of
+> cases.** The only scenario where it fails is an unusual partition layout
+> without standard by-name symlinks.
+
+### Flash path: B (Recovery path)
+
+Flash uses `run_flash_recovery_path()` in `core/flash.sh`:
+- Prereqs: `root` + `boot_image` (both always satisfied in recovery)
+- DD writes patched image to boot partition
+- SHA-256 verified post-flash
+- Installs Magisk module from ZIP to `/data/adb/modules/`
+- Automatic reboot on success
+- **No user input required**
+
+### Required input (always needed)
+
+| When | Where | What you do |
+|------|-------|-------------|
+| **Boot into recovery** | Device (physical) | Hold Power + Volume Down (device-specific) or `adb reboot recovery` |
+| **Flash the ZIP** | Device: TWRP | **Install** → navigate to ZIP → **Swipe to confirm** |
+| **OR: ADB sideload** | Device + PC | TWRP: **Advanced** → **ADB Sideload** → **Swipe**; PC: `adb sideload <zip>` |
+| **After reboot** | Device | Open Magisk app → confirm root; Termux → `su` |
+
+### What if the boot image can't be found? (no prompt shown)
+
+In TWRP's non-interactive context, the installer **cannot ask you a
+question**. If all four automatic methods fail, it tries the default path
+`/sdcard/Download/boot.img`. If that file doesn't exist either, the
+installer **aborts with a clear error** in the TWRP output.
+
+**To recover from this:**
+
+1. Check the error in TWRP output or logs at `/sdcard/hands-on-metal/logs/`.
+2. From TWRP terminal or ADB shell, list partitions:
+   ```bash
+   ls /dev/block/bootdevice/by-name/
+   ls /dev/block/by-name/
+   ```
+3. Push the correct boot image from your PC:
+   ```bash
+   adb push boot.img /sdcard/Download/
+   ```
+4. Re-flash the ZIP — method 2 (pre-placed file) will find it automatically.
+
+### What if I have no recovery?
+
+Without a custom recovery, you cannot use Mode B. Your options:
+
+| Your situation | Root? | Recovery? | Recommended mode |
+|---------------|:---:|:---:|---|
+| Magisk already installed | ✓ | ✗ | Mode A → [INSTALL.md](INSTALL.md) |
+| Unlocked BL + PC | ✗ | ✗ | Mode C → [ADB_FASTBOOT_INSTALL.md](ADB_FASTBOOT_INSTALL.md) |
+| No root, no recovery, no PC | ✗ | ✗ | Not possible — need at least a PC with fastboot |
+
+### What if I have recovery but no root?
+
+This combination is unusual — TWRP/OrangeFox always provides root in the
+recovery environment. If for some reason root is not available (e.g.,
+restricted recovery), the installer falls back to methods 2–4 (pre-placed
+file, factory download, manual path). Pre-place the boot image before
+flashing to ensure success:
+
+```bash
+adb push boot.img /sdcard/Download/
+```
 
 ---
 

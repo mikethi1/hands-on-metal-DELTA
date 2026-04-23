@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # build/build_offline_zip.sh
 # ============================================================
 # Builds the fully offline, self-contained flashable ZIPs:
@@ -14,6 +14,9 @@
 #   • tools/magisk64        — Magisk binary for offline patch
 #   • tools/magisk32        — 32-bit Magisk binary (older devices)
 #   • tools/magiskinit64    — Magisk init binary
+#   • tools/magiskboot64    — Magisk boot image tool
+#   • tools/magisk_init_ld64, magisk_stub.apk, magisk_boot_patch.sh, magisk_util_functions.sh
+#                           — assets required for boot_patch.sh fallback path
 #
 # Usage:
 #   bash build/build_offline_zip.sh
@@ -51,6 +54,21 @@ echo " hands-on-metal Offline ZIP Builder"
 echo " Version: $VERSION"
 echo "============================================"
 echo ""
+
+# ── dependency check ──────────────────────────────────────────
+if [ "${HOM_DEPS_CHECKED:-}" != "1" ]; then
+    source "$REPO_ROOT/check_deps.sh" || exit 1
+fi
+
+# ── sha256sum portability ─────────────────────────────────────
+if command -v sha256sum >/dev/null 2>&1; then
+    SHA256="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+    SHA256="shasum -a 256"
+else
+    echo "ERROR: neither sha256sum nor shasum found — cannot generate checksums." >&2
+    exit 1
+fi
 
 # ── output directory ──────────────────────────────────────────
 mkdir -p "$DIST_DIR"
@@ -92,9 +110,17 @@ chmod 0755 "$STAGE/core/"*.sh
 mkdir -p "$STAGE/build"
 cp "$BUILD_DIR/partition_index.json" "$STAGE/build/"
 
+# Schema
+mkdir -p "$STAGE/schema"
+cp "$REPO_ROOT/schema/hardware_map.sql" "$STAGE/schema/"
+
 # Tools (busybox, Magisk binaries — best-effort)
 mkdir -p "$STAGE/tools"
-for tool in busybox-arm64 magisk64 magisk32 magiskinit64; do
+for tool in \
+    busybox-arm64 \
+    magisk64 magisk32 magiskinit64 \
+    magiskboot64 magisk_init_ld64 \
+    magisk_stub.apk magisk_boot_patch.sh magisk_util_functions.sh; do
     if [ -f "$TOOLS_DIR/$tool" ]; then
         cp "$TOOLS_DIR/$tool" "$STAGE/tools/"
         echo "  Bundled: $tool"
@@ -115,6 +141,7 @@ trap 'rm -rf "$STAGE" "$MODULE_STAGE"' EXIT
 # Module files
 cp -r "$STAGE/core"   "$MODULE_STAGE/"
 cp -r "$STAGE/build"  "$MODULE_STAGE/"
+cp -r "$STAGE/schema" "$MODULE_STAGE/"
 cp -r "$STAGE/tools"  "$MODULE_STAGE/"
 
 # Magisk module files
@@ -149,6 +176,7 @@ trap 'rm -rf "$STAGE" "$MODULE_STAGE" "$RECOVERY_STAGE"' EXIT
 # Core + tools + recovery-zip + magisk-module scripts (all needed by update-binary)
 cp -r "$STAGE/core"          "$RECOVERY_STAGE/"
 cp -r "$STAGE/build"         "$RECOVERY_STAGE/"
+cp -r "$STAGE/schema"        "$RECOVERY_STAGE/"
 cp -r "$STAGE/tools"         "$RECOVERY_STAGE/"
 cp -r "$STAGE/recovery-zip"  "$RECOVERY_STAGE/"
 
@@ -178,7 +206,7 @@ echo "[4/4] Generating checksums..."
 CHECKSUM_FILE="$DIST_DIR/checksums-${VERSION}.sha256"
 (
     cd "$DIST_DIR"
-    sha256sum \
+    $SHA256 \
         "hands-on-metal-magisk-module-${VERSION}.zip" \
         "hands-on-metal-recovery-${VERSION}.zip" \
     > "$CHECKSUM_FILE"
