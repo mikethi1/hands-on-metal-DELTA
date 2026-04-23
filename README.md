@@ -1,35 +1,416 @@
 # hands-on-metal
 
-Notes for understanding how Halium/libhybris exposes Android hardware interfaces without exposing vendor-private implementation details.
+> ⚠️ **Experimental** — This project is under active development. Use at your
+> own risk and always have a backup of your device before flashing anything.
 
-## What decompiling `libhybris.so` shows
+A guided, fully offline root workflow for Android devices.
+Collects real hardware data, patches the boot image via Magisk, and uploads
+a privacy-safe diagnostic bundle — all without leaving the device or a single
+trusted PC.
 
-### 1) Import/Export symbols (linker map)
-- You can see references to Android-side symbols (for example mangled C++ names such as `GraphicBuffer` constructors).
-- You can also see the Linux-side wrapper/thunk functions that call them.
-- This reveals *which* Android binary APIs are being bridged.
+---
 
-### 2) Thunk/packing logic (data formatting)
-- Decompiled thunks show memory allocation and field writes before dispatch.
-- Offset patterns (for example writes at `+4`, `+8`, `+12`) help reconstruct expected struct layout.
-- This is where the bridge’s call-shape knowledge is visible.
+## What It Can Do
 
-### 3) `ioctl` command constants
-- Low-level bridge paths may include hard-coded constants passed to `ioctl`.
-- Example pattern: `ioctl(fd, 0xc0186401, buffer)`.
-- Those constants identify kernel interface commands that can be reused when building compatible userspace/driver glue.
+- **Root any supported Android device** (API 21–35+) via Magisk — either through the Magisk app or from TWRP / OrangeFox recovery, with no computer required.
+- **Auto-detect your device** — identifies A/B slots, System-as-Root, dynamic partitions, Treble, AVB version, and the correct boot partition (`init_boot`, `boot`, or `vendor_boot`).
+- **Prevent bricks** — reads the anti-rollback index and security patch level before patching so you never flash a downgrade that fuses the bootloader.
+- **Collect real hardware data** — mirrors regulators, display adapters, device-tree, pinctrl, VINTF manifests, and HAL symbols in read-only mode.
+- **Analyse and report** — a host-side Python pipeline parses logs, builds a SQLite hardware database, runs failure analysis, and generates human-readable reports.
+- **Protect your privacy** — all PII is stripped before any data leaves the device; uploads are explicit opt-in only.
+- **Work fully offline** — a single bundle ZIP contains the complete repo, all binaries, and both flashable ZIPs so you can work without any network access.
+- **Resume after reboots** — the state machine persists progress across reboots and re-runs automatically on the next boot.
+- **Auto-detect OTA updates** — if the Android version, security patch, or A/B slot changes between boots, the workflow re-runs against the new system image automatically.
+- **Run everything from one menu** — an interactive terminal launcher (`terminal_menu.sh`) lists every script and lets you run any of them with arguments.
 
-## Why source is usually better than pure decompilation
+---
 
-- Decompiled output is often stripped (generic names like `var_1`, `dword_450`).
-- Halium/libhybris is open source, so matching your binary version to source gives clearer variable names, comments, and intent.
+## How It Works
 
-## Practical workflow
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      hands-on-metal workflow                    │
+│                                                                 │
+│  1. ENV DETECT    Probe shell, Python, Termux, tools, SELinux   │
+│  2. PROFILE       Read device props, partitions, AVB, Treble    │
+│  3. ACQUIRE       Copy the boot/init_boot image (read-only)     │
+│  4. PATCH         Magisk-patch the image with device flags       │
+│  5. FLASH         Write patched image; verify SHA-256            │
+│  6. VERIFY        Confirm Magisk root; install module            │
+│                                                                 │
+│  On reboot → service.sh re-checks OTA/slot changes, then       │
+│  runs env_detect → setup_termux → collect (hardware data).      │
+│                                                                 │
+│  Host-side pipeline (Python, stdlib only):                      │
+│    parse_logs → failure_analysis → build_table → report         │
+│    → optional upload with privacy redaction                     │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-1. Trace runtime behavior under Halium (for example with `ltrace`/`strace`) to capture actual calls.
-2. Match observed calls to the corresponding libhybris source paths.
-3. Reimplement compatible logic (same command numbers and data structure layout) in your own namespaced bridge/driver.
+There are **three install paths**:
 
-## Bottom line
+| Path | When to use | How |
+|------|-------------|-----|
+| **Mode A — Magisk module** | Magisk is already installed | Flash the module ZIP via the Magisk app |
+| **Mode B — Recovery ZIP** | No Magisk yet; you have TWRP or OrangeFox | Flash the recovery ZIP from recovery |
+| **Mode C — ADB/Fastboot** | No recovery; bootloader unlocked; have a PC | Temporary TWRP boot, ADB sideload, or direct fastboot flash |
 
-Decompilation shows the **how** of the glue layer; live tracing and source comparison are usually the fastest path to the concrete **what** (real values, layout expectations, and call sequencing), especially for complex paths like GPU command submission.
+All three paths run the same guided state machine. See [docs/INSTALL_HUB.md](docs/INSTALL_HUB.md) for a full decision tree.
+
+---
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| **Guided install flow** | State-machine-driven steps (ENV → PROFILE → ACQUIRE → PATCH → FLASH → VERIFY) survive reboots and resume automatically |
+| **Auto device profiling** | Detects A/B slots, System-as-Root, dynamic partitions, Treble, AVB version, init\_boot vs boot vs vendor\_boot |
+| **Anti-rollback protection** | Reads the device's anti-rollback index before patching so you never flash a downgrade that bricks the bootloader |
+| **Dual install paths** | Flash via the **Magisk app** (Mode A) *or* via **TWRP / OrangeFox** without Magisk pre-installed (Mode B) |
+| **OTA auto-detection** | Detects Android version, security patch, or A/B slot changes between boots and automatically re-runs the workflow |
+| **Termux bootstrap** | Auto-installs Termux + Python + required packages when no system Python is found; works with any Termux version and setup |
+| **Live hardware collection** | Mirrors `/sys/class/regulator`, `/sys/class/display`, `/proc/device-tree`, pinctrl, VINTF manifests, HAL symbols, and more — read-only, never mounts RW |
+| **Sandbox / CI / Termux detection** | Detects non-device environments and logs the same clear warning + conclusion in every context; records `HOM_HW_ENV` for downstream tools |
+| **Regulator data sanity check** | Logs the first 10 regulator entries (name + microvolts) and emits `[OK]` / `[WARN]` so you immediately know whether real display-adapter voltages were captured |
+| **Host-side pipeline** | Python scripts parse logs, build a SQLite hardware map, analyse failures, generate reports, and upload a redacted bundle |
+| **Privacy-safe sharing** | All PII stripped by `core/privacy.sh` before any data leaves the device; explicit opt-in for every upload |
+| **Offline ZIP builder** | `build/build_offline_zip.sh` produces self-contained flashable ZIPs for all install paths |
+| **Full dependency fetcher** | `build/fetch_all_deps.sh` uses `git` + `curl` to pull the repo and every binary, then creates a single offline bundle ZIP |
+| **Host-assisted flash** | `build/host_flash.sh` — Mode C: fastboot boot / flash / ADB sideload for devices with no recovery (see [ADB_FASTBOOT_INSTALL.md](docs/ADB_FASTBOOT_INSTALL.md)) |
+| **Interactive terminal menu** | `terminal_menu.sh` lists all project scripts and lets you run any of them with arguments from a single launcher |
+| **Halium / libhybris shim** | C shim and Makefile for building a compatible userspace bridge from decompiled linker-map data |
+
+---
+
+## Minimum requirements
+
+### On-device (Android)
+
+| Requirement | Minimum | Notes |
+|-------------|---------|-------|
+| Android version | 5.0 (API 21) | Tested through API 35 / Android 15 |
+| Bootloader | **Unlocked** | Required before any root operation |
+| Custom recovery | TWRP ≥ 3.x or OrangeFox | Required for Mode B (recovery path) |
+| Magisk | ≥ 25000 (v25.0) | Required for Mode A (module path) |
+| Storage permission | Granted | `/sdcard/hands-on-metal/` is the only write location |
+| Root shell | `uid=0` via Magisk or recovery | `service.sh` / `update-binary` run as root |
+
+### Host-side (PC / Mac / Linux / Termux)
+
+| Requirement | Minimum | Notes |
+|-------------|---------|-------|
+| Python | 3.8+ | All pipeline scripts; optional `lz4` package installed by `setup.sh` |
+| `git` | Any modern version | Cloning the repo and running `fetch_all_deps.sh` |
+| `zip` / `unzip` | Any | Building and extracting flashable ZIPs |
+| `curl` | Any | Downloading Magisk APK and busybox binary |
+| `tar` | Any | Bundle creation via `git archive` |
+| `sha256sum` | Any (`shasum -a 256` on macOS) | Checksum verification |
+| `adb` | Optional | Pushing ZIPs / reading logs without physical transfer |
+| `file` / `nm` / `readelf` | Optional | Verifying bundled ARM binaries; used by `parse_symbols.py` |
+| `c++filt` | Optional | C++ symbol demangling (`parse_symbols.py`) |
+| `openssl` | Optional | Fallback SHA-256 hashing on device |
+
+Run `bash check_deps.sh` to verify all dependencies in one step.
+The check runs automatically when using `terminal_menu.sh` or the build scripts.
+
+> **`lz4` is installed automatically by `setup.sh`** (`pip install lz4`).  
+> All other pipeline scripts use only the Python standard library (`sqlite3`, `argparse`,
+> `json`, `urllib`, `gzip`, `lzma`, `bz2`, `pathlib`, …).
+> `zstandard` can be added manually (`pip install zstandard`) for Zstandard-compressed
+> boot images.
+
+---
+
+## Repository contents
+
+| Path | What it does |
+|------|-------------|
+| [`magisk-module/`](magisk-module/) | Magisk module: `service.sh`, `collect.sh`, `env_detect.sh`, `setup_termux.sh`, `customize.sh`, `module.prop` |
+| [`recovery-zip/`](recovery-zip/) | TWRP/OrangeFox flashable ZIP: `collect_recovery.sh`, `META-INF/` |
+| [`core/`](core/) | Shared shell library: state machine, device profiling, boot image, Magisk patch, flash, anti-rollback, UX, logging, privacy, share |
+| [`pipeline/`](pipeline/) | Host-side Python pipeline: log parser, manifest parser, pinctrl parser, symbol parser, image unpacker, DB builder, failure analyser, report generator, uploader, GitHub notifier |
+| [`schema/`](schema/) | SQLite schema (`hardware_map.sql`) |
+| [`build/`](build/) | `build_offline_zip.sh`, `fetch_all_deps.sh`, `partition_index.json` |
+| [`tools/`](tools/) | Optional binaries (`busybox-arm64`, `magisk64`, `magisk32`, `magiskinit64`) — not committed; fetched by `fetch_all_deps.sh` |
+| [`fileserver/`](fileserver/) | Minimal HTTP file server — download via `curl`/`wget`, upload via `curl -F` (stdlib only, see [fileserver/README.md](fileserver/README.md)) |
+| [`halium-shim/`](halium-shim/) | C shim + Makefile for Halium/libhybris bridge research |
+| [`tests/`](tests/) | Python unit tests for `parse_logs`, `build_table`, and `fileserver` |
+| [`setup.sh`](setup.sh) | One-step bootstrap — clones the repo, checks deps, fetches binaries, builds ZIPs |
+| [`build.sh`](build.sh) | Root entrypoint — builds the flashable ZIPs (wraps `build/build_offline_zip.sh`) |
+| [`flash.sh`](flash.sh) | Root entrypoint — host-assisted flash for Mode A / B / C (wraps `build/host_flash.sh`) |
+| [`pipeline.sh`](pipeline.sh) | Root entrypoint — pulls device logs and runs the host-side pipeline end-to-end |
+| [`test.sh`](test.sh) | Root entrypoint — runs the unit-test suite (matches CI) |
+| [`terminal_menu.sh`](terminal_menu.sh) | Interactive terminal launcher — run any project script from one menu |
+| [`check_deps.sh`](check_deps.sh) | Host-side dependency checker — verifies all required tools are installed |
+| [`docs/`](docs/) | Full documentation (see below) |
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/INSTALL_HUB.md](docs/INSTALL_HUB.md) | **Start here** — choose Magisk path vs recovery path based on your device state |
+| [docs/INSTALL.md](docs/INSTALL.md) | Mode A: install via the Magisk app |
+| [docs/RECOVERY_INSTALL.md](docs/RECOVERY_INSTALL.md) | Mode B: install via TWRP / OrangeFox |
+| [docs/ADB_FASTBOOT_INSTALL.md](docs/ADB_FASTBOOT_INSTALL.md) | Mode C: install via ADB sideload / fastboot (no recovery needed) |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Every known failure mode with decision trees and remediation — including sandbox, CI, and Termux environments |
+| [docs/MAINTAINER.md](docs/MAINTAINER.md) | How to obtain optional binaries, cut releases, and manage the partition index |
+| [docs/SUPPORT_POLICY.md](docs/SUPPORT_POLICY.md) | Supported device families and Android versions |
+| [docs/GOVERNANCE.md](docs/GOVERNANCE.md) | Contribution rules, new-device reports, decision process |
+| [docs/FORK_CONTRACT.md](docs/FORK_CONTRACT.md) | Privacy variable definitions and fork obligations |
+
+---
+
+## Quick start
+
+Every step below is a **single complete script at the repo root** — paste it
+straight into your terminal (Bash, Zsh, Termux, or any POSIX shell). No
+heredocs, no temp files, no copy-paste pitfalls.
+
+The wrappers are thin pass-throughs that inherit the project's full
+support matrix: any host (Linux / macOS / Windows-WSL / Termux) driving any
+target device on **Android 5.0 – 15 (API 21–35+)** — comfortably covering
+the Android 10+ range and freely interchanging hardware (A-only / A-B,
+System-as-Root, dynamic partitions, `init_boot` / `boot` / `vendor_boot`)
+and Android versions on the same host install. Pick the install mode
+(A / B / C) that matches the device's current state in step 3.
+
+| Step | Command | What it does |
+|------|---------|--------------|
+| Bootstrap | `bash setup.sh` | Clone repo, install host tools, fetch binaries, build ZIPs, drop into the menu |
+| Build | `bash build.sh` | Build the two flashable ZIPs into `dist/` |
+| Flash | `bash flash.sh` | Host-assisted flash (Mode A / B / C — see below) |
+| Pipeline | `bash pipeline.sh` | Pull device logs and run the parser |
+| Tests | `bash test.sh` | Run the full unit-test suite (matches CI) |
+| Menu | `bash terminal_menu.sh` | Interactive launcher for every project script |
+
+### 1 — Clone and fetch all dependencies
+
+**One-liner** (requires `curl`; `git` is auto-installed if missing):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mikethi/hands-on-metal/main/setup.sh | bash
+```
+
+**Or clone first**, then run the setup script locally:
+
+```bash
+git clone https://github.com/mikethi/hands-on-metal.git ~/hands-on-metal
+cd ~/hands-on-metal
+bash setup.sh
+```
+
+`setup.sh` finishes by launching `terminal_menu.sh`. From there select
+option 1 (`build/build_offline_zip.sh`) — or just run `bash build.sh` from
+the repo root, which is the equivalent single-command form.
+
+`setup.sh` syncs the repository before continuing by default.
+To skip that sync, run: `bash setup.sh --no-sync`
+
+If `git` is not installed the script attempts to install it automatically
+using the system package manager (`apt-get`, `pkg`, `dnf`, `pacman`, or
+`brew` / `xcode-select`). If automatic installation fails, it prints
+platform-specific manual install instructions and exits.
+The script is safe to re-run — it skips steps that are already complete.
+
+`fetch_all_deps.sh` will:
+
+1. Download `busybox-arm64` (static, arm64) from busybox.net
+2. Download the Magisk v30.7 APK and extract `magisk64`, `magisk32`, and `magiskinit64`
+3. Build both flashable ZIPs (`dist/hands-on-metal-magisk-module-<ver>.zip` and `dist/hands-on-metal-recovery-<ver>.zip`)
+4. Create `dist/hands-on-metal-full-bundle-<ver>.zip` — a single ZIP containing the complete repo snapshot, all tools, both flashable ZIPs, and SHA-256 checksums
+
+### 2 — Build the flashable ZIPs only (no binary downloads)
+
+> **Tip:** All examples below assume the repo is at `~/hands-on-metal`. If you
+> cloned it elsewhere, replace `~/hands-on-metal` with the actual path.
+
+If you already have the binaries in `tools/` or want device-side binaries:
+
+```bash
+cd ~/hands-on-metal
+bash build.sh
+```
+
+To build without bundled tools (rely on what's already on the device):
+
+```bash
+cd ~/hands-on-metal
+bash build.sh --no-tools
+```
+
+Run `bash build.sh --help` for all options. After the build, the script
+prints the suggested next step (`bash flash.sh`).
+
+### 3 — Flash to your device
+
+`flash.sh` is the single host-side entrypoint for **all three install
+paths**.  Run it without arguments for the interactive sub-menu, or pass
+the appropriate flag for the path you need.
+
+**Mode A — Magisk already installed:**
+
+```bash
+cd ~/hands-on-metal
+bash flash.sh
+# → use the menu's "push ZIP to device" sub-option, then on the device:
+#   Magisk app → Modules → Install from storage → select the ZIP → reboot
+```
+
+**Mode B — no Magisk yet (flash from TWRP / OrangeFox):**
+
+```bash
+cd ~/hands-on-metal
+bash flash.sh
+# → use the menu's "push ZIP to device" sub-option, then on the device:
+#   Boot into TWRP/OrangeFox → Install → select the ZIP → swipe → reboot
+```
+
+**Mode C — no recovery; bootloader unlocked; device on USB:**
+
+```bash
+cd ~/hands-on-metal
+bash flash.sh --c1 path/to/twrp.img            # temporary TWRP boot
+bash flash.sh --c2 path/to/patched_boot.img    # direct fastboot flash
+bash flash.sh --c3 dist/hands-on-metal-recovery-*.zip   # ADB sideload
+```
+
+Add `-s SERIAL` if more than one device is connected. Run
+`bash flash.sh --help` for the full command list.
+
+**Boot-image safety on Mode C** — every `--c1`/`--c2`/`--c3` invocation
+automatically:
+
+- Computes the SHA-256 of the host-side image/ZIP and (if a matching
+  `<file>.sha256` sidecar exists, or `--sha256 HEX` is supplied) refuses
+  to send a tampered or wrong artefact to the device.
+- Probes the target via `fastboot getvar` for `unlocked`, `secure`,
+  `current-slot`, `version-bootloader`, `version-baseband`, and
+  `anti-rollback-version`, printing a TARGET safety profile.
+- Refuses to flash a **locked** bootloader unless `--force-locked` is
+  passed.
+- For `--c2`, auto-detects the partition name from the filename across
+  the full Android 10–16 boot-type matrix (`boot`, `init_boot` for
+  Android 13+ GKI 2.0, `vendor_boot` for Android 12+ GKI, `recovery`
+  for A-only devices) — override with `--partition NAME`.
+- Confirms the target actually has the chosen partition via
+  `fastboot getvar partition-size:<name>`.
+
+The on-device path (Mode A and Mode B) goes through the state machine
+in `core/`, which already runs the equivalent checks (`device_profile`,
+`anti_rollback`, pre+post SHA-256 in `core/flash.sh`) on every install.
+
+### 4 — Run the host-side pipeline after collection
+
+After your device has booted and collected hardware data, pull the logs
+and run the pipeline on your PC:
+
+```bash
+cd ~/hands-on-metal
+bash pipeline.sh                 # adb pull + parse_logs → parsed.json
+bash pipeline.sh --mode A        # also build hardware_map.sqlite (use the mode you flashed with)
+```
+
+Use `--skip-pull` to re-run against existing local `logs/` and `live_dump/`
+directories, or `-s SERIAL` to target a specific device. Run
+`bash pipeline.sh --help` for all options.
+
+### 5 — Run the unit tests
+
+```bash
+cd ~/hands-on-metal
+bash test.sh
+```
+
+This runs `python -m unittest discover -v tests` — the same invocation
+used by GitHub Actions CI, so a green local run means a green CI run.
+No `pip` packages required.
+
+### 6 — Interactive terminal menu (optional)
+
+Launch a single interactive menu that lists every script in the project and
+lets you run any of them with arguments:
+
+```bash
+cd ~/hands-on-metal
+bash terminal_menu.sh
+# Press 's' for the suggested next step, or select any option by number
+```
+
+The menu lists all shell scripts (`build/`, `core/`, `magisk-module/`,
+`recovery-zip/`) and all pipeline Python scripts (`pipeline/*.py`). Select a
+number, enter optional arguments, and the script runs immediately.
+
+> **Note:** argument input is space-separated; embedded space quoting is not
+> supported inside the menu prompt.
+
+---
+
+## Dependency stack
+
+All dependencies are pulled by `build/fetch_all_deps.sh`.
+
+### Binaries (ARM64 — bundled in offline ZIPs)
+
+| Binary | Version | Source | License |
+|--------|---------|--------|---------|
+| `busybox-arm64` | 1.31.0 | [busybox.net/downloads/binaries/](https://busybox.net/downloads/binaries/) | GPL-2.0 |
+| `magisk64` | v30.7 | [github.com/topjohnwu/Magisk releases](https://github.com/topjohnwu/Magisk/releases) | GPL-3.0 |
+| `magisk32` | v30.7 | [github.com/topjohnwu/Magisk releases](https://github.com/topjohnwu/Magisk/releases) | GPL-3.0 |
+| `magiskinit64` | v30.7 | [github.com/topjohnwu/Magisk releases](https://github.com/topjohnwu/Magisk/releases) | GPL-3.0 |
+
+### Python (host-side pipeline — stdlib only)
+
+| Module | Use |
+|--------|-----|
+| `sqlite3` | `hardware_map.sqlite` database |
+| `urllib` | `upload.py`, `github_notify.py` — GitHub API calls |
+| `gzip` / `lzma` / `bz2` | `unpack_images.py` — boot image decompression |
+| `hashlib` / `struct` / `io` | `unpack_images.py` — image parsing |
+| `xml.etree.ElementTree` | `parse_manifests.py` — VINTF XML parsing |
+| `subprocess` | `parse_symbols.py` — calls `c++filt`; `build_table.py` — runs sub-scripts |
+| `argparse`, `json`, `pathlib`, `re`, `os`, `sys` | All scripts |
+
+Optional packages (improve boot image decompression coverage):
+
+| Package | Use |
+|---------|-----|
+| `lz4` | `unpack_images.py` — LZ4-compressed boot images |
+| `zstandard` | `unpack_images.py` — Zstandard-compressed boot images |
+
+### Shell / on-device tools
+
+| Tool | Source |
+|------|--------|
+| `sh` / `mksh` | Android `/system/bin/sh` or Magisk busybox |
+| `getprop` / `setprop` | Android system |
+| `dd` | Boot image read/write (`boot_image.sh`, `flash.sh`, `collect.sh`) |
+| `mount` / `umount` | Partition access (`collect_recovery.sh`, `env_detect.sh`) |
+| `busybox` (optional) | Bundled in the ZIPs, or system busybox |
+| `zip` / `unzip` | Host PC; used by `build_offline_zip.sh` and `fetch_all_deps.sh` |
+| `curl` | Host PC; used by `fetch_all_deps.sh` |
+| `tar` | Host PC; used by `fetch_all_deps.sh` (git archive) |
+| `sha256sum` / `openssl` | Checksum verification (host and device) |
+| `nm` / `readelf` | Vendor library symbol analysis (`collect.sh`, `parse_symbols.py`) |
+| `c++filt` (optional) | C++ symbol demangling (`parse_symbols.py`) |
+| `dmsetup` (optional) | dm-crypt / dm-verity table inspection (`collect.sh`) |
+| `lshal` / `lsmod` / `modinfo` | HAL and kernel module inventory (`collect.sh`) |
+| `dmesg` | Kernel log collection (`collect.sh`) |
+| `adb` (optional) | [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools) |
+
+### Termux (auto-bootstrapped when no system Python exists)
+
+`setup_termux.sh` installs the following via `pkg` (compatible with any Termux version and any setup — Play Store, F-Droid, or GitHub release):
+
+```
+python  git  curl  wget  openssh  sqlite  zip
+```
+
+---
+
+## libhybris / Halium research notes
+
+See [`tools/README.md`](tools/README.md) for details on using decompiled
+`libhybris.so` linker maps and the `halium-shim/` C shim to reconstruct
+compatible userspace bridge logic.
