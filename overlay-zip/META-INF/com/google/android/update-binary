@@ -1,0 +1,176 @@
+#!/sbin/sh
+# overlay-zip/META-INF/com/google/android/update-binary
+# ============================================================
+# hands-on-metal — Hardware Voltage Overlay Installer
+#
+# Applies the pre-computed bare-metal voltage rail → hardware-group
+# overlay onto the running env_registry, skipping any entry whose
+# value is already confirmed by the embedded bare-metal constants.
+#
+# How it works (mirrors the existing recovery-zip mechanism):
+#
+#   TWRP path  — TWRP calls this script with:
+#     $1 = number of extra args (unused)
+#     $2 = OUTFD   — file descriptor for ui_print output
+#     $3 = ZIPFILE — absolute path to this ZIP archive
+#
+#   Magisk path — Magisk sets:
+#     $OUTFD, $ZIPFILE, $MODPATH, $MAGISK_VER_CODE
+#     and sets SKIPUNZIP=1 before calling the module's update-binary.
+#     We detect this via $MAGISK_VER_CODE being set.
+#
+# What this installer does:
+#   1. Extract overlay payload from the ZIP
+#   2. Source hom_bare_metal.sh (bare-metal constants)
+#   3. Run apply_overlay.sh:
+#        — reads the pre-computed hom_hw_voltage_map.json
+#        — walks every rail entry; checks the env_registry for any
+#          entry already set to a known bare-metal value → skip it
+#        — writes only NEW entries (unknown rails / categories) to
+#          the registry at ~/hands-on-metal/env_registry.sh
+#   4. If Magisk: also install overlay files as a module at $MODPATH
+#   5. If TWRP: copy overlay files to /sdcard/hands-on-metal/overlay/
+# ============================================================
+
+# ── Detect installer context ──────────────────────────────────
+# Magisk sets MAGISK_VER_CODE before invoking update-binary.
+# TWRP passes $2 as OUTFD and $3 as ZIPFILE positionally.
+if [ -n "${MAGISK_VER_CODE:-}" ]; then
+    INSTALLER_MODE="magisk"
+    OUTFD="${OUTFD:-1}"
+    ZIPFILE="${ZIPFILE:-}"
+    MODPATH="${MODPATH:-/data/adb/modules/hands-on-metal-overlay}"
+else
+    INSTALLER_MODE="twrp"
+    OUTFD="$2"
+    ZIPFILE="$3"
+    MODPATH=""
+fi
+
+OUT=/sdcard/hands-on-metal
+LOG_DIR="$OUT/logs"
+OVERLAY_OUT="$OUT/overlay"
+ENV_REGISTRY="$OUT/env_registry.sh"
+WORK_DIR=/tmp/hom_overlay_work
+
+export OUTFD ZIPFILE OUT LOG_DIR OVERLAY_OUT ENV_REGISTRY WORK_DIR MODPATH
+
+# ── ui_print — works for both TWRP and Magisk ─────────────────
+ui_print() {
+    printf 'ui_print %s\n' "$*" > /proc/self/fd/"$OUTFD"
+    printf 'ui_print \n'         > /proc/self/fd/"$OUTFD"
+}
+
+set_progress() {
+    printf 'set_progress %s\n' "$1" > /proc/self/fd/"$OUTFD"
+}
+
+abort() {
+    ui_print ""
+    ui_print "ABORT: $1"
+    ui_print ""
+    exit 1
+}
+
+# ── Header ────────────────────────────────────────────────────
+ui_print ""
+ui_print "╔══════════════════════════════════════════╗"
+ui_print "║  hands-on-metal  Voltage Overlay         ║"
+ui_print "║  Hardware Rail → Group Installer         ║"
+ui_print "╚══════════════════════════════════════════╝"
+ui_print ""
+ui_print "Mode: $INSTALLER_MODE"
+ui_print "Logs: $LOG_DIR/"
+ui_print ""
+
+set_progress "0.05"
+
+# ── Extract overlay payload ───────────────────────────────────
+ui_print "- Extracting overlay payload..."
+
+mkdir -p "$WORK_DIR"
+unzip -o "$ZIPFILE" "overlay/*" "apply_overlay.sh" -d "$WORK_DIR" >/dev/null 2>&1 \
+    || abort "Failed to extract overlay payload from ZIP"
+
+[ -f "$WORK_DIR/apply_overlay.sh" ] \
+    || abort "apply_overlay.sh not found in ZIP"
+chmod 0755 "$WORK_DIR/apply_overlay.sh"
+
+set_progress "0.20"
+
+# ── Prepare output directories ────────────────────────────────
+mkdir -p "$OUT" "$LOG_DIR" "$OVERLAY_OUT"
+[ -f "$ENV_REGISTRY" ] || : > "$ENV_REGISTRY"
+
+set_progress "0.30"
+
+# ── Run the overlay application script ───────────────────────
+ui_print "- Applying hardware voltage overlay..."
+
+OVERLAY_SRC="$WORK_DIR/overlay" \
+ENV_REGISTRY="$ENV_REGISTRY" \
+OVERLAY_OUT="$OVERLAY_OUT" \
+LOG_DIR="$LOG_DIR" \
+sh "$WORK_DIR/apply_overlay.sh" || abort "apply_overlay.sh failed — see $LOG_DIR/overlay.log"
+
+set_progress "0.75"
+
+# ── Magisk module install path ────────────────────────────────
+if [ "$INSTALLER_MODE" = "magisk" ]; then
+    ui_print "- Installing as Magisk module at $MODPATH ..."
+    mkdir -p "$MODPATH"
+
+    # Write module.prop so Magisk recognises this as a module
+    cat > "$MODPATH/module.prop" <<'MODULE_PROP'
+id=hands-on-metal-overlay
+name=hands-on-metal Voltage Overlay
+version=v1.0
+versionCode=1
+author=hands-on-metal
+description=Pre-computed PMIC voltage rail to hardware-group map for Pixel 8 Pro (husky/zuma). Applied at boot via env_registry.
+MODULE_PROP
+
+    # Copy the overlay payload into the module directory so it
+    # persists across reboots and can be re-applied by service.sh.
+    cp -r "$WORK_DIR/overlay"        "$MODPATH/"  2>/dev/null || true
+    cp    "$WORK_DIR/apply_overlay.sh" "$MODPATH/" 2>/dev/null || true
+    chmod 0755 "$MODPATH/apply_overlay.sh" 2>/dev/null || true
+
+    # service.sh — re-applies the overlay on every boot so the
+    # env_registry stays current after factory-reset or wipe.
+    cat > "$MODPATH/service.sh" <<'SERVICE_SH'
+#!/system/bin/sh
+# Magisk module service — re-apply voltage overlay on boot
+MODDIR="${0%/*}"
+OVERLAY_SRC="$MODDIR/overlay"
+ENV_REGISTRY="/sdcard/hands-on-metal/env_registry.sh"
+OVERLAY_OUT="/sdcard/hands-on-metal/overlay"
+LOG_DIR="/sdcard/hands-on-metal/logs"
+mkdir -p "$OVERLAY_OUT" "$LOG_DIR"
+[ -f "$ENV_REGISTRY" ] || : > "$ENV_REGISTRY"
+sh "$MODDIR/apply_overlay.sh" >> "$LOG_DIR/overlay_service.log" 2>&1
+SERVICE_SH
+    chmod 0755 "$MODPATH/service.sh"
+
+    ui_print "  Module installed — overlay will re-apply on every boot"
+fi
+
+set_progress "0.95"
+
+# ── Summary ───────────────────────────────────────────────────
+SKIPPED=$(grep -c "# skipped:bare_metal" "$LOG_DIR/overlay.log" 2>/dev/null || echo 0)
+WRITTEN=$(grep -c "# written"            "$LOG_DIR/overlay.log" 2>/dev/null || echo 0)
+
+ui_print ""
+ui_print "  Overlay complete:"
+ui_print "    Registry: $ENV_REGISTRY"
+ui_print "    Entries skipped (already bare-metal known): $SKIPPED"
+ui_print "    New entries written: $WRITTEN"
+ui_print "    Overlay files: $OVERLAY_OUT/"
+ui_print "    Full log: $LOG_DIR/overlay.log"
+ui_print ""
+
+set_progress "1.00"
+
+# ── Cleanup ───────────────────────────────────────────────────
+rm -rf "$WORK_DIR" 2>/dev/null || true

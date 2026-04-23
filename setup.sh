@@ -175,6 +175,29 @@ fi
 source check_deps.sh
 bash build/fetch_all_deps.sh
 
+# ── Device profile (runs before menu so vars are green from the start) ──
+# On Android / Termux every getprop call succeeds and HOM_DEV_* are
+# written into the env registry before the menu opens.
+# On a host PC getprop is absent so all fields come back empty — the
+# profile still runs but records nothing, which is correct behaviour.
+_HOM_SETUP_REPO_ROOT="$(pwd)"
+(
+    export SCRIPT_NAME="device_profile"
+    export REPO_ROOT="$_HOM_SETUP_REPO_ROOT"
+    export OUT="${OUT:-$HOME/hands-on-metal}"
+    export ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
+    mkdir -p "$OUT" 2>/dev/null || true
+    [ -f "$ENV_REGISTRY" ] || : > "$ENV_REGISTRY"
+    # shellcheck source=core/logging.sh
+    source "$REPO_ROOT/core/logging.sh"  2>/dev/null || true
+    # shellcheck source=core/ux.sh
+    source "$REPO_ROOT/core/ux.sh"       2>/dev/null || true
+    # shellcheck source=core/device_profile.sh
+    source "$REPO_ROOT/core/device_profile.sh" 2>/dev/null || true
+    run_device_profile 2>/dev/null || true
+) || true
+unset _HOM_SETUP_REPO_ROOT
+
 # ── Launch interactive menu ──────────────────────────────────
 # After setup, drop the user into the terminal menu by default.
 echo ""
