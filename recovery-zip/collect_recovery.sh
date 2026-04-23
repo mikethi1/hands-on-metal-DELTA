@@ -192,6 +192,9 @@ for bprop in \
         # Skip blank lines and comments
         case "$k" in
             ''|\#*) continue ;;
+        esac
+
+        case "$k" in
             ro.board.platform|ro.hardware|ro.product.board|ro.product.device|\
             ro.product.model|ro.build.fingerprint|ro.vendor.build.fingerprint|\
             ro.soc.manufacturer|ro.soc.model|ro.chipname|ro.arch|\

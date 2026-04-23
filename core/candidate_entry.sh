@@ -50,9 +50,8 @@ _reg_set() {
 }
 
 _json_str() {
-    # Escape stdin for JSON output. Reads from stdin so callers can pipe in,
-    # e.g.  printf '%s' "$x" | _json_str
-    sed 's/\\/\\\\/g;s/"/\\"/g;s/	/\\t/g'
+    # Escape a string for JSON output.
+    printf '%s' "${1-}" | sed 's/\\/\\\\/g;s/"/\\"/g;s/	/\\t/g'
 }
 
 # ── family matching ───────────────────────────────────────────
@@ -233,33 +232,33 @@ run_candidate_entry() {
     cat > "$candidate_file" << EOF
 {
   "schema_version": "1.0",
-  "run_id": "$(printf '%s' "$RUN_ID" | _json_str)",
+  "run_id": "$(_json_str "$RUN_ID")",
   "submitted_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo UNKNOWN)",
   "device": {
-    "brand": "$(printf '%s' "$brand" | _json_str)",
-    "model": "$(printf '%s' "$model" | _json_str)",
-    "device": "$(printf '%s' "$device" | _json_str)",
-    "codename": "$(printf '%s' "$codename" | _json_str)",
-    "fingerprint": "$(printf '%s' "$safe_fingerprint" | _json_str)",
-    "android_version": "$(printf '%s' "$android_ver" | _json_str)",
+    "brand": "$(_json_str "$brand")",
+    "model": "$(_json_str "$model")",
+    "device": "$(_json_str "$device")",
+    "codename": "$(_json_str "$codename")",
+    "fingerprint": "$(_json_str "$safe_fingerprint")",
+    "android_version": "$(_json_str "$android_ver")",
     "api_level": $api_str,
     "first_api_level": ${first_api:-0},
-    "spl": "$(printf '%s' "$spl" | _json_str)",
-    "soc_manufacturer": "$(printf '%s' "$soc_mfr" | _json_str)",
-    "soc_model": "$(printf '%s' "$soc_model" | _json_str)",
-    "platform": "$(printf '%s' "$platform" | _json_str)",
-    "hardware": "$(printf '%s' "$hardware" | _json_str)",
+    "spl": "$(_json_str "$spl")",
+    "soc_manufacturer": "$(_json_str "$soc_mfr")",
+    "soc_model": "$(_json_str "$soc_model")",
+    "platform": "$(_json_str "$platform")",
+    "hardware": "$(_json_str "$hardware")",
     "is_ab": ${is_ab:-false},
-    "slot_suffix": "$(printf '%s' "$slot" | _json_str)",
+    "slot_suffix": "$(_json_str "$slot")",
     "dynamic_partitions": ${dyn_parts:-false},
     "treble_enabled": ${treble:-false},
-    "vndk_version": "$(printf '%s' "$vndk" | _json_str)",
-    "avb_version": "$(printf '%s' "$avb_ver" | _json_str)",
-    "avb_state": "$(printf '%s' "$avb_state" | _json_str)",
-    "boot_partition": "$(printf '%s' "$boot_part" | _json_str)",
-    "boot_dev": "$(printf '%s' "$boot_dev" | _json_str)",
-    "init_boot_dev": "$(printf '%s' "$init_boot_dev" | _json_str)",
-    "vendor_boot_dev": "$(printf '%s' "$vendor_boot_dev" | _json_str)"
+    "vndk_version": "$(_json_str "$vndk")",
+    "avb_version": "$(_json_str "$avb_ver")",
+    "avb_state": "$(_json_str "$avb_state")",
+    "boot_partition": "$(_json_str "$boot_part")",
+    "boot_dev": "$(_json_str "$boot_dev")",
+    "init_boot_dev": "$(_json_str "$init_boot_dev")",
+    "vendor_boot_dev": "$(_json_str "$vendor_boot_dev")"
   },
   "partition_index_family_matched": "none",
   "install_result": "PENDING",
@@ -300,11 +299,11 @@ update_candidate_result() {
     sed "s/\"install_result\": \"PENDING\"/\"install_result\": \"${result}\"/" \
         "$cfile" > "$tmp" 2>/dev/null || return 0
     if [ -n "$step" ]; then
-        sed -i "s/\"failure_step\": \"\"/\"failure_step\": \"$(printf '%s' "$step" | _json_str)\"/" \
+        sed -i "s/\"failure_step\": \"\"/\"failure_step\": \"$(_json_str "$step")\"/" \
             "$tmp" 2>/dev/null || true
     fi
     if [ -n "$message" ]; then
-        sed -i "s/\"failure_message\": \"\"/\"failure_message\": \"$(printf '%s' "$message" | _json_str)\"/" \
+        sed -i "s/\"failure_message\": \"\"/\"failure_message\": \"$(_json_str "$message")\"/" \
             "$tmp" 2>/dev/null || true
     fi
     mv "$tmp" "$cfile"
