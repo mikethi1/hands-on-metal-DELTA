@@ -137,7 +137,11 @@ log_exec() {
     rm -f "$tmp_out"
 
     local status
-    status=$([ "$rc" -eq 0 ] && echo OK || echo FAIL)
+    if [ "$rc" -eq 0 ]; then
+        status="OK"
+    else
+        status="FAIL"
+    fi
     manifest_step "$step" "$status" "rc=$rc"
     return "$rc"
 }
