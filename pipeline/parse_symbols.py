@@ -229,8 +229,12 @@ def main() -> None:
     sym_dir = dump / "vendor_symbols"
 
     if not sym_dir.exists():
-        print(f"No vendor_symbols directory found at {sym_dir}", file=sys.stderr)
-        sys.exit(1)
+        print(
+            f"vendor_symbols directory not found: {sym_dir}\n"
+            "  (vendor symbol data is only collected when root is available — skipping)",
+            file=sys.stderr,
+        )
+        sys.exit(0)
 
     db = sqlite3.connect(args.db)
     # Apply schema if tables don't exist
