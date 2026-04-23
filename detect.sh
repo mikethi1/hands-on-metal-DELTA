@@ -25,10 +25,10 @@
 # │  dynamic partitions, Treble, AVB, and boot partition type. │
 # │  Variables written:                                         │
 # │    HOM_DEV_MODEL         HOM_DEV_CODENAME                  │
-# │    HOM_DEV_MANUFACTURER  HOM_DEV_API_LEVEL                 │
+# │    HOM_DEV_BRAND     HOM_DEV_SDK_INT                       │
 # │    HOM_DEV_SPL           HOM_DEV_BUILD_ID                  │
 # │    HOM_DEV_IS_AB         HOM_DEV_SAR                       │
-# │    HOM_DEV_DYNAMIC_PARTITIONS  HOM_DEV_TREBLE              │
+# │    HOM_DEV_DYNAMIC_PARTITIONS  HOM_DEV_TREBLE_ENABLED      │
 # │    HOM_DEV_AVB_STATE     HOM_DEV_BOOT_PART                 │
 # │    HOM_DEV_SERIAL        HOM_DEV_KERNEL_VERSION            │
 # └────────────────────────────────────────────────────────────┘
@@ -123,10 +123,10 @@ echo "    HOM_ENV_ROOT    = ${HOM_ENV_ROOT:-(not set)}"
 #              PARTITION_INDEX
 #   Framework: core/logging.sh, core/ux.sh, core/privacy.sh
 #   Writes   : HOM_DEV_MODEL, HOM_DEV_CODENAME,
-#              HOM_DEV_MANUFACTURER, HOM_DEV_API_LEVEL,
+#              HOM_DEV_BRAND, HOM_DEV_SDK_INT,
 #              HOM_DEV_SPL, HOM_DEV_BUILD_ID, HOM_DEV_IS_AB,
 #              HOM_DEV_SAR, HOM_DEV_DYNAMIC_PARTITIONS,
-#              HOM_DEV_TREBLE, HOM_DEV_AVB_STATE,
+#              HOM_DEV_TREBLE_ENABLED, HOM_DEV_AVB_STATE,
 #              HOM_DEV_BOOT_PART, HOM_DEV_SERIAL,
 #              HOM_DEV_KERNEL_VERSION → ENV_REGISTRY
 # ════════════════════════════════════════════════════════════════
@@ -166,7 +166,7 @@ echo ""
 echo "  ✓ Block B complete."
 echo "    HOM_DEV_MODEL     = ${HOM_DEV_MODEL:-(not set)}"
 echo "    HOM_DEV_CODENAME  = ${HOM_DEV_CODENAME:-(not set)}"
-echo "    HOM_DEV_API_LEVEL = ${HOM_DEV_API_LEVEL:-(not set)}"
+echo "    HOM_DEV_SDK_INT   = ${HOM_DEV_SDK_INT:-(not set)}"
 echo "    HOM_DEV_IS_AB     = ${HOM_DEV_IS_AB:-(not set)}"
 echo "    HOM_DEV_BOOT_PART = ${HOM_DEV_BOOT_PART:-(not set)}"
 echo "    HOM_DEV_AVB_STATE = ${HOM_DEV_AVB_STATE:-(not set)}"

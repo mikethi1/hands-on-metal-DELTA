@@ -89,6 +89,7 @@ class GenerateDeviceinfoTests(unittest.TestCase):
             "ro.product.model":        "Test Device",
             "ro.product.manufacturer": "ACME",
             "ro.product.device":       "testdevice",
+            "ro.product.board":        "testboard",
             "ro.board.platform":       "testplatform",
             "ro.hardware":             "testhw",
             "ro.product.cpu.abi":      "arm64-v8a",
@@ -107,6 +108,7 @@ class GenerateDeviceinfoTests(unittest.TestCase):
             "ro.bootimage.build.fingerprint": "fp",
             "ro.boot.header_version":  "4",
             "ro.product.first_api_level": "33",
+            "ro.build.characteristics": "nosdcard",
         }
 
     def test_deviceinfo_contains_required_fields(self) -> None:
@@ -125,6 +127,52 @@ class GenerateDeviceinfoTests(unittest.TestCase):
         self.assertIn("deviceinfo_modules_initfs", text)
         self.assertIn("wlan", text)
 
+    def test_new_deviceinfo_fields_present(self) -> None:
+        """All fields matching the pmos-husky reference deviceinfo must appear."""
+        props = self._props()
+        text = ep.generate_deviceinfo(props, [])
+        self.assertIn("deviceinfo_codename", text)
+        self.assertIn("deviceinfo_header_version", text)
+        self.assertIn("deviceinfo_flash_pagesize", text)
+        self.assertIn("deviceinfo_bootimg_qcdt", text)
+        self.assertIn("deviceinfo_flash_fastboot_partition_vbmeta", text)
+        self.assertIn("deviceinfo_flash_fastboot_partition_dtbo", text)
+        self.assertIn("deviceinfo_kernel_cmdline", text)
+        self.assertIn("deviceinfo_rootfs_image_sector_size", text)
+        self.assertIn("deviceinfo_chassis", text)
+        self.assertIn("deviceinfo_external_storage", text)
+
+    def test_kernel_cmdline_from_sysconfig(self) -> None:
+        props = self._props()
+        sysconfig = {"proc.cmdline": "earlycon=exynos4210,0x10870000 console=ttySAC0,115200"}
+        text = ep.generate_deviceinfo(props, [], sysconfig=sysconfig)
+        self.assertIn("earlycon=exynos4210", text)
+        self.assertIn("deviceinfo_kernel_cmdline", text)
+
+    def test_pagesize_from_sysconfig(self) -> None:
+        props = self._props()
+        sysconfig = {"boot.pagesize": "4096"}
+        text = ep.generate_deviceinfo(props, [], sysconfig=sysconfig)
+        self.assertIn("4096", text)
+
+    def test_non_qcom_device_qcdt_false(self) -> None:
+        props = self._props()
+        text = ep.generate_deviceinfo(props, [])
+        self.assertIn('deviceinfo_bootimg_qcdt="false"', text)
+
+    def test_qcom_device_qcdt_true(self) -> None:
+        props = self._props()
+        props["ro.board.platform"] = "qcom_sdm845"
+        text = ep.generate_deviceinfo(props, [])
+        self.assertIn('deviceinfo_bootimg_qcdt="true"', text)
+
+    def test_exynos_dtb_path_format(self) -> None:
+        props = self._props()
+        props["ro.board.platform"] = "zuma"
+        props["ro.product.manufacturer"] = "Google"
+        text = ep.generate_deviceinfo(props, [])
+        self.assertIn("exynos/google/", text)
+
     def test_active_modules_consumed(self) -> None:
         props = self._props()
         modules: list[dict] = [
@@ -141,7 +189,7 @@ class GenerateDeviceinfoTests(unittest.TestCase):
         props = self._props()
         modules: list[dict] = []
         ep.generate_deviceinfo(props, modules)
-        # Key identity props must have been consumed
+        # Key identity props must have been consumed by the generator
         for key in ("ro.product.model", "ro.product.manufacturer",
                     "ro.board.platform", "ro.product.cpu.abi"):
             self.assertNotIn(key, props, f"prop {key!r} was not consumed")
@@ -169,9 +217,9 @@ class GenerateDtsTests(unittest.TestCase):
                 "node_id": 2,
                 "path": "/soc/uart@7af0000",
                 "compatible": "qcom,msm-uartdm",
-                "reg": "",
-                "interrupts": "0 26 4",
-                "clocks": "xo",
+                "reg": "0x0 0x7af0000 0x0 0x1000",
+                "interrupts": "0x0 0x1a 0x4",
+                "clocks": "0x1 0x2",
             },
         ]
         iomem = [
@@ -220,6 +268,45 @@ class GenerateDtsTests(unittest.TestCase):
         iomem = args[2]
         ep.generate_dts(*args)
         self.assertEqual(len(iomem), 0)
+
+    def test_dev_blocks_emit_real_reg_and_interrupts(self) -> None:
+        """reg and interrupts must appear as DTS cell arrays, not comments."""
+        dts = ep.generate_dts(*self._make_args())
+        # reg from binary: "0x0 0x7af0000 0x0 0x1000"
+        self.assertIn("reg = <0x0 0x7af0000 0x0 0x1000>;", dts)
+        # interrupts
+        self.assertIn("interrupts = <0x0 0x1a 0x4>;", dts)
+        # clocks
+        self.assertIn("clocks = <0x1 0x2>;", dts)
+
+    def test_dev_blocks_fallback_to_addr_when_no_reg(self) -> None:
+        """When reg is empty, node @addr is used to build stub reg property."""
+        props = {
+            "ro.product.model": "T", "ro.product.device": "t",
+            "ro.board.platform": "p", "ro.hardware": "h",
+            "ro.build.description": "",
+        }
+        dt_nodes = [{
+            "node_id": 1, "path": "/soc/spi@abc0000",
+            "compatible": "vendor,spi", "reg": "",
+            "interrupts": "", "clocks": "",
+        }]
+        dts = ep.generate_dts(props, dt_nodes, [], [], {}, [])
+        self.assertIn("0xabc0000", dts)
+        self.assertIn("reg = <", dts)
+
+    def test_chosen_node_emitted_with_cmdline(self) -> None:
+        sysconfig = {"proc.cmdline": "earlycon=exynos4210,0x10870000 console=ttySAC0,115200"}
+        dts = ep.generate_dts(*self._make_args(), sysconfig=sysconfig)
+        self.assertIn("chosen {", dts)
+        self.assertIn("bootargs", dts)
+        self.assertIn("earlycon=exynos4210", dts)
+
+    def test_chosen_node_placeholder_when_no_cmdline(self) -> None:
+        dts = ep.generate_dts(*self._make_args())
+        self.assertIn("chosen {", dts)
+        # placeholder comment present when no cmdline
+        self.assertIn("bootargs", dts)
 
 
 class GenerateModulesTests(unittest.TestCase):
@@ -322,6 +409,7 @@ class ExportEndToEndTests(unittest.TestCase):
             "ro.bootimage.build.fingerprint": "google/husky/fp",
             "ro.boot.header_version": "4",
             "ro.product.first_api_level": "33",
+            "ro.build.characteristics": "nosdcard",
         }
         for k, v in props.items():
             cur.execute(
@@ -434,6 +522,214 @@ class ExportEndToEndTests(unittest.TestCase):
         run_id = self._populate_db()
         ep.export(self.db_path, None, self.out_dir)
         self.assertTrue((self.out_dir / "deviceinfo").exists())
+
+    def test_export_creates_apkbuild(self) -> None:
+        run_id = self._populate_db()
+        ep.export(self.db_path, run_id, self.out_dir)
+        self.assertTrue((self.out_dir / "APKBUILD").exists())
+        content = (self.out_dir / "APKBUILD").read_text()
+        self.assertIn("pkgname=", content)
+        self.assertIn("google", content)
+
+
+class GenerateApkbuildTests(unittest.TestCase):
+    def _props(self) -> dict[str, str]:
+        return {
+            "ro.product.model":        "Pixel 8 Pro",
+            "ro.product.manufacturer": "Google",
+            "ro.product.device":       "husky",
+            "ro.product.board":        "husky",
+            "ro.product.brand":        "google",
+            "ro.product.cpu.abi":      "arm64-v8a",
+        }
+
+    def test_apkbuild_contains_pkgname(self) -> None:
+        text = ep.generate_apkbuild(self._props())
+        self.assertIn('pkgname="device-google-husky"', text)
+
+    def test_apkbuild_contains_pkgdesc(self) -> None:
+        text = ep.generate_apkbuild(self._props())
+        self.assertIn("Pixel 8 Pro", text)
+
+    def test_apkbuild_arch_aarch64(self) -> None:
+        text = ep.generate_apkbuild(self._props())
+        self.assertIn('arch="aarch64"', text)
+
+    def test_apkbuild_contains_build_and_package(self) -> None:
+        text = ep.generate_apkbuild(self._props())
+        self.assertIn("build()", text)
+        self.assertIn("package()", text)
+        self.assertIn("nonfree_firmware()", text)
+
+    def test_apkbuild_audio_strategies_note(self) -> None:
+        props = self._props()
+        audio = {
+            "standard": ["STRATEGY_MEDIA", "STRATEGY_PHONE"],
+            "vendor":   [{"name": f"vx_{1000+i}", "id": str(1000+i)} for i in range(5)],
+        }
+        text = ep.generate_apkbuild(props, audio_strategies=audio)
+        self.assertIn("vendor strategies", text)
+        self.assertIn("1000", text)
+
+    def test_apkbuild_nfc_note_when_nfc_feature(self) -> None:
+        props = self._props()
+        features = {"android.hardware.nfc", "android.hardware.camera.flash-autofocus"}
+        text = ep.generate_apkbuild(props, features=features)
+        self.assertIn("NFC", text)
+
+    def test_apkbuild_wifi_note_when_wifi_feature(self) -> None:
+        props = self._props()
+        features = {"android.hardware.wifi", "android.hardware.wifi.direct"}
+        text = ep.generate_apkbuild(props, features=features)
+        self.assertIn("Wi-Fi", text)
+
+
+class ParseCpuinfoTests(unittest.TestCase):
+    def test_no_dump_dir_returns_empty(self) -> None:
+        result = ep._parse_cpuinfo(None)
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["clusters"], [])
+
+    def test_parses_clusters(self) -> None:
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as td:
+            proc = Path(td) / "proc"
+            proc.mkdir()
+            # Two A510 + one X3
+            cpuinfo = (
+                "processor\t: 0\nCPU part\t: 0xd46\n\n"
+                "processor\t: 1\nCPU part\t: 0xd46\n\n"
+                "processor\t: 2\nCPU part\t: 0xd4e\n\n"
+            )
+            (proc / "cpuinfo").write_text(cpuinfo)
+            result = ep._parse_cpuinfo(Path(td))
+        self.assertEqual(result["total"], 3)
+        self.assertEqual(len(result["clusters"]), 2)
+        self.assertIn("cortex-a510", result["clusters"][0]["compat"])
+        self.assertIn("cortex-x3",  result["clusters"][1]["compat"])
+
+
+class ParseMeminfoTests(unittest.TestCase):
+    def test_no_dump_dir_returns_zero(self) -> None:
+        self.assertEqual(ep._parse_meminfo(None), 0)
+
+    def test_parses_memtotal(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            proc = Path(td) / "proc"
+            proc.mkdir()
+            (proc / "meminfo").write_text("MemTotal:       8000000 kB\nMemFree: 1000 kB\n")
+            result = ep._parse_meminfo(Path(td))
+        self.assertEqual(result, 8000000 * 1024)
+
+
+class ParseAudioStrategiesTests(unittest.TestCase):
+    def test_none_path_returns_empty(self) -> None:
+        result = ep._parse_audio_strategies(None)
+        self.assertEqual(result["standard"], [])
+        self.assertEqual(result["vendor"], [])
+
+    def test_parses_standard_and_vendor(self) -> None:
+        import tempfile
+        xml_content = '''<?xml version="1.0"?>
+<ComponentTypeSet xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <ComponentType Name="ProductStrategies">
+    <Component Name="STRATEGY_MEDIA" Type="ProductStrategy"
+               Mapping="Name:STRATEGY_MEDIA"/>
+    <Component Name="vx_1000" Type="ProductStrategy"
+               Mapping="Identifier:1000,Name:vx_1000"/>
+    <Component Name="vx_1001" Type="ProductStrategy"
+               Mapping="Identifier:1001,Name:vx_1001"/>
+  </ComponentType>
+</ComponentTypeSet>'''
+        with tempfile.NamedTemporaryFile(suffix=".xml", mode="w", delete=False) as f:
+            f.write(xml_content)
+            fname = f.name
+        try:
+            result = ep._parse_audio_strategies(Path(fname))
+        finally:
+            import os; os.unlink(fname)
+        self.assertIn("STRATEGY_MEDIA", result["standard"])
+        self.assertEqual(len(result["vendor"]), 2)
+        self.assertEqual(result["vendor"][0]["id"], "1000")
+
+    def test_generate_dts_includes_cpus_node(self) -> None:
+        """generate_dts emits a cpus{} block when dump_dir has cpuinfo."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            proc = Path(td) / "proc"
+            proc.mkdir()
+            (proc / "cpuinfo").write_text(
+                "processor\t: 0\nCPU part\t: 0xd46\n\n"
+                "processor\t: 1\nCPU part\t: 0xd4e\n\n"
+            )
+            props = {
+                "ro.product.model": "T", "ro.product.device": "t",
+                "ro.board.platform": "p", "ro.hardware": "h",
+                "ro.build.description": "",
+            }
+            dts = ep.generate_dts(props, [], [], [], {}, [], dump_dir=Path(td))
+        self.assertIn("cpus {", dts)
+        self.assertIn("cortex-a510", dts)
+        self.assertIn("cortex-x3", dts)
+
+    def test_generate_dts_includes_memory_from_meminfo(self) -> None:
+        """generate_dts emits memory@ node from proc/meminfo when iomem is empty."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            proc = Path(td) / "proc"
+            proc.mkdir()
+            (proc / "meminfo").write_text("MemTotal: 4000000 kB\nMemFree: 1000 kB\n")
+            props = {
+                "ro.product.model": "T", "ro.product.device": "t",
+                "ro.board.platform": "p", "ro.hardware": "h",
+                "ro.build.description": "",
+            }
+            dts = ep.generate_dts(props, [], [], [], {}, [], dump_dir=Path(td))
+        self.assertIn("memory@80000000", dts)
+        self.assertIn("device_type", dts)
+
+    def test_generate_deviceinfo_includes_feature_and_audio_comments(self) -> None:
+        props = {
+            "ro.product.model": "T", "ro.product.manufacturer": "X",
+            "ro.product.device": "td", "ro.product.board": "td",
+            "ro.product.brand": "x", "ro.product.name": "td",
+            "ro.build.product": "td", "ro.board.platform": "p",
+            "ro.hardware": "h", "ro.soc.model": "SoC", "ro.soc.manufacturer": "X",
+            "ro.product.cpu.abi": "arm64-v8a", "ro.build.fingerprint": "fp",
+            "ro.product.cpu.abilist": "", "ro.product.cpu.abilist32": "",
+            "ro.product.cpu.abilist64": "", "ro.sf.lcd_density": "420",
+            "persist.sys.sf.native_mode": "0", "ro.boot.hardware": "h",
+            "ro.bootimage.build.fingerprint": "fp", "ro.boot.header_version": "4",
+            "ro.product.first_api_level": "34", "ro.build.characteristics": "nosdcard",
+            "ro.build.date.utc": "0",
+        }
+        features = {"android.hardware.nfc", "android.hardware.wifi"}
+        audio = {
+            "standard": ["STRATEGY_MEDIA"],
+            "vendor": [{"name": "vx_1000", "id": "1000"}],
+        }
+        # Pass features to check feature categorisation and audio annotations
+        text = ep.generate_deviceinfo(props, [], audio_strategies=audio)
+        self.assertIn("Audio routing strategies", text)
+        self.assertIn("STRATEGY_MEDIA", text)
+        self.assertIn("1000", text)   # vendor strategy ID shown in range
+
+        # Verify feature categorisation with dump_dir that has permissions
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as td:
+            perms = Path(td) / "vendor" / "etc" / "permissions"
+            perms.mkdir(parents=True)
+            (perms / "test.xml").write_text(
+                '<permissions>'
+                '<feature name="android.hardware.nfc"/>'
+                '<feature name="android.hardware.camera"/>'
+                '</permissions>'
+            )
+            props2 = dict(props)
+            text2 = ep.generate_deviceinfo(props2, [], dump_dir=Path(td))
+        self.assertIn("NFC:", text2)
+        self.assertIn("Camera:", text2)
 
 
 if __name__ == "__main__":
