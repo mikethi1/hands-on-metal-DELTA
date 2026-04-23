@@ -316,38 +316,6 @@ fi
 reg_set_path recovery HOM_RECOVERY_DUMP_DIR "$(real_abs "$OUT")"
 reg_set_path recovery HOM_RECOVERY_MANIFEST "$(real_abs "$MANIFEST")"
 
-# ── 14. Hardware data sanity check ────────────────────────────
-# Detect sandbox/CI and Termux contexts (recovery scripts can also be
-# exercised from a host PC or Termux for testing).  In those cases the
-# collected data will be empty or dummy and downstream tools must know.
-_check_hw_data_sanity_recovery() {
-    local hw_env="recovery"
-
-    # Termux running the recovery zip test script on-device
-    if [ -n "${TERMUX_VERSION:-}" ] || \
-       [ -d "/data/data/com.termux/files/usr" ] || \
-       [ -d "/data/user/0/com.termux/files/usr" ]; then
-        hw_env="termux_recovery"
-        log "[WARN ] Running inside Termux — recovery sysfs data may be"
-        log "[WARN ] incomplete. Partition mounts require a real recovery"
-        log "[WARN ] environment (TWRP / OrangeFox), not Termux."
-    fi
-
-    # No Android props → sandbox / CI host
-    if [ -z "$(getprop ro.product.model 2>/dev/null)" ] && \
-       [ ! -f /system/build.prop ]; then
-        hw_env="sandbox_ci"
-        log "[WARN ] No Android properties found — this appears to be a"
-        log "[WARN ] sandbox or CI host. Collected recovery data will be"
-        log "[WARN ] placeholder / empty. See docs/TROUBLESHOOTING.md"
-        log "[WARN ] section 'Empty or dummy hardware data'."
-    fi
-
-    reg_set collect HOM_HW_ENV "$hw_env"
-    log "[INFO ] hw_env=$hw_env recorded to env registry."
-}
-_check_hw_data_sanity_recovery
-
 # ── done ─────────────────────────────────────────────────────
 
 TOTAL=$(wc -l < "$MANIFEST")
