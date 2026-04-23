@@ -521,12 +521,9 @@ def _try_lz4_block(data: bytes) -> bytes | None:
     if not _HAS_LZ4_BLOCK:
         return None
     try:
-        result = _lz4_block.decompress(data)
+        return _lz4_block.decompress(data)
     except Exception:
         return None
-    if result.startswith((b"070701", b"070702", b"070707")):
-        return result
-    return None
 
 
 def _lz4_stdin_cli_commands() -> tuple[list[str], ...]:
@@ -787,6 +784,8 @@ def _want_file(name: str) -> bool:
 
 def _safe_cpio_member_path(name: str) -> Path | None:
     """Return a sanitized relative path for CPIO members, or None if unsafe."""
+    if "\\" in name:
+        return None
     stripped = name.lstrip("/")
     if not stripped:
         return None

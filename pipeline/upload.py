@@ -204,9 +204,9 @@ def redact_for_repo_upload(files: dict[str, str]) -> dict[str, str]:
     return out
 
 
-def confirm_repo_upload(assume_yes: bool) -> bool:
+def confirm_repo_upload(yes: bool) -> bool:
     """Prompt user before sending local data to GitHub."""
-    if assume_yes:
+    if yes:
         return True
     if not sys.stdin.isatty():
         print(
