@@ -643,7 +643,7 @@ def _decompress_ramdisk_known(data: bytes) -> bytes | None:
     return None
 
 
-def _candidate_ramdisk_offsets(data: bytes, max_scan: int = 512 * 1024) -> list[int]:
+def _candidate_ramdisk_offsets(data: bytes, max_scan: int = 64 * 1024) -> list[int]:
     """Return unique offsets where a known ramdisk/compression marker appears."""
     scan_len = min(len(data), max_scan)
     if scan_len <= 0:
@@ -852,7 +852,7 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
             namesize = _hex(94)
             filesize = _hex(54)
         except ValueError:
-            return []
+            break
 
         # Sanity-check sizes to avoid acting on garbage data
         if namesize == 0 or namesize > 4096 or filesize > len(data) - pos:
@@ -861,7 +861,6 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
                 break
             pos = next_pos
             continue
-            break
 
         pos += 110
         if namesize == 0 or pos + namesize > len(data):
@@ -891,7 +890,7 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
         if name and _want_file(name):
             rel_path = _safe_cpio_member_path(name)
             if rel_path is None:
-                return []
+                continue
             out_path = out_dir / rel_path
             try:
                 out_path.parent.mkdir(parents=True, exist_ok=True)
