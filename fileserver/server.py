@@ -10,7 +10,7 @@ Lets you **download** files with ``curl`` / ``wget`` and **upload** files with
 Quick start
 -----------
     python fileserver/server.py                          # defaults
-    python fileserver/server.py --port 9000 --dir /tmp/my-files
+    python fileserver/server.py --port 9000 --dir ~/tmp/my-files
 
 Download a file::
 
