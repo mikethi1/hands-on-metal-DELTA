@@ -844,7 +844,7 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
             pos = next_pos
             continue
 
-        # Parse fixed-width hex fields; resync on any decode error
+        # Parse fixed-width hex fields; fail closed on malformed numeric fields.
         def _hex(start: int, length: int = 8) -> int:
             return int(hdr[start:start + length], 16)
 
@@ -852,11 +852,7 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
             namesize = _hex(94)
             filesize = _hex(54)
         except ValueError:
-            next_pos = _find_next_cpio_newc(data, pos + 1)
-            if next_pos < 0:
-                break
-            pos = next_pos
-            continue
+            return []
 
         # Sanity-check sizes to avoid acting on garbage data
         if namesize == 0 or namesize > 4096 or filesize > len(data) - pos:
@@ -895,7 +891,7 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
         if name and _want_file(name):
             rel_path = _safe_cpio_member_path(name)
             if rel_path is None:
-                continue
+                return []
             out_path = out_dir / rel_path
             try:
                 out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -975,7 +971,7 @@ def extract_cpio_odc(data: bytes, out_dir: Path) -> list[str]:
         if name and _want_file(name):
             rel_path = _safe_cpio_member_path(name)
             if rel_path is None:
-                continue
+                return []
             out_path = out_dir / rel_path
             try:
                 out_path.parent.mkdir(parents=True, exist_ok=True)
