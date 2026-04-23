@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import sys
 import tempfile
@@ -11,6 +12,8 @@ if str(PIPELINE_DIR) not in sys.path:
     sys.path.insert(0, str(PIPELINE_DIR))
 
 import build_table  # noqa: E402
+
+TMP_SOURCE_DIR = os.path.expanduser("~/tmp")
 
 
 class BuildTableTests(unittest.TestCase):
@@ -33,7 +36,10 @@ class BuildTableTests(unittest.TestCase):
     def test_import_iomem_parses_valid_rows_only(self) -> None:
         db = self._db_with_schema()
         cur = db.cursor()
-        cur.execute("INSERT INTO collection_run (mode, source_dir) VALUES ('A','/tmp')")
+        cur.execute(
+            "INSERT INTO collection_run (mode, source_dir) VALUES (?,?)",
+            ("A", TMP_SOURCE_DIR),
+        )
         run_id = cur.lastrowid
         db.commit()
 
@@ -65,7 +71,10 @@ class BuildTableTests(unittest.TestCase):
     def test_import_interrupts_and_lsmod_handle_noise(self) -> None:
         db = self._db_with_schema()
         cur = db.cursor()
-        cur.execute("INSERT INTO collection_run (mode, source_dir) VALUES ('A','/tmp')")
+        cur.execute(
+            "INSERT INTO collection_run (mode, source_dir) VALUES (?,?)",
+            ("A", TMP_SOURCE_DIR),
+        )
         run_id = cur.lastrowid
         db.commit()
 
@@ -114,7 +123,10 @@ class BuildTableTests(unittest.TestCase):
     def test_import_dt_nodes_index_files_and_update_fill_rates(self) -> None:
         db = self._db_with_schema()
         cur = db.cursor()
-        cur.execute("INSERT INTO collection_run (mode, source_dir) VALUES ('A','/tmp')")
+        cur.execute(
+            "INSERT INTO collection_run (mode, source_dir) VALUES (?,?)",
+            ("A", TMP_SOURCE_DIR),
+        )
         run_id = cur.lastrowid
         cur.execute(
             "INSERT INTO hardware_block (run_id, name, category, hal_interface) VALUES (?,?,?,?)",
@@ -160,7 +172,10 @@ class BuildTableTests(unittest.TestCase):
     def test_update_fill_rates_rejects_invalid_identifiers(self) -> None:
         db = self._db_with_schema()
         cur = db.cursor()
-        cur.execute("INSERT INTO collection_run (mode, source_dir) VALUES ('A','/tmp')")
+        cur.execute(
+            "INSERT INTO collection_run (mode, source_dir) VALUES (?,?)",
+            ("A", TMP_SOURCE_DIR),
+        )
         run_id = cur.lastrowid
         cur.execute(
             "INSERT INTO hardware_block (run_id, name, category) VALUES (?,?,?)",
@@ -175,6 +190,102 @@ class BuildTableTests(unittest.TestCase):
                 build_table.update_fill_rates(db, run_id)
         finally:
             build_table.FIELD_CHECKS = original
+
+    def test_read_dt_cells_parses_binary_reg(self) -> None:
+        """_read_dt_cells must decode big-endian uint32 arrays correctly."""
+        import struct
+        import tempfile
+        raw = struct.pack(">4I", 0, 0x10400000, 0x10000, 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "reg"
+            p.write_bytes(raw)
+            result = build_table._read_dt_cells(p)
+        self.assertIn("0x10400000", result)
+        self.assertIn("0x10000", result)
+        self.assertIn("0x0", result)
+
+    def test_read_dt_cells_returns_empty_for_non_multiple_of_4(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "reg"
+            p.write_bytes(b"\x01\x02\x03")  # 3 bytes — not divisible by 4
+            result = build_table._read_dt_cells(p)
+        self.assertEqual(result, "")
+
+    def test_read_dt_cells_returns_empty_for_missing_file(self) -> None:
+        result = build_table._read_dt_cells(Path("/nonexistent/reg"))
+        self.assertEqual(result, "")
+
+    def test_import_dt_nodes_stores_hex_reg(self) -> None:
+        """reg values in dt_node must be hex strings, not garbled binary."""
+        import struct
+        db = self._db_with_schema()
+        cur = db.cursor()
+        cur.execute(
+            "INSERT INTO collection_run (mode, source_dir) VALUES (?,?)",
+            ("A", TMP_SOURCE_DIR),
+        )
+        run_id = cur.lastrowid
+        db.commit()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dump = Path(tmp)
+            uart_dir = dump / "proc" / "device-tree" / "soc" / "uart@10870000"
+            uart_dir.mkdir(parents=True)
+            (uart_dir / "compatible").write_bytes(b"samsung,exynos-uart\x00")
+            # reg = <0x00 0x10870000 0x100>  (3 cells, 12 bytes)
+            (uart_dir / "reg").write_bytes(struct.pack(">3I", 0, 0x10870000, 0x100))
+
+            build_table.import_dt_nodes(cur, run_id, dump)
+            db.commit()
+
+        cur.execute("SELECT reg FROM dt_node WHERE run_id=?", (run_id,))
+        row = cur.fetchone()
+        self.assertIsNotNone(row)
+        self.assertIn("0x10870000", row[0])
+
+    def test_import_cmdline_stores_value(self) -> None:
+        db = self._db_with_schema()
+        cur = db.cursor()
+        cur.execute(
+            "INSERT INTO collection_run (mode, source_dir) VALUES (?,?)",
+            ("A", TMP_SOURCE_DIR),
+        )
+        run_id = cur.lastrowid
+        db.commit()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dump = Path(tmp)
+            proc_dir = dump / "proc"
+            proc_dir.mkdir()
+            (proc_dir / "cmdline").write_text(
+                "earlycon=exynos4210,0x10870000 console=ttySAC0,115200\x00",
+                encoding="utf-8",
+            )
+            build_table.import_cmdline(cur, run_id, dump)
+            db.commit()
+
+        cur.execute(
+            "SELECT value FROM sysconfig_entry WHERE run_id=? AND key=?",
+            (run_id, "proc.cmdline"),
+        )
+        row = cur.fetchone()
+        self.assertIsNotNone(row)
+        self.assertIn("earlycon=exynos4210", row[0])
+
+    def test_exynos_dt_hints_recognised(self) -> None:
+        self.assertEqual(
+            build_table.dt_to_hw("/soc/uart@10870000", "samsung,exynos-uart"),
+            ("uart", "misc"),
+        )
+        self.assertEqual(
+            build_table.dt_to_hw("/soc/ufs@13200000", "samsung,exynos-ufs"),
+            ("storage", "misc"),
+        )
+        self.assertEqual(
+            build_table.dt_to_hw("/soc/pmu@15460000", "samsung,gs101-pmu"),
+            ("power", "power"),
+        )
 
 
 if __name__ == "__main__":

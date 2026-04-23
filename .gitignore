@@ -1,3 +1,15 @@
 dist/
+files/
 __pycache__/
 *.py[cod]
+
+# Downloaded binaries (fetched by check_deps.sh / build/fetch_all_deps.sh)
+tools/magisk64
+tools/magisk32
+tools/magiskinit64
+tools/magiskboot64
+tools/magisk_init_ld64
+tools/magisk_stub.apk
+tools/magisk_boot_patch.sh
+tools/magisk_util_functions.sh
+tools/busybox-arm64

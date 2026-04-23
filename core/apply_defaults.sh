@@ -1,5 +1,6 @@
 #!/system/bin/sh
 # core/apply_defaults.sh
+# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Load device family defaults from partition_index.json and
 # write them into env_registry.sh as HOM_DEFAULT_* variables.
@@ -24,9 +25,18 @@
 
 SCRIPT_NAME="${SCRIPT_NAME:-apply_defaults}"
 
-OUT="${OUT:-/sdcard/hands-on-metal}"
+OUT="${OUT:-$HOME/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
-PARTITION_INDEX="${PARTITION_INDEX:-$(dirname "$0")/../build/partition_index.json}"
+_HOM_RESOLVED_ROOT="${REPO_ROOT:-${MODPATH:-}}"
+if [ -n "$_HOM_RESOLVED_ROOT" ]; then
+    PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_RESOLVED_ROOT/build/partition_index.json}"
+else
+    case "$0" in
+        */*) _HOM_SCRIPT_RESOLVED_ROOT="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)" ;;
+        *)   _HOM_SCRIPT_RESOLVED_ROOT="${PWD:-.}" ;;
+    esac
+    PARTITION_INDEX="${PARTITION_INDEX:-$_HOM_SCRIPT_RESOLVED_ROOT/build/partition_index.json}"
+fi
 
 # ── helpers ───────────────────────────────────────────────────
 
@@ -178,8 +188,9 @@ run_apply_defaults() {
     if [ "$pvmf" = "spl_dependent" ]; then
         local spl
         spl=$(_reg_get HOM_DEV_SPL)
-        # Compare SPL to 2026-05-01
-        if [ -n "$spl" ] && [ "$spl" \> "2026-04-30" ] 2>/dev/null; then
+        # Compare SPL to 2026-05-06 (mksh/ash support \> for lexicographic compare)
+        # shellcheck disable=SC3012  # \> is non-POSIX but supported by Android mksh / BusyBox ash
+        if [ -n "$spl" ] && [ "$spl" \> "2026-05-06" ] 2>/dev/null; then
             pvmf="true"
         else
             pvmf="false"
@@ -219,6 +230,7 @@ _apply_api_level_defaults() {
     local patchvbmetaflag="false"
     local spl
     spl=$(_reg_get HOM_DEV_SPL)
+    # shellcheck disable=SC3012  # \> is non-POSIX but supported by Android mksh / BusyBox ash
     if [ -n "$spl" ] && [ "$spl" \> "2026-04-30" ] 2>/dev/null; then
         patchvbmetaflag="true"
     fi

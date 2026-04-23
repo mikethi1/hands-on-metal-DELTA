@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck --version
+
+      - name: Run shellcheck on every *.sh (if any)
+        run: |
+          set -e
+          # Find all shell scripts (skip .git).
+          mapfile -t scripts < <(find . -type f -name '*.sh' -not -path './.git/*' | sort)
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "::notice::No shell scripts found — skipping shellcheck."
+            exit 0
+          fi
+          printf '  %s\n' "${scripts[@]}"
+          shellcheck "${scripts[@]}"
+
+  python-tests:
+    name: python tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run unittest suite
+        run: python -m unittest discover -v tests

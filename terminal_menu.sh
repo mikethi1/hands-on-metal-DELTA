@@ -1,124 +1,84 @@
 #!/usr/bin/env bash
 # terminal_menu.sh
-# Interactive terminal launcher for all project scripts.
+# ============================================================
+# hands-on-metal — Device Workflow Menu  (Phases 1-4)
+#
+# Interactive launcher for the core device-side workflow:
+#   Phase 1 · Setup & Build
+#   Phase 2 · Environment & Device Detection
+#   Phase 3 · Boot Image & Pre-patch Analysis
+#   Phase 4 · Patch & Flash
+#
+# For the analysis pipeline (Phases 5-8), press 'm' inside this
+# menu or run:
+#   bash pipeline_menu.sh
+#
+# Usage:
+#   bash terminal_menu.sh
+#
+# Can also be launched remotely:
+#   curl -fsSL https://raw.githubusercontent.com/mikethi/hands-on-metal/main/terminal_menu.sh | bash
+# ============================================================
 
 set -eu
 
+# ── Reopen stdin from /dev/tty when piped (curl | bash) ───────
+if [ ! -t 0 ] && [ -e /dev/tty ]; then
+    exec < /dev/tty
+elif [ ! -t 0 ]; then
+    echo "Error: no interactive terminal available (stdin is not a tty)." >&2
+    echo "Run 'bash terminal_menu.sh' from an interactive terminal session." >&2
+    exit 1
+fi
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ── Host-side dependency check ────────────────────────────────
+# shellcheck disable=SC1091
+source "$REPO_ROOT/check_deps.sh" || exit 1
+
+# ── Shared menu library (display, prereqs, run logic) ─────────
+# shellcheck source=core/menu_lib.sh
+source "$REPO_ROOT/core/menu_lib.sh"
+
+# ── Menu identity ─────────────────────────────────────────────
+HOM_MENU_TITLE="hands-on-metal  ·  Device Workflow"
+HOM_MENU_SCRIPT_NAME="terminal_menu"
+HOM_OTHER_MENU="$REPO_ROOT/pipeline_menu.sh"
+HOM_OTHER_MENU_LABEL="pipeline menu (m)"
+
+# ── Phase 1-4 script index ────────────────────────────────────
 build_script_index() {
     SCRIPT_LABELS=()
     SCRIPT_PATHS=()
     SCRIPT_TYPES=()
 
-    local path rel
-    while IFS= read -r path; do
-        rel="${path#"$REPO_ROOT"/}"
-        SCRIPT_LABELS+=("$rel")
-        SCRIPT_PATHS+=("$path")
-        SCRIPT_TYPES+=("shell")
-    done < <(find \
-        "$REPO_ROOT/build" \
-        "$REPO_ROOT/core" \
-        "$REPO_ROOT/magisk-module" \
-        "$REPO_ROOT/recovery-zip" \
-        -type f -name "*.sh" | sort)
-
-    while IFS= read -r path; do
-        rel="${path#"$REPO_ROOT"/}"
-        SCRIPT_LABELS+=("$rel")
-        SCRIPT_PATHS+=("$path")
-        SCRIPT_TYPES+=("python")
-    done < <(find "$REPO_ROOT/pipeline" -maxdepth 1 -type f -name "*.py" | sort)
-}
-
-print_menu() {
-    echo
-    echo "hands-on-metal terminal menu"
-    echo "Repository: $REPO_ROOT"
-    echo
-    local i
-    for i in "${!SCRIPT_LABELS[@]}"; do
-        printf "%2d) [%s] %s\n" "$((i + 1))" "${SCRIPT_TYPES[$i]}" "${SCRIPT_LABELS[$i]}"
-    done
-    echo
-    echo " r) refresh script list"
-    echo " q) quit"
-}
-
-run_selected() {
-    local idx="$1"
-    local script="${SCRIPT_PATHS[$idx]}"
-    local kind="${SCRIPT_TYPES[$idx]}"
-    local rel="${SCRIPT_LABELS[$idx]}"
-    local args_array=()
-
-    echo
-    echo "Selected: $rel"
-    echo "Note: enter space-separated arguments (embedded space quoting is not supported)."
-    read -r -a args_array -p "Arguments (optional): "
-
-    echo
-    echo "Running..."
-    (
-        cd "$REPO_ROOT" || exit 1
-        if [ "$kind" = "python" ]; then
-            if [ "${#args_array[@]}" -gt 0 ]; then
-                python3 "$script" "${args_array[@]}"
-            else
-                python3 "$script"
-            fi
-        else
-            if [ "${#args_array[@]}" -gt 0 ]; then
-                bash "$script" "${args_array[@]}"
-            else
-                bash "$script"
-            fi
-        fi
+    local _ordered_scripts=(
+        # ── Phase 1: Setup & Build ────────────────────────────
+        "shell:build/fetch_all_deps.sh"
+        "shell:build/build_offline_zip.sh"
+        # ── Phase 2: Environment & Device Detection ───────────
+        "shell:magisk-module/env_detect.sh"
+        "shell:core/device_profile.sh"
+        # ── Phase 3: Boot Image & Pre-patch Analysis ──────────
+        "shell:core/boot_image.sh"
+        "shell:core/anti_rollback.sh"
+        "shell:core/candidate_entry.sh"
+        "shell:core/apply_defaults.sh"
+        # ── Phase 4: Patch & Flash ────────────────────────────
+        "shell:core/magisk_patch.sh"
+        "shell:core/flash.sh"
     )
-    local rc=$?
-    echo
-    echo "Exit code: $rc"
-    echo
-}
 
-main() {
-    if [ ! -d "$REPO_ROOT/pipeline" ]; then
-        echo "Error: pipeline directory not found in repository." >&2
-        exit 1
-    fi
-
-    build_script_index
-
-    if [ "${#SCRIPT_LABELS[@]}" -eq 0 ]; then
-        echo "No scripts found." >&2
-        exit 1
-    fi
-
-    while true; do
-        print_menu
-        read -r -p "Choose an option: " choice
-
-        case "$choice" in
-            q|Q)
-                echo "Bye."
-                exit 0
-                ;;
-            r|R)
-                build_script_index
-                continue
-                ;;
-            ''|*[!0-9]*)
-                echo "Invalid choice."
-                ;;
-            *)
-                if [ "$choice" -lt 1 ] || [ "$choice" -gt "${#SCRIPT_LABELS[@]}" ]; then
-                    echo "Invalid choice."
-                else
-                    run_selected "$((choice - 1))"
-                fi
-                ;;
-        esac
+    local entry kind rel
+    for entry in "${_ordered_scripts[@]}"; do
+        kind="${entry%%:*}"
+        rel="${entry#*:}"
+        if [ -f "$REPO_ROOT/$rel" ]; then
+            SCRIPT_LABELS+=("$rel")
+            SCRIPT_PATHS+=("$REPO_ROOT/$rel")
+            SCRIPT_TYPES+=("$kind")
+        fi
     done
 }
 
