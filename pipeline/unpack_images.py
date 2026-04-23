@@ -61,6 +61,7 @@ import sys
 import tarfile
 import zipfile
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Optional
 
 # ── Optional compression library imports ────────────────────────────────────
@@ -69,6 +70,12 @@ try:
     _HAS_LZ4 = True
 except ImportError:
     _HAS_LZ4 = False
+
+try:
+    import lz4.block as _lz4_block
+    _HAS_LZ4_BLOCK = True
+except ImportError:
+    _HAS_LZ4_BLOCK = False
 
 try:
     import zstandard as _zstd
@@ -105,12 +112,28 @@ def strip_avb_footer(data: bytes) -> bytes:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# Android Sparse Image detection / rejection
-# We do not expand sparse images (that requires simg2img); instead we note
-# their presence and skip them.
+# Android Sparse Image (simg) — inline unpacker
+# Format: file header + N chunk headers each followed by chunk payload.
+#   File header (28 bytes):
+#     magic(4) major_ver(2) minor_ver(2) file_hdr_sz(2) chunk_hdr_sz(2)
+#     blk_sz(4) total_blks(4) total_chunks(4) image_checksum(4)
+#   Chunk header (12 bytes):
+#     chunk_type(2) reserved(2) chunk_sz(4) total_sz(4)
+#   Chunk types:
+#     0xCAC1 RAW       — chunk_sz blocks of raw data
+#     0xCAC2 FILL      — chunk_sz blocks filled with 4-byte pattern
+#     0xCAC3 DONT_CARE — chunk_sz blocks of zeros (sparse holes)
+#     0xCAC4 CRC32     — 4-byte CRC, no output blocks
 # ════════════════════════════════════════════════════════════════════════════
 
 SPARSE_MAGIC = 0xED26FF3A
+
+_SPARSE_FILE_HDR   = struct.Struct("<IHHHHIIII")   # 28 bytes
+_SPARSE_CHUNK_HDR  = struct.Struct("<HHII")         # 12 bytes
+_CHUNK_RAW         = 0xCAC1
+_CHUNK_FILL        = 0xCAC2
+_CHUNK_DONT_CARE   = 0xCAC3
+_CHUNK_CRC32       = 0xCAC4
 
 
 def is_sparse_image(data: bytes) -> bool:
@@ -118,6 +141,95 @@ def is_sparse_image(data: bytes) -> bool:
         return False
     magic = struct.unpack_from("<I", data, 0)[0]
     return magic == SPARSE_MAGIC
+
+
+def _unsparse_image(data: bytes) -> bytes | None:
+    """Convert an Android sparse image to a contiguous raw image.
+
+    Parses every chunk type (RAW, FILL, DONT_CARE, CRC32) and reconstructs
+    the full partition content.  Returns ``None`` if the header is malformed
+    or the data is truncated.
+    """
+    if len(data) < _SPARSE_FILE_HDR.size:
+        return None
+    (magic, major_ver, _minor_ver, file_hdr_sz, chunk_hdr_sz,
+     blk_sz, total_blks, total_chunks, _checksum) = _SPARSE_FILE_HDR.unpack_from(data, 0)
+    if (
+        magic != SPARSE_MAGIC
+        or blk_sz == 0
+        or file_hdr_sz < _SPARSE_FILE_HDR.size
+        or chunk_hdr_sz < _SPARSE_CHUNK_HDR.size
+        or file_hdr_sz > len(data)
+    ):
+        return None
+
+    out = bytearray()
+    pos = file_hdr_sz  # skip variable-length file header
+    emitted_blks = 0
+
+    for _ in range(total_chunks):
+        if pos + chunk_hdr_sz > len(data):
+            return None
+        chunk_type, _reserved, chunk_sz, total_sz = _SPARSE_CHUNK_HDR.unpack_from(data, pos)
+        # total_sz includes the chunk header itself
+        if total_sz < chunk_hdr_sz:
+            return None
+        data_sz = total_sz - chunk_hdr_sz
+    if file_hdr_sz < _SPARSE_FILE_HDR.size or chunk_hdr_sz < _SPARSE_CHUNK_HDR.size:
+        return None
+    if file_hdr_sz > len(data):
+        return None
+
+    out = bytearray()
+    pos = file_hdr_sz  # skip variable-length file header
+
+    for _ in range(total_chunks):
+        if pos + _SPARSE_CHUNK_HDR.size > len(data) or pos + chunk_hdr_sz > len(data):
+            return None
+        chunk_type, _reserved, chunk_sz, total_sz = _SPARSE_CHUNK_HDR.unpack_from(data, pos)
+        if total_sz < chunk_hdr_sz:
+            return None
+        # total_sz includes the chunk header itself
+        data_sz = total_sz - chunk_hdr_sz
+        payload_off = pos + chunk_hdr_sz
+        raw_bytes = chunk_sz * blk_sz
+        chunk_end = pos + total_sz
+        if chunk_end > len(data):
+            return None
+        pos = chunk_end
+
+        if chunk_type == _CHUNK_RAW:
+            if data_sz != raw_bytes:
+                return None
+            out.extend(data[payload_off:payload_off + raw_bytes])
+        elif chunk_type == _CHUNK_FILL:
+            if data_sz != 4:
+                return None
+            fill = data[payload_off:payload_off + 4]
+            reps = raw_bytes // 4
+            out.extend(fill * reps)
+            out.extend(fill[: raw_bytes % 4])
+        elif chunk_type == _CHUNK_DONT_CARE:
+            if data_sz != 0:
+                return None
+            out.extend(b"\x00" * raw_bytes)
+        elif chunk_type == _CHUNK_CRC32:
+            if data_sz != 4:
+                return None
+            if data_sz != 4 or payload_off + 4 > len(data):
+                return None
+            # 4-byte CRC payload, no output blocks
+        else:
+            # Unknown chunk — emit zeros so offsets stay correct
+            out.extend(b"\x00" * raw_bytes)
+            emitted_blks += chunk_sz
+
+        pos = chunk_end
+
+    expected_len = total_blks * blk_sz
+    if emitted_blks != total_blks or len(out) != expected_len:
+        return None
+    return bytes(out)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -195,6 +307,11 @@ VENDOR_HDR_V3_STRUCT = struct.Struct("<" + "".join(_VENDOR_HDR_V3_FMT))
 #                      vendor_ramdisk_table_entry_size, bootconfig_size
 _VENDOR_HDR_V4_EXTRA = struct.Struct("<IIII")
 
+# vendor_boot v4 ramdisk table entry (108 bytes):
+#   ramdisk_size(4) + ramdisk_offset(4) + ramdisk_type(4)
+#   + ramdisk_name(32) + board_id(16 × uint32 = 64)
+_VENDOR_RAMDISK_TABLE_ENTRY = struct.Struct("<III32s64s")
+
 
 def _round_up(n: int, page: int) -> int:
     return ((n + page - 1) // page) * page
@@ -213,6 +330,11 @@ class BootImage:
         self.cmdline: str = ""
         self.name: str = ""
         self.vendor: bool = False  # True for vendor_boot.img
+        # vendor_boot v4: individual ramdisk segments from the ramdisk table.
+        # Empty for all other image types.  When populated, each entry is a
+        # raw (still compressed) ramdisk blob that should be processed
+        # independently in addition to the combined ramdisk_data blob.
+        self.ramdisk_segments: list[bytes] = []
 
 
 def parse_boot_image(data: bytes) -> BootImage | None:
@@ -330,6 +452,30 @@ def _parse_vendor_boot(data: bytes) -> BootImage | None:
     if dtb_size:
         img.dtb_data = data[off_dtb : off_dtb + dtb_size]
 
+    # v4: parse the vendor ramdisk table so every individual segment is
+    # available for extraction.  The table lives after the DTB section.
+    if hdr_version >= 4 and len(data) > VENDOR_HDR_V3_STRUCT.size + _VENDOR_HDR_V4_EXTRA.size:
+        (table_size, entry_num,
+         entry_size, bootconfig_size) = _VENDOR_HDR_V4_EXTRA.unpack_from(
+            data, VENDOR_HDR_V3_STRUCT.size)
+        off_table = off_dtb + dtb_pages * ps
+        if (entry_num > 0
+                and entry_size >= _VENDOR_RAMDISK_TABLE_ENTRY.size
+                and off_table + table_size <= len(data)):
+            table_end = off_table + table_size
+            max_entries = table_size // entry_size
+            for i in range(min(entry_num, max_entries)):
+                entry_off = off_table + i * entry_size
+                if entry_off + _VENDOR_RAMDISK_TABLE_ENTRY.size > table_end:
+                    break
+                (seg_size, seg_offset, seg_type,
+                 _seg_name, _board_id) = _VENDOR_RAMDISK_TABLE_ENTRY.unpack_from(
+                    data, entry_off)
+                seg_start = off_ramdisk + seg_offset
+                seg_end   = seg_start + seg_size
+                if seg_size > 0 and seg_end <= len(data):
+                    img.ramdisk_segments.append(data[seg_start:seg_end])
+
     return img
 
 
@@ -368,6 +514,19 @@ def _try_lz4(data: bytes) -> bytes | None:
         if result is not None:
             return result
         return None
+
+
+def _try_lz4_block(data: bytes) -> bytes | None:
+    """Try decoding raw LZ4 block streams (no frame magic)."""
+    if not _HAS_LZ4_BLOCK:
+        return None
+    try:
+        result = _lz4_block.decompress(data)
+    except Exception:
+        return None
+    if result.startswith((b"070701", b"070702", b"070707")):
+        return result
+    return None
 
 
 def _lz4_stdin_cli_commands() -> tuple[list[str], ...]:
@@ -464,15 +623,63 @@ def _try_bz2(data: bytes) -> bytes | None:
         return None
 
 
-def decompress_ramdisk(data: bytes) -> bytes | None:
-    """Try all known compression formats; return raw cpio bytes or None."""
-    for fn in (_try_gzip, _try_lz4, _try_lzma, _try_zstd, _try_bz2):
+_RAMDISK_MAGIC_MARKERS: tuple[bytes, ...] = (
+    b"\x1f\x8b",             # gzip
+    b"\x04\x22\x4d\x18",     # lz4 frame
+    b"\x02\x21\x4c\x18",     # lz4 legacy frame
+    b"\xfd7zXZ\x00",         # xz
+    b"\x28\xb5\x2f\xfd",     # zstd
+    b"BZ",                   # bzip2
+)
+_CPIO_MAGICS: tuple[bytes, ...] = (b"070701", b"070702", b"070707")
+_RAMDISK_MAGIC_MARKERS = _RAMDISK_MAGIC_MARKERS + _CPIO_MAGICS
+
+
+def _decompress_ramdisk_known(data: bytes) -> bytes | None:
+    """Decode one ramdisk blob if it starts at offset 0."""
+    for fn in (_try_gzip, _try_lz4, _try_lz4_block, _try_lzma, _try_zstd, _try_bz2):
         result = fn(data)
         if result is not None:
             return result
-    # Already uncompressed cpio?
-    if data[:6] in (b"070701", b"070702", b"070707"):
+    if data[:6] in _CPIO_MAGICS:
         return data
+    return None
+
+
+def _candidate_ramdisk_offsets(data: bytes, max_scan: int = 512 * 1024) -> list[int]:
+    """Return unique offsets where a known ramdisk/compression marker appears."""
+    scan_len = min(len(data), max_scan)
+    if scan_len <= 0:
+        return [0]
+
+    offsets: set[int] = {0}
+    head = data[:scan_len]
+    for marker in _RAMDISK_MAGIC_MARKERS:
+        start = 0
+        while True:
+            idx = head.find(marker, start)
+            if idx < 0:
+                break
+            offsets.add(idx)
+            start = idx + 1
+    return sorted(offsets)
+
+
+def decompress_ramdisk(data: bytes) -> bytes | None:
+    """Try all known compression formats; return raw cpio bytes or None."""
+    # Most images place ramdisk payload at offset 0; try this fast path first.
+    direct = _decompress_ramdisk_known(data)
+    if direct is not None:
+        return direct
+
+    # Some partition dumps include small prefix bytes before the actual ramdisk
+    # payload. Scan near the head and retry from candidate offsets.
+    for off in _candidate_ramdisk_offsets(data):
+        if off == 0:
+            continue
+        result = _decompress_ramdisk_known(data[off:])
+        if result is not None:
+            return result
     return None
 
 
@@ -578,12 +785,50 @@ def _want_file(name: str) -> bool:
     return False
 
 
+def _safe_cpio_member_path(name: str) -> Path | None:
+    """Return a sanitized relative path for CPIO members, or None if unsafe."""
+    stripped = name.lstrip("/")
+    if not stripped:
+        return None
+    pp = PurePosixPath(stripped)
+    if any(part in ("", ".", "..") for part in pp.parts):
+        return None
+    return Path(*pp.parts)
+
+
 def _align4(n: int) -> int:
     return (n + 3) & ~3
 
 
+def _find_next_cpio_newc(data: bytes, start: int) -> int:
+    """Return the lowest offset ≥ *start* where a newc CPIO header magic begins.
+
+    Scans the full remainder of *data* so that the caller can resync after
+    corrupt bytes or padding.  Returns -1 when no further magic is found.
+    """
+    idx1 = data.find(b"070701", start)
+    idx2 = data.find(b"070702", start)
+    candidates = [i for i in (idx1, idx2) if i >= 0]
+    return min(candidates) if candidates else -1
+
+
+def _find_next_cpio_odc(data: bytes, start: int) -> int:
+    """Return the lowest offset ≥ *start* where an odc CPIO header magic begins.
+
+    Returns -1 when none is found.
+    """
+    return data.find(b"070707", start)
+
+
 def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
-    """Extract a newc CPIO archive; return list of extracted paths."""
+    """Extract a newc CPIO archive; return list of extracted paths.
+
+    The parser resyncs on bad magic bytes, malformed header fields, or
+    implausible size values instead of stopping immediately.  After each
+    ``TRAILER!!!`` record it continues scanning so that concatenated CPIO
+    archives (e.g. Android vendor_boot v4 multi-ramdisk segments) are
+    fully processed.
+    """
     extracted: list[str] = []
     pos = 0
 
@@ -591,32 +836,70 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
         if pos + 110 > len(data):
             break
         hdr = data[pos:pos + 110]
-        if hdr[:6] not in (b"070701", b"070702"):
-            break
 
-        # Parse fixed-width hex fields
+        # ── mid-file probe: if magic is wrong, scan ahead to resync ──────────
+        if hdr[:6] not in (b"070701", b"070702"):
+            next_pos = _find_next_cpio_newc(data, pos + 1)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
+
+        # Parse fixed-width hex fields; resync on any decode error
         def _hex(start: int, length: int = 8) -> int:
             return int(hdr[start:start + length], 16)
 
-        namesize = _hex(94)
-        filesize = _hex(54)
+        try:
+            namesize = _hex(94)
+            filesize = _hex(54)
+        except ValueError:
+            next_pos = _find_next_cpio_newc(data, pos + 1)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
+
+        # Sanity-check sizes to avoid acting on garbage data
+        if namesize == 0 or namesize > 4096 or filesize > len(data) - pos:
+            next_pos = _find_next_cpio_newc(data, pos + 1)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
+            break
 
         pos += 110
+        if namesize == 0 or pos + namesize > len(data):
+            break
         # Name (null-terminated, padded to 4-byte boundary after header+name)
         name_raw = data[pos:pos + namesize]
         name = name_raw.rstrip(b"\x00").decode("utf-8", errors="replace")
-        pos += _align4(110 + namesize) - 110
+        name_step = _align4(110 + namesize) - 110
+        if pos + name_step > len(data):
+            break
+        pos += name_step
 
         if name == "TRAILER!!!":
-            break
+            # After the trailer, skip any alignment padding and look for the
+            # next concatenated archive rather than stopping.
+            next_pos = _find_next_cpio_newc(data, pos)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
 
+        if pos + filesize > len(data):
+            break
         file_data = data[pos:pos + filesize]
         pos += _align4(filesize)
 
         if name and _want_file(name):
-            out_path = out_dir / name.lstrip("/")
-            out_path.parent.mkdir(parents=True, exist_ok=True)
+            rel_path = _safe_cpio_member_path(name)
+            if rel_path is None:
+                continue
+            out_path = out_dir / rel_path
             try:
+                out_path.parent.mkdir(parents=True, exist_ok=True)
                 out_path.write_bytes(file_data)
                 extracted.append(name)
             except OSError:
@@ -626,7 +909,12 @@ def extract_cpio_newc(data: bytes, out_dir: Path) -> list[str]:
 
 
 def extract_cpio_odc(data: bytes, out_dir: Path) -> list[str]:
-    """Extract an odc (old portable) CPIO archive."""
+    """Extract an odc (old portable) CPIO archive.
+
+    The parser resyncs on bad magic bytes, malformed header fields, or
+    implausible size values instead of stopping immediately, and continues
+    after each ``TRAILER!!!`` record to handle concatenated archives.
+    """
     extracted: list[str] = []
     pos = 0
 
@@ -634,30 +922,64 @@ def extract_cpio_odc(data: bytes, out_dir: Path) -> list[str]:
         if pos + 76 > len(data):
             break
         hdr = data[pos:pos + 76]
+
+        # ── mid-file probe: if magic is wrong, scan ahead to resync ──────────
         if hdr[:6] != b"070707":
-            break
+            next_pos = _find_next_cpio_odc(data, pos + 1)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
 
         def _oct(start: int, length: int) -> int:
             return int(hdr[start:start + length], 8)
 
-        namesize = _oct(59, 6)
-        filesize = _oct(65, 11)
+        try:
+            namesize = _oct(59, 6)
+            filesize = _oct(65, 11)
+        except ValueError:
+            next_pos = _find_next_cpio_odc(data, pos + 1)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
+
+        # Sanity-check sizes to avoid acting on garbage data
+        if namesize == 0 or namesize > 4096 or filesize > len(data) - pos:
+            next_pos = _find_next_cpio_odc(data, pos + 1)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
+            break
 
         pos += 76
+        if namesize == 0 or pos + namesize > len(data):
+            break
         name_raw = data[pos:pos + namesize]
         name = name_raw.rstrip(b"\x00").decode("utf-8", errors="replace")
         pos += namesize
 
         if name == "TRAILER!!!":
-            break
+            # Continue scanning for any following concatenated archive.
+            next_pos = _find_next_cpio_odc(data, pos)
+            if next_pos < 0:
+                break
+            pos = next_pos
+            continue
 
+        if pos + filesize > len(data):
+            break
         file_data = data[pos:pos + filesize]
         pos += filesize
 
         if name and _want_file(name):
-            out_path = out_dir / name.lstrip("/")
-            out_path.parent.mkdir(parents=True, exist_ok=True)
+            rel_path = _safe_cpio_member_path(name)
+            if rel_path is None:
+                continue
+            out_path = out_dir / rel_path
             try:
+                out_path.parent.mkdir(parents=True, exist_ok=True)
                 out_path.write_bytes(file_data)
                 extracted.append(name)
             except OSError:
@@ -944,23 +1266,158 @@ def _decompress_image(src: Path, dest_dir: Path) -> Optional[Path]:
 # Main image processing pipeline
 # ════════════════════════════════════════════════════════════════════════════
 
+def _process_ramdisk_blob(
+    ramdisk_data: bytes,
+    label: str,
+    out_dir: Path,
+    dump: Path,
+    run_id: int,
+    cur: sqlite3.Cursor,
+    depth: int = 0,
+) -> list[str]:
+    """Decompress one ramdisk blob, extract CPIO, ingest metadata, register files.
+
+    *label* is used in DB source paths and log messages.
+    *depth* guards against infinite recursion when extracted files themselves
+    contain nested boot images (e.g. vendor_boot inside an OTA ramdisk).
+    The recursion limit is 10 levels — enough for any realistic nesting.
+
+    Nested ``.img`` files found in the extracted CPIO are automatically
+    unsparsed (if needed) and parsed as boot images so every layer is
+    fully walked.
+    """
+    cpio_data = decompress_ramdisk(ramdisk_data)
+    if cpio_data is None:
+        print(f"      ↳ could not decompress ramdisk [{label}]", file=sys.stderr)
+        return []
+
+    print(f"      ↳ ramdisk {len(cpio_data)} bytes [{label}]")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files = extract_cpio(cpio_data, out_dir)
+    print(f"      ↳ {len(files)} files extracted [{label}]")
+
+    # Ingest fstab and .pb files
+    for fname in files:
+        fname_lower = fname.lower()
+        fpath = out_dir / fname.lstrip("/")
+        if not fpath.exists():
+            continue
+        if "fstab" in fname_lower:
+            n = parse_fstab(fpath.read_text(errors="replace"),
+                            f"ramdisk:{label}/{fname}", run_id, cur)
+            if n:
+                print(f"        fstab {fname}: {n} entries")
+        elif fname_lower.endswith(".pb"):
+            _ingest_pb_file(fpath, f"ramdisk:{label}/{fname}", run_id, cur)
+
+    # Register every extracted file in collected_file
+    for fname in files:
+        local_rel = (out_dir.relative_to(dump) / fname.lstrip("/")).as_posix()
+        p = dump / local_rel
+        size = p.stat().st_size if p.exists() else None
+        try:
+            cur.execute(
+                """INSERT OR IGNORE INTO collected_file
+                   (run_id, src_path, local_path, size_bytes)
+                   VALUES (?,?,?,?)""",
+                (run_id, f"ramdisk:{label}/{fname}", local_rel, size),
+            )
+        except sqlite3.Error:
+            pass
+
+    # ── Recursively parse any .img files found in the ramdisk ────────────────
+    # Many vendor ramdisks embed sub-images (init_boot.img, recovery.img, …).
+    # We parse up to 4 levels deep so nothing is silently skipped.
+    if depth < 10:
+        for fname in list(files):
+            if not fname.lower().endswith(".img"):
+                continue
+            fpath = out_dir / fname.lstrip("/")
+            if not fpath.exists():
+                continue
+            try:
+                nested_raw = fpath.read_bytes()
+            except OSError:
+                continue
+            if len(nested_raw) < 8:
+                continue
+
+            # Unsparse if needed
+            if is_sparse_image(nested_raw):
+                print(f"        ↳ {fname}: sparse image, unsparsing…")
+                unsparsed = _unsparse_image(nested_raw)
+                if unsparsed:
+                    nested_raw = unsparsed
+                else:
+                    print(f"        ↳ {fname}: unsparse failed, skipping",
+                          file=sys.stderr)
+                    continue
+
+            nested_img = parse_boot_image(nested_raw)
+            if nested_img is None:
+                continue
+
+            n_segs = len(nested_img.ramdisk_segments)
+            print(f"        ↳ nested boot image in {fname} "
+                  f"(v{nested_img.version}"
+                  + (f", {n_segs} v4 segments" if n_segs else "") + ")")
+
+            nested_label = f"{label}/{fname}"
+            safe = "".join(ch if ch.isalnum() else "_" for ch in fname)
+            base_out = out_dir / (safe + "_unpacked")
+
+            # Combined ramdisk blob
+            if nested_img.ramdisk_data:
+                extra = _process_ramdisk_blob(
+                    nested_img.ramdisk_data,
+                    nested_label,
+                    base_out,
+                    dump, run_id, cur,
+                    depth=depth + 1,
+                )
+                files.extend(extra)
+
+            # v4 vendor_boot individual segments
+            for i, seg in enumerate(nested_img.ramdisk_segments):
+                extra = _process_ramdisk_blob(
+                    seg,
+                    f"{nested_label}#seg{i}",
+                    base_out.parent / f"{base_out.name}_seg{i}",
+                    dump, run_id, cur,
+                    depth=depth + 1,
+                )
+                files.extend(extra)
+
+            # Save DTB from nested image
+            if nested_img.dtb_data:
+                dtb_out = base_out / "dtb.img"
+                dtb_out.parent.mkdir(parents=True, exist_ok=True)
+                dtb_out.write_bytes(nested_img.dtb_data)
+
+    return files
+
+
 def process_image(img_path: Path, dump: Path, run_id: int,
                   cur: sqlite3.Cursor) -> dict:
-    """
-    Process one boot/vendor_boot image file.
-    Returns a dict with status info.
-    """
+    """Process one boot/vendor_boot image file.  Returns a dict with status info."""
     image_rel = _path_relative_to(img_path, dump)
     result: dict = {"path": image_rel, "status": "ok",
                     "ramdisk_files": [], "enc_detected": False}
 
     raw = img_path.read_bytes()
 
-    # Detect encryption / special formats before parsing
+    # ── Sparse image: unsparse inline rather than skipping ───────────────────
     if is_sparse_image(raw):
-        result["status"] = "sparse_image_skipped"
-        print(f"    ↳ sparse image, skipping (run simg2img first): {img_path.name}")
-        return result
+        print(f"    ↳ sparse image in {img_path.name}, unsparsing…")
+        unsparsed = _unsparse_image(raw)
+        if unsparsed:
+            print(f"    ↳ unsparsed: {len(unsparsed)} bytes")
+            raw = unsparsed
+        else:
+            result["status"] = "sparse_unsparse_failed"
+            print(f"    ↳ unsparse failed — run simg2img manually: {img_path.name}",
+                  file=sys.stderr)
+            return result
 
     if detect_fde_footer(raw[:65536]):
         result["enc_detected"] = True

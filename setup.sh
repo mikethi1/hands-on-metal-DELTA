@@ -125,6 +125,16 @@ _hom_auto_install curl     curl
 _hom_auto_install python3  python3   python   # Termux package is "python" but provides python3
 _hom_auto_install tar      tar
 
+# ── Install optional Python packages for the pipeline ──────────
+# lz4 — enables native LZ4 decompression of boot/ramdisk images (unpack_images.py).
+# Soft-fail: if pip is unavailable or the install fails, unpack_images.py falls
+# back to the lz4 CLI tool automatically.
+if ! python3 -c "import lz4" 2>/dev/null; then
+    echo "Installing optional Python package: lz4 (pipeline/unpack_images.py)..."
+    python3 -m pip install --quiet lz4 2>/dev/null \
+        || echo "  ⚠  Could not install python-lz4 via pip — LZ4 boot-image decompression will use the lz4 CLI tool instead."
+fi
+
 # sha256sum OR shasum — at least one must be present
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
     _hom_auto_install sha256sum coreutils
@@ -164,6 +174,29 @@ fi
 # skips the redundant re-check automatically.
 source check_deps.sh
 bash build/fetch_all_deps.sh
+
+# ── Device profile (runs before menu so vars are green from the start) ──
+# On Android / Termux every getprop call succeeds and HOM_DEV_* are
+# written into the env registry before the menu opens.
+# On a host PC getprop is absent so all fields come back empty — the
+# profile still runs but records nothing, which is correct behaviour.
+_HOM_SETUP_REPO_ROOT="$(pwd)"
+(
+    export SCRIPT_NAME="device_profile"
+    export REPO_ROOT="$_HOM_SETUP_REPO_ROOT"
+    export OUT="${OUT:-$HOME/hands-on-metal}"
+    export ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
+    mkdir -p "$OUT" 2>/dev/null || true
+    [ -f "$ENV_REGISTRY" ] || : > "$ENV_REGISTRY"
+    # shellcheck source=core/logging.sh
+    source "$REPO_ROOT/core/logging.sh"  2>/dev/null || true
+    # shellcheck source=core/ux.sh
+    source "$REPO_ROOT/core/ux.sh"       2>/dev/null || true
+    # shellcheck source=core/device_profile.sh
+    source "$REPO_ROOT/core/device_profile.sh" 2>/dev/null || true
+    run_device_profile 2>/dev/null || true
+) || true
+unset _HOM_SETUP_REPO_ROOT
 
 # ── Launch interactive menu ──────────────────────────────────
 # After setup, drop the user into the terminal menu by default.

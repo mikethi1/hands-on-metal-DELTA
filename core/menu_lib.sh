@@ -41,9 +41,14 @@ _repeat_char() {
 }
 
 # ── Load env registry ─────────────────────────────────────────
-_HOM_ENV_REGISTRY="${ENV_REGISTRY:-$HOME/hands-on-metal/env_registry.sh}"
+_hom_env_registry_path() {
+    echo "${ENV_REGISTRY:-${OUT:-$HOME/hands-on-metal}/env_registry.sh}"
+}
+
+_HOM_ENV_REGISTRY="$(_hom_env_registry_path)"
 load_env_registry() {
-    local _reg="${ENV_REGISTRY:-${OUT:-$HOME/hands-on-metal}/env_registry.sh}"
+    local _reg
+    _reg="$(_hom_env_registry_path)"
     if [ -f "$_reg" ]; then
         # shellcheck disable=SC1090
         source "$_reg" 2>/dev/null || true
@@ -66,7 +71,7 @@ get_script_phase() {
             echo "4" ;;
         magisk-module/customize.sh|magisk-module/service.sh|\
         magisk-module/collect.sh|recovery-zip/collect_recovery.sh|\
-        magisk-module/setup_termux.sh)
+        recovery-zip/collect_factory.sh|magisk-module/setup_termux.sh)
             echo "5" ;;
         pipeline/parse_logs.py|pipeline/parse_manifests.py|\
         pipeline/parse_pinctrl.py|pipeline/parse_symbols.py|\
@@ -162,7 +167,7 @@ check_prereq() {
         device_profile)
             [ -n "${HOM_DEV_MODEL:-}" ] ;;
         env_registry)
-            [ -f "$HOME/hands-on-metal/env_registry.sh" ] 2>/dev/null ;;
+            [ -f "$(_hom_env_registry_path)" ] 2>/dev/null ;;
         android_device)
             [ -n "$(getprop ro.build.display.id 2>/dev/null || true)" ] \
                 || [ -d "/data/data/com.termux" ] 2>/dev/null ;;
@@ -208,7 +213,7 @@ prereq_label() {
         boot_image)       echo "boot image (root DD / backup / GKI / factory / manual)" ;;
         magisk_binary)    echo "Magisk binary" ;;
         device_profile)   echo "device profile (core/device_profile.sh)" ;;
-        env_registry)     echo "environment registry ($HOME/hands-on-metal/env_registry.sh)" ;;
+        env_registry)     echo "environment registry ($(_hom_env_registry_path))" ;;
         android_device)   echo "Android device environment" ;;
         partition_index)  echo "partition index (build/partition_index.json)" ;;
         schema)           echo "database schema (schema/hardware_map.sql)" ;;
@@ -268,6 +273,7 @@ get_prereqs_for_script() {
         magisk-module/service.sh)             echo "root android_device module_core_stack" ;;
         magisk-module/setup_termux.sh)        echo "android_device network" ;;
         recovery-zip/collect_recovery.sh)     echo "root android_device" ;;
+        recovery-zip/collect_factory.sh)      echo "cmd:unzip" ;;
         pipeline/build_table.py)              echo "cmd:python3 schema" ;;
         pipeline/failure_analysis.py)         echo "cmd:python3" ;;
         pipeline/github_notify.py)            echo "cmd:python3" ;;
@@ -312,6 +318,7 @@ script_description() {
         magisk-module/service.sh)          echo "Boot service: env detect, Termux setup, collection" ;;
         magisk-module/setup_termux.sh)     echo "Install and bootstrap Termux with required packages" ;;
         recovery-zip/collect_recovery.sh)  echo "Recovery-mode collection with read-only mounts" ;;
+        recovery-zip/collect_factory.sh)   echo "Factory image collection without root — parse factory ZIP, extract boot/dtbo/vbmeta images" ;;
         pipeline/build_table.py)           echo "Build hardware-map SQLite database from collected data" ;;
         pipeline/failure_analysis.py)      echo "Analyse install logs for failure patterns" ;;
         pipeline/github_notify.py)         echo "Post analysis results as a GitHub issue comment (or dry-run preview)" ;;
@@ -352,10 +359,25 @@ is_already_done() {
         core/flash.sh)
             [ "${HOM_FLASH_STATUS:-}" = "OK" ] 2>/dev/null ;;
         magisk-module/env_detect.sh)
-            [ -f "$HOME/hands-on-metal/env_registry.sh" ] 2>/dev/null ;;
+            [ -f "$(_hom_env_registry_path)" ] 2>/dev/null ;;
+        magisk-module/collect.sh)
+            [ -n "${HOM_LIVE_DUMP_DIR:-}" ] \
+                && [ -f "${HOM_LIVE_DUMP_DIR:-/nonexistent}/manifest.txt" ] 2>/dev/null ;;
+        recovery-zip/collect_recovery.sh)
+            [ -n "${HOM_RECOVERY_DUMP_DIR:-}" ] \
+                && [ -f "${HOM_RECOVERY_DUMP_DIR:-/nonexistent}/recovery_manifest.txt" ] 2>/dev/null ;;
+        recovery-zip/collect_factory.sh)
+            [ -n "${HOM_FACTORY_DUMP_DIR:-}" ] \
+                && [ -d "${HOM_FACTORY_DUMP_DIR:-/nonexistent}/boot_images" ] 2>/dev/null ;;
+        pipeline/parse_logs.py)
+            [ -f "${HOM_PARSED_LOG_PATH:-${OUT:-$HOME/hands-on-metal}/parsed.json}" ] 2>/dev/null ;;
         pipeline/unpack_images.py)
             [ -n "${HOM_RAMDISK_DIR:-}" ] \
                 && [ -d "${HOM_RAMDISK_DIR:-/nonexistent}" ] 2>/dev/null ;;
+        pipeline/build_table.py)
+            [ -f "${HOM_DB_PATH:-${OUT:-$HOME/hands-on-metal}/hardware_map.sqlite}" ] 2>/dev/null ;;
+        pipeline/report.py)
+            [ -f "${OUT:-$HOME/hands-on-metal}/report.html" ] 2>/dev/null ;;
         *)
             return 1 ;;
     esac
@@ -374,7 +396,8 @@ refresh_status() {
     load_env_registry
     ITEM_STATUS=()
     MISSING_INFO=()
-    local _reg="${ENV_REGISTRY:-${OUT:-$HOME/hands-on-metal}/env_registry.sh}"
+    local _reg
+    _reg="$(_hom_env_registry_path)"
     if [ -f "$_reg" ]; then
         # shellcheck source=/dev/null
         . "$_reg" 2>/dev/null || true
@@ -556,8 +579,8 @@ print_device_header() {
         local dev_str="Device │ ${HOM_DEV_MODEL}"
         [ -n "${HOM_DEV_CODENAME:-}" ] \
             && dev_str="${dev_str} (${HOM_DEV_CODENAME})"
-        [ -n "${HOM_DEV_API_LEVEL:-}" ] \
-            && dev_str="${dev_str}  ·  API ${HOM_DEV_API_LEVEL}"
+        [ -n "${HOM_DEV_SDK_INT:-}" ] \
+            && dev_str="${dev_str}  ·  API ${HOM_DEV_SDK_INT}"
         if [ "${HOM_DEV_IS_AB:-}" = "true" ]; then
             dev_str="${dev_str}  ·  A/B"
         elif [ "${HOM_DEV_IS_AB:-}" = "false" ]; then
@@ -587,7 +610,11 @@ print_progress_bar() {
     [ "$total" -gt 0 ] && filled=$(( done_n * bar_w / total ))
     local bar="" j=0
     while [ "$j" -lt "$bar_w" ]; do
-        [ "$j" -lt "$filled" ] && bar="${bar}█" || bar="${bar}░"
+        if [ "$j" -lt "$filled" ]; then
+            bar="${bar}█"
+        else
+            bar="${bar}░"
+        fi
         j=$(( j + 1 ))
     done
     printf "  Progress  %s%s%s" "$CLR_DARK_GREEN" "$bar" "$CLR_RESET"
@@ -800,6 +827,7 @@ startup_scan() {
     printf "  %s\n" "$(_repeat_char '─' 68)"
 
     local _known_hom_vars=(
+        # ── device_profile.sh ──────────────────────────────────────────
         HOM_DEV_MODEL           HOM_DEV_BRAND            HOM_DEV_DEVICE
         HOM_DEV_CODENAME        HOM_DEV_FINGERPRINT      HOM_DEV_FIRST_API_LEVEL
         HOM_DEV_SDK_INT         HOM_DEV_ANDROID_VER      HOM_DEV_SPL
@@ -807,19 +835,41 @@ startup_scan() {
         HOM_DEV_CURRENT_SLOT    HOM_DEV_SAR              HOM_DEV_DYNAMIC_PARTITIONS
         HOM_DEV_TREBLE_ENABLED  HOM_DEV_TREBLE_VINTF_VER HOM_DEV_AVB_VERSION
         HOM_DEV_AVB_STATE       HOM_DEV_AVB_ALGO         HOM_DEV_BOOT_PART
-        HOM_DEV_BOOT_DEV        HOM_DEV_INIT_BOOT_DEV    HOM_DEV_VENDOR_BOOT_DEV
-        HOM_DEV_SOC_MFR         HOM_DEV_SOC_MODEL        HOM_DEV_PLATFORM
-        HOM_DEV_HARDWARE        HOM_DEV_BOOTLOADER       HOM_DEV_BASEBAND
-        HOM_DEV_SERIAL
-        HOM_BOOT_IMG_PATH       HOM_BOOT_IMG_SHA256     HOM_BOOT_PART_SRC
+        HOM_DEV_BOOT_PART_SOURCE HOM_DEV_BOOT_DEV        HOM_DEV_INIT_BOOT_DEV
+        HOM_DEV_VENDOR_BOOT_DEV HOM_DEV_SOC_MFR          HOM_DEV_SOC_MODEL
+        HOM_DEV_PLATFORM        HOM_DEV_HARDWARE         HOM_DEV_BOOTLOADER
+        HOM_DEV_BASEBAND        HOM_DEV_TENSOR_ARB_AFFECTED
+        HOM_DEV_SERIAL          HOM_DEV_KERNEL_VERSION
+        HOM_DEV_FACTORY_ZIP     HOM_DEV_FACTORY_ZIP_MATCH HOM_DEV_FACTORY_BOARD
+        HOM_DEV_FACTORY_REQUIRED_BOOTLOADER HOM_DEV_FACTORY_REQUIRED_BASEBAND
+        # ── boot_image.sh / collect_factory.sh ────────────────────────
+        HOM_BOOT_IMG_PATH       HOM_BOOT_IMG_SHA256      HOM_BOOT_PART_SRC
         HOM_BOOT_IMG_METHOD
+        # ── magisk_patch.sh ───────────────────────────────────────────
         HOM_PATCHED_IMG_PATH    HOM_PATCHED_IMG_SHA256
         HOM_MAGISK_BIN          HOM_MAGISK_VERSION
-        HOM_FLASH_STATUS        HOM_FLASH_VERIFIED
-        HOM_ARB_ROLLBACK_RISK   HOM_ARB_REQUIRE_MAY2026_FLAGS
+        # ── flash.sh ─────────────────────────────────────────────────
+        HOM_FLASH_STATUS        HOM_FLASH_PRE_SHA256     HOM_FLASH_POST_SHA256
+        # ── anti_rollback.sh ─────────────────────────────────────────
+        HOM_ARB_ROLLBACK_RISK   HOM_ARB_IMG_SPL          HOM_ARB_REQUIRE_MAY2026_FLAGS
+        HOM_ARB_MAY2026_ACTIVE  HOM_ARB_DEV_ROLLBACK_IDX HOM_ARB_MAGISK_ADEQUATE
+        # ── apply_defaults.sh / candidate_entry.sh ───────────────────
         HOM_DEFAULT_PATCH_TARGET HOM_CANDIDATE_FAMILY_MATCHED
-        HOM_ENV_SHELL           HOM_ENV_BUSYBOX         HOM_ENV_PYTHON
-        HOM_ENV_TERMUX          HOM_ENV_ROOT
+        # ── env_detect.sh ─────────────────────────────────────────────
+        # (HOM_ENV_TYPE: termux | android_terminal | adb_shell | android_native | linux_host)
+        HOM_ENV_TYPE            HOM_EXEC_NODE            HOM_EXEC_UID
+        HOM_MAGISK_BIN
+        # ── collect.sh ───────────────────────────────────────────────
+        HOM_LIVE_DUMP_DIR       HOM_MANIFEST             HOM_COLLECT_LOG
+        HOM_COLLECT_ROOT        HOM_COLLECT_DATA_SOURCE  HOM_HW_ENV
+        HOM_CRYPTO_CLASS        HOM_CRYPTO_STATE         HOM_CRYPTO_TYPE
+        # ── collect_recovery.sh ──────────────────────────────────────
+        HOM_RECOVERY_DUMP_DIR   HOM_RECOVERY_MANIFEST
+        # ── collect_factory.sh ───────────────────────────────────────
+        HOM_FACTORY_DUMP_DIR    HOM_FACTORY_MANIFEST
+        HOM_FACTORY_ZIP_PATH    HOM_FACTORY_BUILD_ID     HOM_FACTORY_CODENAME
+        HOM_RECOVERY_MODE
+        # ── upload / fileserver ───────────────────────────────────────
         HOM_FILESERVER_URL      HOM_FILESERVER_TOKEN
         HOM_RAMDISK_DIR         HOM_UNPACK_DUMP_DIR
     )
@@ -828,7 +878,11 @@ startup_scan() {
         local _display_val
         case "$_var" in
             *TOKEN*|*SECRET*|*KEY*|*PASSWORD*|*PASS*)
-                [ -n "$_val" ] && _display_val="####" || _display_val="(not set)"
+                if [ -n "$_val" ]; then
+                    _display_val="####"
+                else
+                    _display_val="(not set)"
+                fi
                 ;;
             *)
                 _display_val="${_val:-(not set)}"
@@ -878,13 +932,11 @@ startup_scan() {
                 "$CLR_YELLOW" "$CLR_RESET" "$_req"
         fi
     done
-    _req_val="${HOM_DEV_SERIAL:-}"
-    if [ -n "$_req_val" ] && [ "$_req_val" != "MISSING" ]; then
-        printf "  %s✓%s  %-24s = %s\n" \
-            "$CLR_LIGHT_GREEN" "$CLR_RESET" "HOM_DEV_SERIAL" "$_req_val"
-    else
-        printf "  %s⚠%s  %-24s = (not set)  → optional/best-effort\n" \
-            "$CLR_YELLOW" "$CLR_RESET" "HOM_DEV_SERIAL"
+    # HOM_DEV_TENSOR_ARB_AFFECTED is written by device_profile — show it when set
+    _req_val="${HOM_DEV_TENSOR_ARB_AFFECTED:-}"
+    if [ "$_req_val" = "true" ]; then
+        printf "  %s⚠%s  %-24s = %s  → Tensor Pixel — bootloader/radio ARB risk\n" \
+            "$CLR_YELLOW" "$CLR_RESET" "HOM_DEV_TENSOR_ARB_AFFECTED" "$_req_val"
     fi
     if [ "$_missing_required" -gt 0 ]; then
         printf "  %s→ %d required variable(s) missing; parsing/reporting may be incomplete.%s\n" \
@@ -907,7 +959,11 @@ startup_scan() {
         local _display_val
         case "$_var" in
             *TOKEN*|*SECRET*|*KEY*|*PASSWORD*)
-                [ -n "$_val" ] && _display_val="####" || _display_val="(not set)"
+                if [ -n "$_val" ]; then
+                    _display_val="####"
+                else
+                    _display_val="(not set)"
+                fi
                 ;;
             *)
                 _display_val="${_val:-(not set)}"
@@ -945,7 +1001,7 @@ script_completion_success() {
             ;;
         core/anti_rollback.sh)
             echo "Checked the Security Patch Level (SPL) and AVB rollback index."
-            echo "  • Anti-rollback risk assessment stored in HOM_ARB_RISK."
+            echo "  • Anti-rollback risk assessment stored in HOM_ARB_ROLLBACK_RISK."
             ;;
         core/apply_defaults.sh)
             echo "Applied device-family defaults from the partition index to the current profile."
@@ -966,14 +1022,15 @@ script_completion_success() {
             ;;
         core/flash.sh)
             echo "Flashed the patched boot image to the device and verified integrity."
-            echo "  • Flash verification flag set (HOM_FLASH_VERIFIED=1)."
+            echo "  • Flash status stored in HOM_FLASH_STATUS=OK."
+            echo "  • Pre/post SHA-256 recorded in HOM_FLASH_PRE_SHA256 / HOM_FLASH_POST_SHA256."
             ;;
         core/logging.sh)
             echo "Logging framework loaded successfully (sourced by other scripts)."
             ;;
         core/magisk_patch.sh)
             echo "Patched the boot image with Magisk for root access."
-            echo "  • Patched image path stored in HOM_PATCHED_IMG."
+            echo "  • Patched image path stored in HOM_PATCHED_IMG_PATH."
             ;;
         core/privacy.sh)
             echo "Privacy-by-default PII redaction helpers loaded."
@@ -997,7 +1054,7 @@ script_completion_success() {
             ;;
         magisk-module/env_detect.sh)
             echo "Detected the device environment (shell, tools, Python, Termux)."
-            echo "  • Results saved to $HOME/hands-on-metal/env_registry.sh."
+            echo "  • Results saved to $(_hom_env_registry_path)."
             ;;
         magisk-module/service.sh)
             echo "Boot service executed: environment detection, Termux setup, and data collection."
@@ -1007,6 +1064,13 @@ script_completion_success() {
             ;;
         recovery-zip/collect_recovery.sh)
             echo "Collected hardware data in recovery mode using read-only mounts."
+            ;;
+        recovery-zip/collect_factory.sh)
+            echo "Parsed factory ZIP and extracted boot-chain images without root."
+            echo "  • Partition images (boot/init_boot/vendor_boot/dtbo/vbmeta) → \${OUT}/boot_work/partitions/"
+            echo "  • Copies also in: \${HOM_FACTORY_DUMP_DIR}/boot_images/"
+            echo "  • HOM_BOOT_IMG_PATH now points to the correct image for Magisk patching."
+            echo "  • Key build properties (board, required bootloader/baseband) written to env registry."
             ;;
         pipeline/build_table.py)
             echo "Built the hardware-map SQLite database from collected data."
@@ -1107,6 +1171,11 @@ script_completion_failure() {
             echo "Termux setup failed. Ensure network access and an Android device." ;;
         recovery-zip/collect_recovery.sh)
             echo "Recovery-mode collection failed. Ensure root access and an Android device." ;;
+        recovery-zip/collect_factory.sh)
+            echo "Factory ZIP collection failed."
+            echo "  • Ensure the factory ZIP is accessible (set HOM_FACTORY_ZIP=/path/to/factory.zip)."
+            echo "  • Verify unzip is installed: command -v unzip"
+            echo "  • The ZIP must be a valid Google factory image containing an inner image-*.zip." ;;
         pipeline/build_table.py)
             echo "Database build failed. Verify Python 3 and the schema file are present." ;;
         pipeline/failure_analysis.py)
@@ -1203,6 +1272,10 @@ script_next_steps() {
             echo "  → Termux is set up. Run the full collection (magisk-module/collect.sh)." ;;
         recovery-zip/collect_recovery.sh)
             echo "  → Recovery data collected. Run the pipeline scripts to parse and analyze." ;;
+        recovery-zip/collect_factory.sh)
+            echo "  → Factory boot images extracted to \${OUT}/boot_work/partitions/."
+            echo "  → HOM_BOOT_IMG_PATH is now set — proceed to patch with Magisk (core/magisk_patch.sh)."
+            echo "  → Or check rollback risk first (core/anti_rollback.sh)." ;;
         pipeline/build_table.py)
             echo "  → Database built. Generate a report with 'pipeline/report.py'." ;;
         pipeline/failure_analysis.py)
