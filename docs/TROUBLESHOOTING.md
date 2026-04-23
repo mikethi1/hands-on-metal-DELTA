@@ -22,15 +22,13 @@ All logs are written to `/sdcard/hands-on-metal/logs/`.
 Use the host-side pipeline to parse logs automatically:
 
 ```bash
-bash terminal_menu.sh
-# Select option 25 (pipeline/parse_logs.py), then enter arguments:
-#   --log /sdcard/hands-on-metal/logs/master_<RUN_ID>.log --out ~/tmp/parsed.json
-# After completion, press 's' for the suggested next step: option 22 (pipeline/build_table.py)
+python pipeline/parse_logs.py \
+    --log /sdcard/hands-on-metal/logs/master_<RUN_ID>.log \
+    --out /tmp/parsed.json
 
-bash terminal_menu.sh
-# Select option 23 (pipeline/failure_analysis.py), then enter arguments:
-#   --parsed ~/tmp/parsed.json --out ~/tmp/analysis.json
-# After completion, press 's' for the suggested next step: option 24 (pipeline/github_notify.py)
+python pipeline/failure_analysis.py \
+    --parsed /tmp/parsed.json \
+    --out /tmp/analysis.json
 ```
 
 ---
@@ -47,54 +45,23 @@ bash terminal_menu.sh
    NO  → Unlock bootloader first (see INSTALL_HUB.md)
    YES → Continue
 
-2. Do you have root access?
-   YES → The script will automatically DD-copy the live partition.
-         If auto-discovery still fails, list partitions manually:
-           ls /dev/block/bootdevice/by-name/
-           ls /dev/block/by-name/
-   NO  → Continue to step 3.
+2. Can you list partitions?
+   Run in TWRP terminal or adb shell:
+     ls /dev/block/bootdevice/by-name/
+     ls /dev/block/by-name/
 
-3. Is this a Google Pixel device?
-   YES → The installer will offer to download the factory image
-         from Google and extract boot.img / init_boot.img.
-         Requires: network access, curl, unzip.
-         You need the build ID (shown in Settings → About phone).
-   NO  → Continue to step 4.
+   No output / command not found?
+   → Your device uses a platform-specific by-name path.
+     Try: ls /dev/block/platform/
+     Look for a directory containing 'by-name'
 
-4. Can you supply the image manually?
-   a) Download the factory image on your PC, extract boot.img
-      (or init_boot.img for API 33+), and push to device:
-        adb push boot.img /sdcard/Download/
-      The installer will detect it on the next run.
-   b) Enter the block device path manually when prompted.
-      Common locations:
-        /dev/block/bootdevice/by-name/boot
-        /dev/block/by-name/boot
-        /dev/block/platform/<soc>/by-name/boot
+3. Is "boot" or "init_boot" in the partition list?
+   NO  → Unusual device layout. Check:
+           ls /dev/block/
+         Some devices use mmcblk0p* naming without symlinks.
+         File a new-device report (see GOVERNANCE.md).
+   YES → Enter the full path manually when prompted.
 ```
-
-**boot vs init_boot (API 33+ / Android 13+):**
-
-| Android version | Partition to patch | Why |
-|----------------|-------------------|-----|
-| API ≤ 32 (Android 12L and below) | `boot` | `init_boot` does not exist |
-| API 33+ (Android 13+) with `init_boot` | `init_boot` | Kernel stays in `boot`; Magisk patches init ramdisk only |
-| API 33+ without `init_boot` partition | `boot` | Some upgraded devices lack `init_boot`; use `boot` as fallback |
-
-The installer reads `HOM_DEV_BOOT_PART` (set by `device_profile.sh`) and targets the
-correct partition automatically.  If the factory image is downloaded and the requested
-partition (e.g. init_boot.img) is not present, the script falls back to boot.img.
-
-**Acquisition methods (checked in order):**
-
-| Method | Env value | When used |
-|--------|-----------|-----------|
-| Live DD from device | `root_dd` | Root access and block device found |
-| Pre-placed file | `pre_placed` | Image already in `/sdcard/Download/` or boot_work |
-| Google factory download | `factory_download` | Google Pixel device with network + curl + unzip |
-| Manual user prompt | `user_prompt` | All automatic methods failed |
-
-Check `HOM_BOOT_IMG_METHOD` in env_registry.sh to see which method was used.
 
 **Android version / device notes:**
 
@@ -104,11 +71,9 @@ Check `HOM_BOOT_IMG_METHOD` in env_registry.sh to see which method was used.
 | Samsung non-AB | Platform path `/dev/block/platform/...` | Enter path manually |
 | MediaTek with `/dev/block/by-name/` | by-name not under bootdevice | Use `/dev/block/by-name/boot` |
 | A/B device, wrong slot | Partition found but has slot suffix | Try `boot_a` or `boot_b` explicitly |
-| No root, no network | Cannot DD or download | Extract on PC and `adb push` to `/sdcard/Download/` |
 
 **Logs to check:**
 - `[VAR  ]` lines for `HOM_DEV_BOOT_PART`, `HOM_DEV_BOOT_DEV`, `HOM_DEV_INIT_BOOT_DEV`
-- `[VAR  ]` line for `HOM_BOOT_IMG_METHOD` — shows which acquisition path succeeded
 - `[ERROR]` lines from `boot_image` script
 
 ---
@@ -134,11 +99,11 @@ Check `HOM_BOOT_IMG_METHOD` in env_registry.sh to see which method was used.
    → Provided manually?
       Get the boot.img from the full firmware matching your current SPL.
 
-3. Device SPL >= 2026-05-07 (May-2026 policy)?
+3. Device SPL >= 2026-05-01 (May-2026 policy)?
    YES → Magisk MUST use PATCHVBMETAFLAG=true.
          anti_rollback.sh sets HOM_ARB_REQUIRE_MAY2026_FLAGS=true automatically.
          magisk_patch.sh reads this and adjusts flags.
-         If you're building manually, ensure your Magisk is >= 30.7.
+         If you're building manually, ensure your Magisk is >= 27.0.
 ```
 
 **How to get the correct boot image:**
@@ -264,68 +229,6 @@ dd if=/sdcard/hands-on-metal/boot_work/boot_original.img \
 
 ---
 
-## No custom recovery — ADB and fastboot options {#no-recovery}
-
-**Symptoms:**
-- Device has no TWRP / OrangeFox installed
-- No GSI slot available
-- Stock recovery rejects unsigned ZIPs
-
-**Decision tree:**
-```
-1. Is the bootloader unlocked?
-   NO  → Unlock first (see INSTALL_HUB.md).
-   YES → Continue.
-
-2. Do you have a PC with ADB + fastboot?
-   NO  → You need a PC for this path. There is no way to install
-         without either a recovery or a computer.
-   YES → Continue.
-
-3. Does your device support `fastboot boot`?
-   YES → Temporarily boot TWRP: fastboot boot twrp.img
-         Then sideload or flash from TWRP (Mode C1).
-   NO  → Continue to step 4.
-
-4. Can you patch the boot image on a PC?
-   YES → Patch on PC with Magisk, then: fastboot flash boot patched.img
-         (Mode C2 — direct fastboot flash).
-   NO  → Install Magisk app on another device/emulator, patch there,
-         then transfer patched image and use fastboot.
-```
-
-**Full guide:** [ADB_FASTBOOT_INSTALL.md](ADB_FASTBOOT_INSTALL.md)
-
-**Can I use `adb sideload` with stock recovery?**
-
-No. Stock Android recovery only accepts OEM-signed OTA packages. The
-hands-on-metal recovery ZIP is not OEM-signed. You need TWRP or OrangeFox
-for sideloading unsigned ZIPs. Use `fastboot boot twrp.img` to temporarily
-boot TWRP without permanently installing it.
-
-**Quick ADB commands for getting to recovery or fastboot:**
-
-```bash
-# From running Android — reboot to bootloader/fastboot
-adb reboot bootloader
-
-# From running Android — reboot to recovery
-adb reboot recovery
-
-# From fastboot — temporarily boot a TWRP image
-fastboot boot twrp-<device>.img
-
-# From fastboot — permanently install TWRP
-fastboot flash recovery twrp-<device>.img
-fastboot reboot recovery
-
-# From fastboot — directly flash a pre-patched boot image
-fastboot flash boot patched_boot.img
-fastboot reboot
-```
-
----
-
 ## Magisk patch fails or produces no output {#magisk-patch-fails}
 
 **Symptoms:**
@@ -339,7 +242,7 @@ fastboot reboot
    chcon u:object_r:adb_data_file:s0 /data/local/tmp
    ```
 2. Boot image is encrypted or corrupted — re-acquire from the partition.
-3. Magisk version too old — upgrade to 30.7+ for init_boot support.
+3. Magisk version too old — upgrade to 27.0+ for init_boot support.
 4. Init_boot too small — some devices have <8MB init_boot; this is unusual.
 
 **Per-script log:**
@@ -380,22 +283,20 @@ The host-side Python pipeline can parse logs and generate ranked failure analysi
 # On your laptop/desktop (Python 3.9+)
 
 # 1. Pull logs from device
-adb pull /sdcard/hands-on-metal/logs/ ~/tmp/hom_logs/
+adb pull /sdcard/hands-on-metal/logs/ /tmp/hom_logs/
 
 # 2. Parse the master log
-bash terminal_menu.sh
-# Select option 25 (pipeline/parse_logs.py), then enter arguments:
-#   --log "~/tmp/hom_logs/master_*.log" --out ~/tmp/parsed.json
-# After completion, press 's' for the suggested next step: option 22 (pipeline/build_table.py)
+python pipeline/parse_logs.py \
+    --log "/tmp/hom_logs/master_*.log" \
+    --out /tmp/parsed.json
 
 # 3. Run failure analysis
-bash terminal_menu.sh
-# Select option 23 (pipeline/failure_analysis.py), then enter arguments:
-#   --parsed ~/tmp/parsed.json --out ~/tmp/analysis.json
-# After completion, press 's' for the suggested next step: option 24 (pipeline/github_notify.py)
+python pipeline/failure_analysis.py \
+    --parsed /tmp/parsed.json \
+    --out /tmp/analysis.json
 
 # 4. View results
-cat ~/tmp/analysis.json
+cat /tmp/analysis.json
 ```
 
 The analysis output includes:
@@ -415,15 +316,16 @@ To send logs for maintainer review:
 
 ```bash
 # Redacted (default) — safe for public sharing
-bash terminal_menu.sh
-# Select option 31 (pipeline/upload.py), then enter arguments:
-#   --log ~/tmp/hom_logs/ --analysis ~/tmp/analysis.json
-# After completion, press 's' for the suggested next step
+python pipeline/upload.py \
+    --log /tmp/hom_logs/ \
+    --analysis /tmp/analysis.json
 
 # Opt-in: include unredacted data (private, maintainer-only)
-bash terminal_menu.sh
-# Select option 31 (pipeline/upload.py), then enter arguments:
-#   --log ~/tmp/hom_logs/ --analysis ~/tmp/analysis.json --private --token "$GITHUB_TOKEN"
+python pipeline/upload.py \
+    --log /tmp/hom_logs/ \
+    --analysis /tmp/analysis.json \
+    --private \
+    --token "$GITHUB_TOKEN"
 ```
 
 See [FORK_CONTRACT.md](FORK_CONTRACT.md) §1.9 for privacy variable definitions.
@@ -541,7 +443,7 @@ accurate and actionable in all environments.
 
 - Global ROM and CN ROM have different partition layouts on some models.
 - MIUI may prevent flashing from the Magisk app; use recovery path.
-- HyperOS (MIUI 15+) strengthens AVB — ensure Magisk 30.7+.
+- HyperOS (MIUI 15+) strengthens AVB — ensure Magisk 27.0+.
 
 ### OnePlus
 

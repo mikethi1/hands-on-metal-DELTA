@@ -321,8 +321,8 @@
       "patch_target": "init_boot",
       "keepverity_default": true,
       "keepforceencrypt_default": true,
-      "patchvbmetaflag_required_from_spl": "2026-05-07",
-      "notes": "May-2026 AVB anti-rollback policy active for SPL >= 2026-05-07; PATCHVBMETAFLAG required",
+      "patchvbmetaflag_required_from_spl": "2026-05-01",
+      "notes": "May-2026 AVB anti-rollback policy active for SPL >= 2026-05-01; PATCHVBMETAFLAG required",
       "support_tier": "supported"
     },
     "api_36_plus": {
@@ -340,7 +340,7 @@
       "patch_target": "init_boot",
       "keepverity_default": true,
       "keepforceencrypt_default": true,
-      "patchvbmetaflag_required_from_spl": "2026-05-07",
+      "patchvbmetaflag_required_from_spl": "2026-05-01",
       "notes": "Future Android version - candidate entry auto-created; best-effort install",
       "support_tier": "unknown"
     }
@@ -788,8 +788,8 @@
     }
   },
   "anti_rollback": {
-    "may_2026_policy_spl": "2026-05-07",
-    "description": "Devices with security patch level >= 2026-05-07 require Magisk to be built with May-2026 anti-rollback compatibility. The PATCHVBMETAFLAG must be set to true when patching.",
+    "may_2026_policy_spl": "2026-05-01",
+    "description": "Devices with security patch level >= 2026-05-01 require Magisk to be built with May-2026 anti-rollback compatibility. The PATCHVBMETAFLAG must be set to true when patching.",
     "magisk_flags_required": {
       "PATCHVBMETAFLAG": true,
       "KEEPVERITY": "device-dependent (true for A/B)",
@@ -799,37 +799,11 @@
   "magisk_versions": {
     "minimum_supported": 25000,
     "minimum_supported_str": "25.0",
-    "recommended": 30700,
-    "recommended_str": "30.7",
+    "recommended": 27001,
+    "recommended_str": "27.0",
     "init_boot_support_min": 25000,
-    "may_2026_policy_min": 30700,
-    "may_2026_policy_min_str": "30.7",
-    "may_2026_policy_date": "2026-05-07",
-    "notes": "After May 7 2026, Magisk 30.7+ is required for anti-rollback policy compliance and Android 16 QPR2 support."
-  },
-  "factory_image_sources": {
-    "_description": "URL templates for OEM factory images.  The on-device script resolves {codename}, {build_id} and {spl} at runtime using values from device_profile.sh.",
-    "google": {
-      "listing_url": "https://developers.google.com/android/images",
-      "download_template": "https://dl.google.com/dl/android/aosp/{codename}-{build_id}-factory-*.zip",
-      "ota_listing_url": "https://developers.google.com/android/ota",
-      "supported_codenames": [
-        "sailfish", "marlin",
-        "walleye", "taimen",
-        "blueline", "crosshatch",
-        "sargo", "bonito",
-        "flame", "coral", "sunfish",
-        "redfin", "bramble", "barbet",
-        "oriole", "raven", "bluejay",
-        "panther", "cheetah", "lynx",
-        "shiba", "husky", "akita",
-        "tokay", "caiman", "komodo", "comet"
-      ],
-      "contains_boot_img": true,
-      "contains_init_boot_img": true,
-      "archive_structure": "{codename}-{build_id}/image-{codename}-{build_id}.zip",
-      "notes": "Google factory images are ZIP-in-ZIP.  The outer ZIP contains a flashable script + an inner image-*.zip that holds boot.img and (API 33+) init_boot.img."
-    }
+    "may_2026_policy_min": 27000,
+    "notes": "Magisk 27+ supports init_boot patching and the May-2026 anti-rollback policy."
   },
   "pre_run_condition_checks": {
     "description": "Conditions evaluated before the install begins to determine feasibility",

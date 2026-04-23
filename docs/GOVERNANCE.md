@@ -95,10 +95,10 @@ can automatically send a failure report. This requires:
 
 ```bash
 export GITHUB_TOKEN=ghp_...
-bash terminal_menu.sh
-# Select option 24 (pipeline/github_notify.py), then enter arguments:
-#   --repo mikethi/hands-on-metal --analysis ~/tmp/analysis.json --run-id <RUN_ID>
-# After completion, press 's' for the suggested next step
+python pipeline/github_notify.py \
+    --repo mikethi/hands-on-metal \
+    --analysis /tmp/analysis.json \
+    --run-id <RUN_ID>
 ```
 
 The notification includes:

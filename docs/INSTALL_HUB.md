@@ -17,18 +17,11 @@ Do you have TWRP, OrangeFox, or any custom recovery installed?
 │           │
 │           └─ NO  ──► [Recovery path → RECOVERY_INSTALL.md](RECOVERY_INSTALL.md)
 │                       Flash the recovery ZIP via TWRP/OrangeFox.
-│                       (Also supports ADB sideload — see Mode C3 below.)
 │
 └─ NO  ──► Is your bootloader unlocked?
             │
-            ├─ YES ──► Do you have a PC with ADB/fastboot?
-            │           │
-            │           ├─ YES ──► [ADB/Fastboot path → ADB_FASTBOOT_INSTALL.md](ADB_FASTBOOT_INSTALL.md)
-            │           │           C1: Temporarily boot TWRP via `fastboot boot`
-            │           │           C2: Patch on PC and `fastboot flash boot`
-            │           │
-            │           └─ NO  ──► Install a custom recovery first:
-            │                       See "Unlocking and flashing a recovery" below.
+            ├─ YES ──► Boot a custom recovery first:
+            │           See "Unlocking and flashing a recovery" below.
             │
             └─ NO  ──► Unlock your bootloader first:
                         See "Bootloader unlock" below.
@@ -75,42 +68,8 @@ Do you have TWRP, OrangeFox, or any custom recovery installed?
 |-----------|-------------|------|
 | **Low** | Magisk already installed; device backed up | Magisk path |
 | **Medium** | Custom recovery installed; no current root | Recovery path |
-| **Medium** | No recovery, but bootloader unlocked + PC with fastboot | ADB/Fastboot path |
 | **High** | Bootloader just unlocked; first-time root | Recovery path + extra care |
 | **Critical** | No recovery, encrypted data, no backup | Stop — backup first |
-
-### Integrity and anti-rollback notes
-
-Magisk modifies the boot image, which changes the AVB verified boot state from
-`green` to `yellow` or `orange`. The system partition (dm-verity) and data
-encryption are **preserved** by default. Anti-rollback protection is enforced
-automatically — the installer blocks any flash where the image SPL is older
-than the device SPL.
-
-For full details on live patching safety, integrity implications, and
-anti-rollback behavior, see:
-**[ADB_FASTBOOT_INSTALL.md § Integrity & anti-rollback](ADB_FASTBOOT_INSTALL.md#does-magisk-patch-the-boot-image-live-integrity--anti-rollback)**
-
-### Prerequisite and capability summary
-
-Each install path uses the same prerequisite IDs as the terminal menu
-(`terminal_menu.sh`). The installer scripts adapt automatically based on
-which capabilities are available:
-
-| Prereq ID | Mode A (Magisk) | Mode B (Recovery) | Mode C (Fastboot) |
-|-----------|:---:|:---:|:---:|
-| `root` | ✓ (Magisk provides) | ✓ (TWRP provides) | ✗ (not on device) |
-| `android_device` | ✓ | ✓ | ✗ (host-side) |
-| `magisk_binary` | ✓ (already installed) | Bundled in ZIP | Patched on PC |
-| `boot_image` | Auto-acquired (root DD) | Auto-acquired (root DD) | Pre-placed or manual |
-| `cmd:adb` | Not needed | Optional (sideload) | ✓ Required |
-| `cmd:fastboot` | Not needed | Not needed | ✓ Required |
-
-> User input is a **fallback only** — the installer tries 4 automatic
-> acquisition methods before prompting. In non-interactive contexts
-> (TWRP flash, sideload), safe defaults are used silently.
-> See each guide's "Where user input is required" section for the exact
-> fallback chain.
 
 ---
 
@@ -185,7 +144,6 @@ Key sections:
 |----------|---------|
 | [INSTALL.md](INSTALL.md) | Magisk-path detailed guide |
 | [RECOVERY_INSTALL.md](RECOVERY_INSTALL.md) | Recovery-path detailed guide |
-| [ADB_FASTBOOT_INSTALL.md](ADB_FASTBOOT_INSTALL.md) | ADB sideload + fastboot path (no recovery needed) |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Comprehensive troubleshooting |
 | [SUPPORT_POLICY.md](SUPPORT_POLICY.md) | Device and Android version support tiers |
 | [FORK_CONTRACT.md](FORK_CONTRACT.md) | Cross-fork variable dictionary |

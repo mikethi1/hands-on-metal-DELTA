@@ -1,12 +1,11 @@
 #!/system/bin/sh
 # core/logging.sh
-# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Shared logging framework for hands-on-metal scripts.
 # Source this file from every script that needs logging.
 #
 # Caller should set before sourcing:
-#   LOG_DIR     (default: ~/hands-on-metal/logs)
+#   LOG_DIR     (default: /sdcard/hands-on-metal/logs)
 #   SCRIPT_NAME (default: unknown)
 #   RUN_ID      (default: auto-generated timestamp)
 #
@@ -21,7 +20,7 @@
 #   manifest_step STEP STATUS NOTE
 # ============================================================
 
-LOG_DIR="${LOG_DIR:-$HOME/hands-on-metal/logs}"
+LOG_DIR="${LOG_DIR:-/sdcard/hands-on-metal/logs}"
 SCRIPT_NAME="${SCRIPT_NAME:-unknown}"
 
 # Generate a run ID once; child scripts inherit it via export.
@@ -122,9 +121,7 @@ log_exec() {
     log_info "EXEC[$step] running: $*"
 
     local tmp_out
-    local fallback_tmp="${TMPDIR:-${HOME:-.}/tmp}"
-    mkdir -p "$fallback_tmp" 2>/dev/null || true
-    tmp_out=$(mktemp 2>/dev/null || echo "$fallback_tmp/_hom_exec_$$")
+    tmp_out=$(mktemp 2>/dev/null || echo "/tmp/_hom_exec_$$")
 
     "$@" > "$tmp_out" 2>&1
     local rc=$?
@@ -137,11 +134,7 @@ log_exec() {
     rm -f "$tmp_out"
 
     local status
-    if [ "$rc" -eq 0 ]; then
-        status="OK"
-    else
-        status="FAIL"
-    fi
+    status=$([ "$rc" -eq 0 ] && echo OK || echo FAIL)
     manifest_step "$step" "$status" "rc=$rc"
     return "$rc"
 }

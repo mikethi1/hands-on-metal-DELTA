@@ -20,7 +20,7 @@ Steps:
 Usage:
   python pipeline/build_table.py \\
       --db hardware_map.sqlite \\
-      --dump /path/to/boot_work \\
+      --dump /path/to/live_dump \\
       --mode A              # A | B | C
 
 After this completes, run:
@@ -32,7 +32,6 @@ import json
 import os
 import re
 import sqlite3
-import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -166,46 +165,27 @@ def import_lsmod(cur: sqlite3.Cursor, run_id: int, dump: Path) -> int:
 # read the 'compatible' and 'reg' files as they contain ASCII / integers.
 
 DT_HW_HINTS: list[tuple[str, tuple[str, str]]] = [
-    # Qualcomm
-    ("mdss",            ("display",     "display")),
-    ("dsi@",            ("display",     "display")),
-    ("qcom,dp",         ("display",     "display")),
-    ("camera",          ("camera",      "imaging")),
-    ("qcom,cam",        ("camera",      "imaging")),
-    ("audio",           ("audio",       "audio")),
-    ("sound",           ("audio",       "audio")),
-    ("sensors",         ("sensors",     "sensor")),
-    ("qcom,gnss",       ("gps",         "sensor")),
-    ("bluetooth",       ("bluetooth",   "misc")),
-    ("wcnss",           ("bluetooth",   "misc")),
-    ("wifi",            ("wifi",        "misc")),
-    ("qcom,wcn",        ("wifi",        "misc")),
-    ("thermal",         ("thermal",     "thermal")),
-    ("qcom,pmic",       ("power",       "power")),
-    ("usb@",            ("usb",         "misc")),
-    ("nfc",             ("nfc",         "misc")),
-    ("fingerprint",     ("fingerprint", "input")),
-    ("gpio",            ("gpio",        "misc")),
-    ("i2c@",            ("misc",        "misc")),
-    ("spi@",            ("misc",        "misc")),
-    # Samsung / Exynos / Google Tensor (Zuma / GS101)
-    ("samsung,exynos-ufs",      ("storage",   "misc")),
-    ("samsung,exynos-uart",     ("uart",      "misc")),
-    ("samsung,gs101-pmu",       ("power",     "power")),
-    ("samsung,exynos-pmu",      ("power",     "power")),
-    ("samsung,exynos-mct",      ("timer",     "misc")),
-    ("samsung,exynos-sysmmu",   ("iommu",     "misc")),
-    ("samsung,exynos-pinctrl",  ("gpio",      "misc")),
-    ("samsung,exynos-abox",     ("audio",     "audio")),
-    ("samsung,exynos-dp",       ("display",   "display")),
-    ("samsung,exynos-dsi",      ("display",   "display")),
-    ("samsung,exynos-decon",    ("display",   "display")),
-    ("samsung,exynos-camera",   ("camera",    "imaging")),
-    ("google,gs101-tpu",        ("tpu",       "misc")),
-    ("arm,gic-v3",              ("gic",       "misc")),
-    ("arm,pl330",               ("dma",       "misc")),
-    ("snps,dwc3",               ("usb",       "misc")),
-    ("samsung,exynos-dwusb3",   ("usb",       "misc")),
+    ("mdss",       ("display",  "display")),
+    ("dsi@",       ("display",  "display")),
+    ("qcom,dp",    ("display",  "display")),
+    ("camera",     ("camera",   "imaging")),
+    ("qcom,cam",   ("camera",   "imaging")),
+    ("audio",      ("audio",    "audio")),
+    ("sound",      ("audio",    "audio")),
+    ("sensors",    ("sensors",  "sensor")),
+    ("qcom,gnss",  ("gps",      "sensor")),
+    ("bluetooth",  ("bluetooth","misc")),
+    ("wcnss",      ("bluetooth","misc")),
+    ("wifi",       ("wifi",     "misc")),
+    ("qcom,wcn",   ("wifi",     "misc")),
+    ("thermal",    ("thermal",  "thermal")),
+    ("qcom,pmic",  ("power",    "power")),
+    ("usb@",       ("usb",      "misc")),
+    ("nfc",        ("nfc",      "misc")),
+    ("fingerprint",("fingerprint","input")),
+    ("gpio",       ("gpio",     "misc")),
+    ("i2c@",       ("misc",     "misc")),
+    ("spi@",       ("misc",     "misc")),
 ]
 
 
@@ -214,25 +194,6 @@ def dt_to_hw(path_lower: str, compat: str) -> tuple[str, str] | None:
         if frag in path_lower or frag in compat.lower():
             return hw
     return None
-
-
-def _read_dt_cells(p: Path) -> str:
-    """Read a binary DT property file as space-separated big-endian uint32 hex values.
-
-    DT reg/interrupts/clocks properties are arrays of 32-bit big-endian
-    integers, not text.  Decoding them as UTF-8 produces garbage; this
-    helper returns the correct human-readable hex representation.
-    Returns "" when the file is absent or its length is not a multiple of 4.
-    """
-    try:
-        raw = p.read_bytes()
-        if not raw or len(raw) % 4 != 0:
-            return ""
-        n = len(raw) // 4
-        vals = struct.unpack_from(f">{n}I", raw)
-        return " ".join(f"0x{v:x}" for v in vals)
-    except OSError:
-        return ""
 
 
 def import_dt_nodes(cur: sqlite3.Cursor, run_id: int, dump: Path) -> int:
@@ -254,9 +215,9 @@ def import_dt_nodes(cur: sqlite3.Cursor, run_id: int, dump: Path) -> int:
             return
 
         compatible = _read_dt_file(node_dir / "compatible")
-        reg        = _read_dt_cells(node_dir / "reg")
-        interrupts = _read_dt_cells(node_dir / "interrupts")
-        clocks     = _read_dt_cells(node_dir / "clocks")
+        reg = _read_dt_file(node_dir / "reg")
+        interrupts = _read_dt_file(node_dir / "interrupts")
+        clocks = _read_dt_file(node_dir / "clocks")
 
         if compatible or reg:
             hw_info = dt_to_hw(node_path.lower(), compatible)
@@ -301,25 +262,6 @@ def import_dt_nodes(cur: sqlite3.Cursor, run_id: int, dump: Path) -> int:
 
 
 # ── Mode C JSONL shim log parser ─────────────────────────────────────────────
-
-def import_cmdline(cur: sqlite3.Cursor, run_id: int, dump: Path) -> None:
-    """Import /proc/cmdline into sysconfig_entry as 'proc.cmdline'."""
-    cmdline_path = dump / "proc" / "cmdline"
-    try:
-        text = cmdline_path.read_text(errors="replace").strip().rstrip("\x00")
-    except OSError:
-        return
-    if not text:
-        return
-    try:
-        cur.execute(
-            """INSERT OR IGNORE INTO sysconfig_entry
-               (run_id, source, key, value) VALUES (?,?,?,?)""",
-            (run_id, "proc:cmdline", "proc.cmdline", text),
-        )
-    except sqlite3.Error:
-        pass
-
 
 def import_shim_log(cur: sqlite3.Cursor, run_id: int,
                     log_path: Path) -> int:
@@ -544,11 +486,6 @@ def main() -> None:
                     help="Collection mode: A=live, B=recovery, C=shim")
     ap.add_argument("--shim-log", default=None,
                     help="Path to Mode C shim JSONL log (default: <dump>/hom_shim.jsonl)")
-    ap.add_argument("--pmos", action="store_true",
-                    help="After building the DB, run export_postmarketos.py to generate "
-                         "postmarketOS scaffold files in ./postmarketos_<codename>/")
-    ap.add_argument("--pmos-out", default=None,
-                    help="Output directory for --pmos export (default: ./postmarketos_<codename>/)")
     args = ap.parse_args()
 
     dump   = Path(args.dump)
@@ -604,9 +541,6 @@ def main() -> None:
     n = import_dt_nodes(cur, run_id, dump)
     print(f"    {n} DT nodes")
 
-    print("[7b] Importing /proc/cmdline...")
-    import_cmdline(cur, run_id, dump)
-
     # 4. Mode C shim log
     if args.mode == "C" or args.shim_log:
         shim_log = Path(args.shim_log) if args.shim_log else (dump / "hom_shim.jsonl")
@@ -629,14 +563,6 @@ def main() -> None:
     db.close()
     print(f"\nDone. Database: {db_path}")
     print("Run: python pipeline/report.py --db", db_path)
-
-    # Optional postmarketOS scaffold export
-    if args.pmos:
-        print("\n[11] Exporting postmarketOS scaffold files (--pmos)...")
-        pmos_args = ["--db", str(db_path)]
-        if args.pmos_out:
-            pmos_args += ["--out", args.pmos_out]
-        run_submodule(HERE / "export_postmarketos.py", pmos_args)
 
 
 if __name__ == "__main__":

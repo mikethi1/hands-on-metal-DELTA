@@ -1,6 +1,5 @@
 #!/system/bin/sh
 # magisk-module/setup_termux.sh
-# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Hands-on-metal — Conditional Termux Bootstrap
 # Called by service.sh after env_detect.sh.
@@ -15,19 +14,19 @@
 #   5. Updates the env registry with new Termux paths
 #
 # Required packages configured in: REQUIRED_PACKAGES below.
-# All writes go to $OUT/ (~/hands-on-metal/).
+# All writes go to /sdcard/hands-on-metal/.
 # Never modifies /system or any read-only partition.
 # ============================================================
 
 set -u
 
-OUT="${HOME:-/data/local/tmp}/hands-on-metal"
+OUT=/sdcard/hands-on-metal
 ENV_REGISTRY="$OUT/env_registry.sh"
 LOG="$OUT/setup_termux.log"
 
 # ── packages to install inside Termux ────────────────────────
 # Adjust this list as the project's needs evolve.
-REQUIRED_PACKAGES="python git curl wget openssh sqlite zip"
+REQUIRED_PACKAGES="python git curl wget openssh sqlite"
 
 # ── helpers ──────────────────────────────────────────────────
 
@@ -140,6 +139,7 @@ wait_for_network || exit 1
 
 # ── Check if Termux APK is already installed by the package manager ──
 
+TERMUX_PKG_NAME="com.termux"
 TERMUX_DATA_DIR=""
 for cand in /data/data/com.termux /data/user/0/com.termux; do
     [ -d "$cand" ] && { TERMUX_DATA_DIR="$cand"; break; }
@@ -150,19 +150,17 @@ if [ -z "$TERMUX_DATA_DIR" ]; then
 
     # Look for a Termux APK in the sdcard drop zone
     TERMUX_APK=""
-    for f in "$OUT/termux.apk" "$HOME/Downloads/termux.apk" "$HOME/storage/downloads/termux.apk"; do
+    for f in "$OUT/termux.apk" /sdcard/termux.apk /sdcard/Download/termux*.apk; do
         [ -f "$f" ] && { TERMUX_APK="$f"; break; }
     done
 
     if [ -n "$TERMUX_APK" ]; then
         log "Installing Termux from $TERMUX_APK ..."
-        if pm install -r "$TERMUX_APK" >> "$LOG" 2>&1; then
-            log "pm install succeeded"
-        else
+        pm install -r "$TERMUX_APK" >> "$LOG" 2>&1 && \
+            log "pm install succeeded" || \
             log "pm install failed — Termux setup will be incomplete"
-        fi
     else
-        log "No Termux APK found at $OUT/termux.apk or ~/Downloads/termux.apk"
+        log "No Termux APK found at $OUT/termux.apk or /sdcard/Download/termux*.apk"
         log "Drop a Termux APK (F-Droid build) to $OUT/termux.apk and rerun"
         reg_set termux HOM_TERMUX_INSTALLED "false"
         reg_set termux HOM_TERMUX_INSTALL_ERROR "no_apk_found"

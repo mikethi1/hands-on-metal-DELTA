@@ -1,6 +1,5 @@
 #!/system/bin/sh
 # core/state_machine.sh
-# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Persistent, reboot-safe state machine for the install flow.
 # State is written to /data so it survives reboots.
