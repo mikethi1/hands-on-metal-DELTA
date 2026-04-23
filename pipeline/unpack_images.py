@@ -446,11 +446,13 @@ def _parse_vendor_boot(data: bytes) -> BootImage | None:
             data, VENDOR_HDR_V3_STRUCT.size)
         off_table = off_dtb + dtb_pages * ps
         if (entry_num > 0
-                and entry_size > 0
+                and entry_size >= _VENDOR_RAMDISK_TABLE_ENTRY.size
                 and off_table + table_size <= len(data)):
-            for i in range(entry_num):
+            table_end = off_table + table_size
+            max_entries = table_size // entry_size
+            for i in range(min(entry_num, max_entries)):
                 entry_off = off_table + i * entry_size
-                if entry_off + _VENDOR_RAMDISK_TABLE_ENTRY.size > len(data):
+                if entry_off + _VENDOR_RAMDISK_TABLE_ENTRY.size > table_end:
                     break
                 (seg_size, seg_offset, seg_type,
                  _seg_name, _board_id) = _VENDOR_RAMDISK_TABLE_ENTRY.unpack_from(
