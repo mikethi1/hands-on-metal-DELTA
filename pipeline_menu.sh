@@ -56,6 +56,7 @@ build_script_index() {
         "shell:magisk-module/service.sh"
         "shell:magisk-module/collect.sh"
         "shell:recovery-zip/collect_recovery.sh"
+        "shell:recovery-zip/collect_factory.sh"
         "shell:magisk-module/setup_termux.sh"
         # ── Phase 6: Analysis Pipeline ────────────────────────
         "python:pipeline/parse_logs.py"

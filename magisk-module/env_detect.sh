@@ -591,6 +591,36 @@ else
     reg_set api HOM_API_INIT_BOOT "false"
 fi
 
+# ── 12. Summary variables ─────────────────────────────────────
+# Canonical aliases consumed by detect.sh, menu_lib.sh, and collect.sh.
+# Maps the detailed env_detect vars to the simpler names that the rest
+# of the workflow expects so every consumer sees consistent keys.
+
+log "Writing summary variables..."
+
+# HOM_ENV_SHELL — shell environment type string (termux / linux_host / etc.)
+reg_set shell HOM_ENV_SHELL "$HOM_ENV_TYPE"
+
+# HOM_ENV_BUSYBOX — path to busybox binary, or empty if not found
+reg_set shell HOM_ENV_BUSYBOX "$BB"
+
+# HOM_ENV_PYTHON — canonical Python binary path, or empty if none found
+reg_set shell HOM_ENV_PYTHON "$CANONICAL"
+
+# HOM_ENV_TERMUX — "true" when Termux is installed, "false" otherwise
+if [ -n "$TERMUX_PREFIX" ]; then
+    reg_set shell HOM_ENV_TERMUX "true"
+else
+    reg_set shell HOM_ENV_TERMUX "false"
+fi
+
+# HOM_ENV_ROOT — "true" when running as uid 0, "false" otherwise
+if [ "$EXEC_UID" = "0" ]; then
+    reg_set shell HOM_ENV_ROOT "true"
+else
+    reg_set shell HOM_ENV_ROOT "false"
+fi
+
 # ── done ─────────────────────────────────────────────────────
 
 VAR_COUNT=$(grep -c '=' "$ENV_REGISTRY" 2>/dev/null || echo 0)

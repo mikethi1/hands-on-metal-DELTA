@@ -122,23 +122,42 @@ def parse_manifest_xml(path: Path, run_id: int,
         if hw_info:
             hw_id = get_or_create_hw(cur, run_id, hw_info[0], hw_info[1])
 
-        # Each <interface> under the HAL
+        # AIDL HALs declare interfaces via <fqname>Interface/instance</fqname>.
+        # HIDL HALs use the <interface>/<instance> sub-element structure.
+        fqnames = hal.findall("fqname")
         interfaces = hal.findall(".//interface")
-        if not interfaces:
-            # HAL with no interface block (native)
-            try:
-                cur.execute(
-                    """INSERT OR IGNORE INTO vintf_hal
-                       (run_id, hw_id, hal_format, hal_name, version,
-                        interface, instance, transport, source_file)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
-                    (run_id, hw_id, hal_format, hal_name, version,
-                     None, None, transport, str(path)),
-                )
-                inserted += cur.rowcount
-            except sqlite3.Error:
-                pass
-        else:
+
+        if fqnames:
+            # AIDL path: split "IFoo/default" → interface="IFoo", instance="default"
+            for fq in fqnames:
+                fq_text = _text(fq)
+                if "/" in fq_text:
+                    iface_name, _, instance = fq_text.partition("/")
+                else:
+                    iface_name, instance = fq_text, ""
+                # Version may also be embedded as "@N" prefix in older manifests
+                if fq_text.startswith("@"):
+                    parts = fq_text.lstrip("@").split("::", 1)
+                    ver_part = parts[0] if parts else ""
+                    rest = parts[1] if len(parts) > 1 else ""
+                    if "/" in rest:
+                        iface_name, _, instance = rest.partition("/")
+                    if not version and ver_part:
+                        version = ver_part
+                try:
+                    cur.execute(
+                        """INSERT OR IGNORE INTO vintf_hal
+                           (run_id, hw_id, hal_format, hal_name, version,
+                            interface, instance, transport, source_file)
+                           VALUES (?,?,?,?,?,?,?,?,?)""",
+                        (run_id, hw_id, hal_format, hal_name, version,
+                         iface_name, instance, transport, str(path)),
+                    )
+                    inserted += cur.rowcount
+                except sqlite3.Error:
+                    pass
+        elif interfaces:
+            # HIDL path
             for iface in interfaces:
                 iface_name = _text(iface.find("name"))
                 for inst in iface.findall("instance"):
@@ -155,6 +174,20 @@ def parse_manifest_xml(path: Path, run_id: int,
                         inserted += cur.rowcount
                     except sqlite3.Error:
                         pass
+        else:
+            # HAL with no interface block (native or minimal)
+            try:
+                cur.execute(
+                    """INSERT OR IGNORE INTO vintf_hal
+                       (run_id, hw_id, hal_format, hal_name, version,
+                        interface, instance, transport, source_file)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (run_id, hw_id, hal_format, hal_name, version,
+                     None, None, transport, str(path)),
+                )
+                inserted += cur.rowcount
+            except sqlite3.Error:
+                pass
 
         # Update hardware_block.hal_interface if not set
         if hw_id and hal_name and version:

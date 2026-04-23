@@ -90,6 +90,8 @@ _hom_optional gzip    "Decompressing gzip-compressed TWRP Nandroid backups (core
 # Python lz4 package — preferred over the CLI for ramdisk decompression in unpack_images.py
 if ! python3 -c "import lz4" 2>/dev/null; then
     echo "  ⚠  missing (optional): python lz4 package (pip install lz4) — LZ4 ramdisk decompression in pipeline/unpack_images.py"
+else
+    echo "  ✓  python lz4 package"
 fi
 
 echo ""
