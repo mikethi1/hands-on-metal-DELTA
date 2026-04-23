@@ -13,7 +13,7 @@ the Python standard library.
 python fileserver/server.py
 
 # Or customise host, port, and storage directory
-python fileserver/server.py --host 127.0.0.1 --port 9000 --dir /tmp/my-share
+python fileserver/server.py --host 127.0.0.1 --port 9000 --dir ~/tmp/my-share
 ```
 
 The server prints its URLs on start-up:

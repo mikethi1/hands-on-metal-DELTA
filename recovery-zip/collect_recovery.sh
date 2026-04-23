@@ -12,7 +12,7 @@
 #      board files, .pb configs, deviceconfig XMLs, fstab, and
 #      any other files reachable only in recovery context
 #   3. Write every discovered value into the flat env registry
-#      at $ENV_REGISTRY (/sdcard/hands-on-metal/env_registry.sh)
+#      at $ENV_REGISTRY (~/hands-on-metal/env_registry.sh)
 #      so the Magisk module (Mode A) and pipeline (Mode C) can
 #      cross-reference them
 #   4. Collect raw binary artefacts (dtbo.img, recovery.img,
@@ -20,14 +20,14 @@
 #
 # Safety guarantees:
 #   • All partition mounts are read-only
-#   • Never writes outside /sdcard/hands-on-metal/
+#   • Never writes outside $OUT/
 #   • Umounts every partition it mounts before exit
 # ============================================================
 
 set -u
 
-OUT=/sdcard/hands-on-metal/recovery_dump
-ENV_REGISTRY=/sdcard/hands-on-metal/env_registry.sh
+OUT="${HOME:-/tmp}/hands-on-metal/recovery_dump"
+ENV_REGISTRY="${HOME:-/tmp}/hands-on-metal/env_registry.sh"
 LOG=$OUT/collect_recovery.log
 MANIFEST=$OUT/recovery_manifest.txt
 
@@ -181,6 +181,10 @@ for bprop in \
     /system/build.prop \
     /vendor/build.prop; do
     [ -f "$bprop" ] || continue
+    if [ ! -r "$bprop" ]; then
+        log "  Skipping unreadable $bprop (permission denied)"
+        continue
+    fi
     log "  Reading $bprop"
     copy_file "$bprop"
     # Extract the key hardware/board properties directly
@@ -224,10 +228,20 @@ copy_dir /proc/device-tree
 reg_set_path recovery HOM_PROC_DEVICE_TREE "/proc/device-tree"
 
 # Extract compatible string (root of the hardware identity)
-COMPAT=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -1 || true)
+if [ -r /proc/device-tree/compatible ]; then
+    COMPAT=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -1 || true)
+else
+    COMPAT=""
+    log "  /proc/device-tree/compatible is not readable"
+fi
 [ -n "$COMPAT" ] && reg_set recovery HOM_DT_COMPATIBLE "$COMPAT"
 
-MODEL=$(tr '\0' ' ' < /proc/device-tree/model 2>/dev/null || true)
+if [ -r /proc/device-tree/model ]; then
+    MODEL=$(tr '\0' ' ' < /proc/device-tree/model 2>/dev/null || true)
+else
+    MODEL=""
+    log "  /proc/device-tree/model is not readable"
+fi
 [ -n "$MODEL" ] && reg_set recovery HOM_DT_MODEL "$MODEL"
 
 # ── 6. dtbo.img raw image (for offline dtc decompilation) ────

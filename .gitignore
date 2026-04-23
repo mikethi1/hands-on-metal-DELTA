@@ -7,4 +7,9 @@ __pycache__/
 tools/magisk64
 tools/magisk32
 tools/magiskinit64
+tools/magiskboot64
+tools/magisk_init_ld64
+tools/magisk_stub.apk
+tools/magisk_boot_patch.sh
+tools/magisk_util_functions.sh
 tools/busybox-arm64

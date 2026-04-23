@@ -27,7 +27,7 @@ MODULE_DIR=/data/adb/modules/hands-on-metal-collector
 SENTINEL="$MODULE_DIR/.collected"
 CORE="$MODULE_DIR/core"
 
-OUT=/sdcard/hands-on-metal
+OUT="${HOME:-/data/local/tmp}/hands-on-metal"
 ENV_REGISTRY="$OUT/env_registry.sh"
 LOG_DIR="$OUT/logs"
 STATE_FILE="$MODULE_DIR/.install_state"
@@ -51,6 +51,28 @@ _ota_log() {
 _ota_reg_get() {
     grep "^${1}=" "$ENV_REGISTRY" 2>/dev/null | \
         cut -d= -f2- | sed 's/^"//;s/"[[:space:]].*//'
+}
+
+_service_preflight() {
+    local req
+    for req in \
+        "$CORE/logging.sh" \
+        "$CORE/ux.sh" \
+        "$CORE/state_machine.sh" \
+        "$CORE/privacy.sh" \
+        "$MODULE_DIR/env_detect.sh" \
+        "$MODULE_DIR/setup_termux.sh" \
+        "$MODULE_DIR/collect.sh"; do
+        if [ ! -f "$req" ]; then
+            _ota_log "[PREREQ_FAIL] Missing required script: $req"
+            return 1
+        fi
+        if [ ! -r "$req" ]; then
+            _ota_log "[PREREQ_FAIL] Unreadable script: $req (fix mode/context)"
+            return 1
+        fi
+    done
+    return 0
 }
 
 if [ -f "$ENV_REGISTRY" ]; then
@@ -99,6 +121,12 @@ if [ -f "$ENV_REGISTRY" ]; then
 fi
 
 if [ ! -f "$SENTINEL" ]; then
+    if ! _service_preflight; then
+        _ota_log "Aborting service run due to missing/unreadable prerequisites."
+        # shellcheck disable=SC2317  # exit path is used when script is executed (not sourced)
+        return 1 2>/dev/null || exit 1
+    fi
+
     # Mark collected first so a crash mid-run does not loop forever.
     # Delete the sentinel manually if a fresh re-run is needed.
     touch "$SENTINEL"
