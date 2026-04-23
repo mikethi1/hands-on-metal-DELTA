@@ -37,11 +37,26 @@ OUT="${OUT:-$HOME/hands-on-metal}"
 ENV_REGISTRY="${ENV_REGISTRY:-$OUT/env_registry.sh}"
 BOOT_WORK_DIR="$OUT/boot_work"
 
-# Location of the bundled offline Magisk binary (placed by build script)
-BUNDLED_MAGISK="${BUNDLED_MAGISK:-/data/adb/magisk/magisk64}"
-BUNDLED_MAGISK32="${BUNDLED_MAGISK32:-/data/adb/magisk/magisk32}"
-BUNDLED_MAGISKBOOT="${BUNDLED_MAGISKBOOT:-/data/adb/magisk/magiskboot}"
-BUNDLED_BOOT_PATCH_SH="${BUNDLED_BOOT_PATCH_SH:-/data/adb/magisk/boot_patch.sh}"
+# tools/ directory where build/fetch_all_deps.sh places all Magisk binaries.
+# Preferred over /data/adb/magisk/ because it works without root (Termux).
+# Resolution order: REPO_ROOT → MODPATH → OUT → current directory.
+_HOM_TOOLS_DIR="${REPO_ROOT:+$REPO_ROOT/tools}"
+[ -z "$_HOM_TOOLS_DIR" ] && [ -n "${MODPATH:-}" ] \
+    && _HOM_TOOLS_DIR="$(cd "$MODPATH/.." 2>/dev/null && pwd)/tools"
+[ -z "$_HOM_TOOLS_DIR" ] && _HOM_TOOLS_DIR="${OUT:-$HOME/hands-on-metal}/tools"
+
+# Bundled offline Magisk binaries (placed by build/fetch_all_deps.sh).
+# Defaults point to tools/ first (no-root Termux); /data/adb/magisk/ is the
+# rooted-device fallback and is checked separately inside the _find_* helpers.
+BUNDLED_MAGISK="${BUNDLED_MAGISK:-$_HOM_TOOLS_DIR/magisk64}"
+BUNDLED_MAGISK32="${BUNDLED_MAGISK32:-$_HOM_TOOLS_DIR/magisk32}"
+BUNDLED_MAGISKINIT="${BUNDLED_MAGISKINIT:-$_HOM_TOOLS_DIR/magiskinit}"
+BUNDLED_MAGISKBOOT="${BUNDLED_MAGISKBOOT:-$_HOM_TOOLS_DIR/magiskboot}"
+BUNDLED_BOOT_PATCH_SH="${BUNDLED_BOOT_PATCH_SH:-$_HOM_TOOLS_DIR/boot_patch.sh}"
+# stub.apk — Magisk v27+: embedded into the ramdisk by magiskboot during patch.
+BUNDLED_STUB_APK="${BUNDLED_STUB_APK:-$_HOM_TOOLS_DIR/stub.apk}"
+# init-ld  — Magisk v27+: ELF binary injected into the ramdisk as the new init.
+BUNDLED_INIT_LD="${BUNDLED_INIT_LD:-$_HOM_TOOLS_DIR/init-ld}"
 
 # ── helpers ───────────────────────────────────────────────────
 
@@ -392,11 +407,12 @@ EOF
             chmod +x "$work_dir/magisk" 2>/dev/null || true
         fi
 
-        # magiskinit — injected into the boot ramdisk
+        # magiskinit — injected into the boot ramdisk as the new init binary
         local try
         for try in \
-            "$(dirname "$magisk_bin")/magiskinit" \
-            "$(dirname "$magisk_bin")/magiskinit64" \
+            "$_magisk_dir/magiskinit" \
+            "$_magisk_dir/magiskinit64" \
+            "$BUNDLED_MAGISKINIT" \
             /data/adb/magisk/magiskinit; do
             if [ -x "$try" ]; then
                 cp "$try" "$work_dir/magiskinit" && chmod +x "$work_dir/magiskinit"
@@ -404,11 +420,40 @@ EOF
             fi
         done
 
+        # stub.apk — required by magiskboot for ramdisk injection (Magisk v27+)
+        for try in \
+            "$_magisk_dir/stub.apk" \
+            "$BUNDLED_STUB_APK" \
+            /data/adb/magisk/stub.apk; do
+            if [ -f "$try" ]; then
+                cp "$try" "$work_dir/stub.apk"
+                log_info "Copied stub.apk from $try"
+                break
+            fi
+        done
+        [ -f "$work_dir/stub.apk" ] || \
+            log_warn "stub.apk not found — ramdisk patch will likely fail on Magisk v27+"
+
+        # init-ld — ELF binary injected into the boot ramdisk (Magisk v27+)
+        for try in \
+            "$_magisk_dir/init-ld" \
+            "$BUNDLED_INIT_LD" \
+            /data/adb/magisk/init-ld; do
+            if [ -f "$try" ]; then
+                cp "$try" "$work_dir/init-ld" && chmod +x "$work_dir/init-ld"
+                log_info "Copied init-ld from $try"
+                break
+            fi
+        done
+        [ -f "$work_dir/init-ld" ] || \
+            log_warn "init-ld not found — ramdisk patch will likely fail on Magisk v27+"
+
         local img_in="$work_dir/${boot_part}.img"
         cp "$boot_img" "$img_in" || ux_abort "Cannot copy boot image to patch work dir"
 
         log_exec "magisk_boot_patch" \
             env TMPDIR="$work_dir" \
+                OUTFD="${OUTFD:-2}" \
                 KEEPVERITY="$KEEPVERITY" \
                 KEEPFORCEENCRYPT="$KEEPFORCEENCRYPT" \
                 PATCHVBMETAFLAG="$PATCHVBMETAFLAG" \
