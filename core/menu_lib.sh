@@ -610,7 +610,11 @@ print_progress_bar() {
     [ "$total" -gt 0 ] && filled=$(( done_n * bar_w / total ))
     local bar="" j=0
     while [ "$j" -lt "$bar_w" ]; do
-        [ "$j" -lt "$filled" ] && bar="${bar}█" || bar="${bar}░"
+        if [ "$j" -lt "$filled" ]; then
+            bar="${bar}█"
+        else
+            bar="${bar}░"
+        fi
         j=$(( j + 1 ))
     done
     printf "  Progress  %s%s%s" "$CLR_DARK_GREEN" "$bar" "$CLR_RESET"
@@ -874,7 +878,11 @@ startup_scan() {
         local _display_val
         case "$_var" in
             *TOKEN*|*SECRET*|*KEY*|*PASSWORD*|*PASS*)
-                [ -n "$_val" ] && _display_val="####" || _display_val="(not set)"
+                if [ -n "$_val" ]; then
+                    _display_val="####"
+                else
+                    _display_val="(not set)"
+                fi
                 ;;
             *)
                 _display_val="${_val:-(not set)}"
@@ -951,7 +959,11 @@ startup_scan() {
         local _display_val
         case "$_var" in
             *TOKEN*|*SECRET*|*KEY*|*PASSWORD*)
-                [ -n "$_val" ] && _display_val="####" || _display_val="(not set)"
+                if [ -n "$_val" ]; then
+                    _display_val="####"
+                else
+                    _display_val="(not set)"
+                fi
                 ;;
             *)
                 _display_val="${_val:-(not set)}"

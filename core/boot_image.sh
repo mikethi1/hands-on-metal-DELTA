@@ -251,8 +251,17 @@ _boot_image_check_deps() {
         ux_print "  ⚠  Missing optional tools:$missing_optional"
     fi
 
-    _reg_set boot HOM_BOOT_IMG_HAS_CURL  "$(_has_cmd curl  && echo true || echo false)"
-    _reg_set boot HOM_BOOT_IMG_HAS_UNZIP "$(_has_cmd unzip && echo true || echo false)"
+    if _has_cmd curl; then
+        _reg_set boot HOM_BOOT_IMG_HAS_CURL "true"
+    else
+        _reg_set boot HOM_BOOT_IMG_HAS_CURL "false"
+    fi
+
+    if _has_cmd unzip; then
+        _reg_set boot HOM_BOOT_IMG_HAS_UNZIP "true"
+    else
+        _reg_set boot HOM_BOOT_IMG_HAS_UNZIP "false"
+    fi
 }
 
 # ── pre-placed image scanner ─────────────────────────────────
