@@ -175,33 +175,47 @@ def _unsparse_image(data: bytes) -> bytes | None:
         if total_sz < chunk_hdr_sz:
             return None
         data_sz = total_sz - chunk_hdr_sz
+    if file_hdr_sz < _SPARSE_FILE_HDR.size or chunk_hdr_sz < _SPARSE_CHUNK_HDR.size:
+        return None
+    if file_hdr_sz > len(data):
+        return None
+
+    out = bytearray()
+    pos = file_hdr_sz  # skip variable-length file header
+
+    for _ in range(total_chunks):
+        if pos + _SPARSE_CHUNK_HDR.size > len(data) or pos + chunk_hdr_sz > len(data):
+            return None
+        chunk_type, _reserved, chunk_sz, total_sz = _SPARSE_CHUNK_HDR.unpack_from(data, pos)
+        if total_sz < chunk_hdr_sz:
+            return None
+        # total_sz includes the chunk header itself
+        data_sz = total_sz - chunk_hdr_sz
         payload_off = pos + chunk_hdr_sz
-        chunk_end = pos + total_sz
         raw_bytes = chunk_sz * blk_sz
+        chunk_end = pos + total_sz
         if chunk_end > len(data):
             return None
-
-        if chunk_type != _CHUNK_CRC32:
-            if emitted_blks + chunk_sz > total_blks:
-                return None
+        pos = chunk_end
 
         if chunk_type == _CHUNK_RAW:
-            if data_sz != raw_bytes or payload_off + raw_bytes > len(data):
+            if data_sz != raw_bytes:
                 return None
-            out.extend(data[payload_off: payload_off + raw_bytes])
-            emitted_blks += chunk_sz
+            out.extend(data[payload_off:payload_off + raw_bytes])
         elif chunk_type == _CHUNK_FILL:
-            if data_sz < 4 or payload_off + 4 > len(data):
+            if data_sz != 4:
                 return None
-            fill = data[payload_off: payload_off + 4]
+            fill = data[payload_off:payload_off + 4]
             reps = raw_bytes // 4
             out.extend(fill * reps)
             out.extend(fill[: raw_bytes % 4])
-            emitted_blks += chunk_sz
         elif chunk_type == _CHUNK_DONT_CARE:
+            if data_sz != 0:
+                return None
             out.extend(b"\x00" * raw_bytes)
-            emitted_blks += chunk_sz
         elif chunk_type == _CHUNK_CRC32:
+            if data_sz != 4:
+                return None
             if data_sz != 4 or payload_off + 4 > len(data):
                 return None
             # 4-byte CRC payload, no output blocks
