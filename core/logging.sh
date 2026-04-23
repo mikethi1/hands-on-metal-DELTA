@@ -29,24 +29,6 @@ if [ -z "${RUN_ID:-}" ]; then
     export RUN_ID
 fi
 
-# Source privacy redaction if available and not already loaded.
-if [ -z "${_HOM_PRIVACY_LOADED:-}" ]; then
-    _HOM_PRIVACY_SH="$(dirname "$0")/../core/privacy.sh"
-    [ -f "$_HOM_PRIVACY_SH" ] || _HOM_PRIVACY_SH="$(dirname "$0")/privacy.sh"
-    [ -f "$_HOM_PRIVACY_SH" ] || _HOM_PRIVACY_SH="/data/adb/modules/hands-on-metal-collector/core/privacy.sh"
-    if [ -f "$_HOM_PRIVACY_SH" ]; then
-        # shellcheck source=/dev/null
-        . "$_HOM_PRIVACY_SH"
-        _HOM_PRIVACY_LOADED=1
-        export _HOM_PRIVACY_LOADED
-    fi
-fi
-
-# Fallback no-op if privacy.sh is not available.
-if ! command -v hom_redact_value >/dev/null 2>&1; then
-    hom_redact_value() { printf '%s' "$2"; }
-fi
-
 MASTER_LOG="$LOG_DIR/master_${RUN_ID}.log"
 SCRIPT_LOG="$LOG_DIR/${SCRIPT_NAME}_${RUN_ID}.log"
 RUN_MANIFEST="$LOG_DIR/run_manifest_${RUN_ID}.txt"
@@ -83,17 +65,13 @@ log_debug() { _log_line "DEBUG" "$@"; }
 # ── variable audit trail ──────────────────────────────────────
 # Records every significant variable with its name, value and a
 # human-readable description so the audit log is fully self-explanatory.
-# Values that match PII patterns are redacted to '#' by default.
 # Usage: log_var VARNAME VALUE "human description"
 log_var() {
     local name="$1"
     local value="$2"
     local desc="${3:-}"
     local ts; ts=$(_hom_ts)
-    # Apply privacy redaction before writing to any log.
-    local safe_value
-    safe_value=$(hom_redact_value "$name" "$value")
-    local line="[$ts][VAR  ][$SCRIPT_NAME] $name=\"$safe_value\"  # $desc"
+    local line="[$ts][VAR  ][$SCRIPT_NAME] $name=\"$value\"  # $desc"
     printf '%s\n' "$line" >> "$VAR_AUDIT"   2>/dev/null || true
     printf '%s\n' "$line" >> "$MASTER_LOG"  2>/dev/null || true
 }
