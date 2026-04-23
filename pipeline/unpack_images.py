@@ -945,7 +945,6 @@ def extract_cpio_odc(data: bytes, out_dir: Path) -> list[str]:
                 break
             pos = next_pos
             continue
-            break
 
         pos += 76
         if namesize == 0 or pos + namesize > len(data):

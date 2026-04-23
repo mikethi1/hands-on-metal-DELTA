@@ -48,6 +48,7 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Callable
 
 
 _REQUIRED_CONSENT = "I consent to sharing unredacted diagnostic data"
@@ -238,7 +239,7 @@ def redact_for_repo_upload(files_or_text: dict[str, str] | str) -> dict[str, str
 def confirm_repo_upload(
     yes: bool,
     is_tty: bool | None = None,
-    input_fn=None,
+    input_fn: Callable[[str], str] | None = None,
 ) -> bool:
     """Prompt user before sending local data to GitHub."""
     if yes:
