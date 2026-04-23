@@ -48,6 +48,7 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Callable
 
 
 _REQUIRED_CONSENT = "I consent to sharing unredacted diagnostic data"
@@ -80,6 +81,13 @@ _PII_VALUE_PATTERNS = (
     re.compile(r"^[0-9A-Fa-f]{12}$"),
 )
 _KEYVAL_RE = re.compile(r'([A-Z0-9_]+)="([^"]*)"')
+_REPO_UPLOAD_SECRET_KEYS = {
+    "token",
+    "access_token",
+    "authorization",
+    "password",
+    "secret",
+}
 
 
 def _now_iso() -> str:
@@ -179,8 +187,31 @@ def _redact_keyval_text(content: str) -> str:
     return _KEYVAL_RE.sub(_replace, content)
 
 
-def redact_for_repo_upload(files: dict[str, str]) -> dict[str, str]:
-    """Return a copy of *files* with upload-time privacy redaction applied."""
+def _redact_repo_upload_json(value):
+    """Recursively redact sensitive credential-like JSON keys."""
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            if isinstance(key, str) and key.lower() in _REPO_UPLOAD_SECRET_KEYS:
+                out[key] = _REDACTED
+            else:
+                out[key] = _redact_repo_upload_json(item)
+        return out
+    if isinstance(value, list):
+        return [_redact_repo_upload_json(item) for item in value]
+    return value
+
+
+def redact_for_repo_upload(files_or_text: dict[str, str] | str) -> dict[str, str] | str:
+    """Redact bundle dicts (current flow) and JSON strings (test helper behavior)."""
+    if isinstance(files_or_text, str):
+        try:
+            data = json.loads(files_or_text)
+        except json.JSONDecodeError:
+            return files_or_text
+        return json.dumps(_redact_repo_upload_json(data), ensure_ascii=False)
+
+    files = files_or_text
     out = dict(files)
     for name, content in files.items():
         if name == "share_bundle.json":
@@ -189,6 +220,7 @@ def redact_for_repo_upload(files: dict[str, str]) -> dict[str, str]:
             except json.JSONDecodeError:
                 out[name] = _redact_keyval_text(content)
                 continue
+            data = _redact_repo_upload_json(data)
             variables = data.get("variables", {})
             if isinstance(variables, dict):
                 data["variables"] = {
@@ -204,18 +236,25 @@ def redact_for_repo_upload(files: dict[str, str]) -> dict[str, str]:
     return out
 
 
-def confirm_repo_upload(yes: bool) -> bool:
+def confirm_repo_upload(
+    yes: bool,
+    is_tty: bool | None = None,
+    input_fn: Callable[[str], str] | None = None,
+) -> bool:
     """Prompt user before sending local data to GitHub."""
     if yes:
         return True
-    if not sys.stdin.isatty():
+    tty = sys.stdin.isatty() if is_tty is None else is_tty
+    if not tty:
         print(
             "Upload canceled: non-interactive session and no --yes flag.\n"
             "Re-run with --yes to confirm upload.",
             file=sys.stderr,
         )
         return False
-    answer = input("Send bundle to GitHub now? [y/yes/N]: ").strip().lower()
+    if input_fn is None:
+        input_fn = input
+    answer = input_fn("Send bundle to GitHub now? [y/yes/N]: ").strip().lower()
     return answer in ("y", "yes")
 
 

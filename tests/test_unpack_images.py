@@ -58,6 +58,12 @@ class UnpackImagesTests(unittest.TestCase):
         out = unpack_images.decompress_ramdisk(wrapped)
         self.assertEqual(out, cpio_payload)
 
+    def test_decompress_ramdisk_scans_bounded_prefix_only(self) -> None:
+        cpio_payload = b"070701cpio"
+        wrapped = (b"\x00" * (70 * 1024)) + cpio_payload
+        out = unpack_images.decompress_ramdisk(wrapped)
+        self.assertIsNone(out)
+
     def test_try_lz4_uses_cli_fallback_without_python_lz4(self) -> None:
         lz4_magic = b"\x04\x22\x4d\x18"
         fake_input = lz4_magic + b"payload"
@@ -185,7 +191,6 @@ class UnpackImagesTests(unittest.TestCase):
             out_dir = Path(td)
             out = unpack_images.extract_cpio(archive, out_dir)
             self.assertEqual(out, [])
-
 
 if __name__ == "__main__":
     unittest.main()
