@@ -19,11 +19,10 @@ Output tables:
 
 Usage:
   python pipeline/parse_manifests.py --db hardware_map.sqlite \
-      --dump /sdcard/hands-on-metal/boot_work --run-id 1
+      --dump /sdcard/hands-on-metal/live_dump --run-id 1
 """
 
 import argparse
-import os
 import re
 import sqlite3
 import sys
@@ -122,42 +121,23 @@ def parse_manifest_xml(path: Path, run_id: int,
         if hw_info:
             hw_id = get_or_create_hw(cur, run_id, hw_info[0], hw_info[1])
 
-        # AIDL HALs declare interfaces via <fqname>Interface/instance</fqname>.
-        # HIDL HALs use the <interface>/<instance> sub-element structure.
-        fqnames = hal.findall("fqname")
+        # Each <interface> under the HAL
         interfaces = hal.findall(".//interface")
-
-        if fqnames:
-            # AIDL path: split "IFoo/default" → interface="IFoo", instance="default"
-            for fq in fqnames:
-                fq_text = _text(fq)
-                if "/" in fq_text:
-                    iface_name, _, instance = fq_text.partition("/")
-                else:
-                    iface_name, instance = fq_text, ""
-                # Version may also be embedded as "@N" prefix in older manifests
-                if fq_text.startswith("@"):
-                    parts = fq_text.lstrip("@").split("::", 1)
-                    ver_part = parts[0] if parts else ""
-                    rest = parts[1] if len(parts) > 1 else ""
-                    if "/" in rest:
-                        iface_name, _, instance = rest.partition("/")
-                    if not version and ver_part:
-                        version = ver_part
-                try:
-                    cur.execute(
-                        """INSERT OR IGNORE INTO vintf_hal
-                           (run_id, hw_id, hal_format, hal_name, version,
-                            interface, instance, transport, source_file)
-                           VALUES (?,?,?,?,?,?,?,?,?)""",
-                        (run_id, hw_id, hal_format, hal_name, version,
-                         iface_name, instance, transport, str(path)),
-                    )
-                    inserted += cur.rowcount
-                except sqlite3.Error:
-                    pass
-        elif interfaces:
-            # HIDL path
+        if not interfaces:
+            # HAL with no interface block (native)
+            try:
+                cur.execute(
+                    """INSERT OR IGNORE INTO vintf_hal
+                       (run_id, hw_id, hal_format, hal_name, version,
+                        interface, instance, transport, source_file)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (run_id, hw_id, hal_format, hal_name, version,
+                     None, None, transport, str(path)),
+                )
+                inserted += cur.rowcount
+            except sqlite3.Error:
+                pass
+        else:
             for iface in interfaces:
                 iface_name = _text(iface.find("name"))
                 for inst in iface.findall("instance"):
@@ -174,20 +154,6 @@ def parse_manifest_xml(path: Path, run_id: int,
                         inserted += cur.rowcount
                     except sqlite3.Error:
                         pass
-        else:
-            # HAL with no interface block (native or minimal)
-            try:
-                cur.execute(
-                    """INSERT OR IGNORE INTO vintf_hal
-                       (run_id, hw_id, hal_format, hal_name, version,
-                        interface, instance, transport, source_file)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
-                    (run_id, hw_id, hal_format, hal_name, version,
-                     None, None, transport, str(path)),
-                )
-                inserted += cur.rowcount
-            except sqlite3.Error:
-                pass
 
         # Update hardware_block.hal_interface if not set
         if hw_id and hal_name and version:
@@ -243,30 +209,6 @@ def parse_sysconfig_xml(path: Path, run_id: int,
 # ── getprop parser ───────────────────────────────────────────────────────────
 PROP_RE = re.compile(r"^\[([^\]]+)\]:\s*\[([^\]]*)\]")
 
-# ── default.prop / build.prop parser (key=value format) ─────────────────────
-# Ramdisk prop files (default.prop, prop.default, build.prop) use the plain
-# key=value format written by the build system, unlike getprop's [key]:[value].
-PROP_KV_RE = re.compile(r"^([^#=\s]+)\s*=\s*(.*)$")
-
-
-def _get_env_registry_val(key: str) -> str:
-    """Return the value of *key* from ~/hands-on-metal/env_registry.sh, or ''."""
-    reg = Path.home() / "hands-on-metal" / "env_registry.sh"
-    if not reg.exists():
-        return ""
-    try:
-        for line in reg.read_text(errors="replace").splitlines():
-            if not line.startswith(key + "="):
-                continue
-            rest = line[len(key) + 1:]
-            if rest.startswith('"'):
-                parts = rest.split('"', 2)
-                return parts[1] if len(parts) >= 2 else ""
-            return rest.split()[0]
-    except OSError:
-        pass
-    return ""
-
 
 def parse_getprop(path: Path, run_id: int, cur: sqlite3.Cursor) -> int:
     if not path.exists():
@@ -288,36 +230,7 @@ def parse_getprop(path: Path, run_id: int, cur: sqlite3.Cursor) -> int:
     return inserted
 
 
-def parse_default_prop(path: Path, run_id: int, cur: sqlite3.Cursor) -> int:
-    """Parse a ramdisk key=value prop file (default.prop, build.prop, etc.).
-
-    Complements parse_getprop() which handles the [key]:[value] format from
-    'getprop' output.  Ramdisk prop files use the simpler key=value format
-    written by the Android build system.
-    """
-    if not path.exists():
-        return 0
-    inserted = 0
-    for line in path.read_text(errors="replace").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        m = PROP_KV_RE.match(line)
-        if not m:
-            continue
-        key, val = m.group(1).strip(), m.group(2).strip()
-        try:
-            cur.execute(
-                "INSERT OR IGNORE INTO android_prop (run_id, key, value) VALUES (?,?,?)",
-                (run_id, key, val),
-            )
-            inserted += cur.rowcount
-        except sqlite3.Error:
-            pass
-    return inserted
-
-
-
+# ── Board summary parser ─────────────────────────────────────────────────────
 
 def parse_board_summary(path: Path, run_id: int,
                         cur: sqlite3.Cursor, db: sqlite3.Connection) -> None:
@@ -373,36 +286,11 @@ def main() -> None:
 
     # 1. Getprop
     gp_path = dump / "getprop.txt"
-    getprop_total = parse_getprop(gp_path, args.run_id, cur)
-    print(f"getprop: {getprop_total} properties inserted")
+    n = parse_getprop(gp_path, args.run_id, cur)
+    print(f"getprop: {n} properties inserted")
 
     # 2. Board summary
     parse_board_summary(dump / "board_summary.txt", args.run_id, cur, db)
-
-    # 2b. Ramdisk prop files (default.prop, prop.default, build.prop) written
-    #     by pipeline/unpack_images.py (option 10) into HOM_RAMDISK_DIR.
-    #     These use the key=value build-system format rather than getprop's
-    #     [key]:[value] format, so they need the separate parse_default_prop().
-    ramdisk_dir_str = (
-        os.environ.get("HOM_RAMDISK_DIR")
-        or _get_env_registry_val("HOM_RAMDISK_DIR")
-    )
-    ramdisk_prop_total = 0
-    if ramdisk_dir_str:
-        ramdisk_dir = Path(ramdisk_dir_str)
-        if ramdisk_dir.is_dir():
-            for prop_name in ("default.prop", "prop.default", "build.prop"):
-                for prop_path in sorted(ramdisk_dir.rglob(prop_name)):
-                    n = parse_default_prop(prop_path, args.run_id, cur)
-                    if n:
-                        print(f"  ramdisk prop {prop_path.name}: {n} properties")
-                    ramdisk_prop_total += n
-    if ramdisk_prop_total:
-        print(f"Ramdisk props: {ramdisk_prop_total} properties from ramdisk extraction")
-    elif ramdisk_dir_str:
-        print("Ramdisk props: 0 (HOM_RAMDISK_DIR set but no prop files found)")
-    else:
-        print("Ramdisk props: skipped (HOM_RAMDISK_DIR not set — run unpack_images.py first)")
 
     # 3. VINTF manifests
     manifest_patterns = [
@@ -438,20 +326,6 @@ def main() -> None:
             n = parse_sysconfig_xml(xml_path, args.run_id, cur)
             sc_total += n
     print(f"Sysconfig/permissions: {sc_total} entries")
-
-    if getprop_total == 0 and vintf_total == 0 and sc_total == 0 and ramdisk_prop_total == 0:
-        print(
-            "error: parser found no getprop/manifests/sysconfig data "
-            f"under dump path: {dump}",
-            file=sys.stderr,
-        )
-        print(
-            "hint: run collection first and pass --dump to the directory that "
-            "contains getprop.txt and vendor/system XML trees",
-            file=sys.stderr,
-        )
-        db.close()
-        sys.exit(1)
 
     db.commit()
     db.close()

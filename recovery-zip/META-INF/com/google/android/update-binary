@@ -93,8 +93,6 @@ export SCRIPT_NAME
 . "$CORE/ux.sh"
 # shellcheck source=/dev/null
 . "$CORE/state_machine.sh"
-# shellcheck source=/dev/null
-. "$CORE/privacy.sh"
 
 log_banner "hands-on-metal Recovery Installer (RUN_ID=$RUN_ID)"
 
@@ -132,23 +130,6 @@ export SCRIPT_NAME
 run_device_profile
 sm_set_state "DEVICE_PROFILED"
 set_progress "0.25"
-
-# ── Step 2b: Candidate entry & family defaults ───────────────
-# Check if device is in compatibility database; load family defaults.
-
-SCRIPT_NAME="candidate_entry"
-export SCRIPT_NAME
-# shellcheck source=/dev/null
-. "$CORE/candidate_entry.sh"
-run_candidate_entry
-
-SCRIPT_NAME="apply_defaults"
-export SCRIPT_NAME
-# shellcheck source=/dev/null
-. "$CORE/apply_defaults.sh"
-run_apply_defaults
-
-set_progress "0.30"
 
 # ── Step 3: Boot Image Acquisition ───────────────────────────
 

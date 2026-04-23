@@ -1,25 +1,7 @@
 # tools/ — Bundled Offline Binaries
 
-This directory holds optional pre-built binaries that make the ZIPs fully self-contained.
+This directory holds optional pre-built binaries that make the ZIPs fully self-contained.  
 **None of these are committed to the repository** — obtain them locally before building the ZIPs.
-
-## Quick setup (recommended)
-
-The easiest way to populate this directory is to run the full dependency fetcher
-from the repository root. It downloads everything, builds both flashable ZIPs,
-and creates a single offline bundle:
-
-```bash
-cat <<'EOF' > ~/hands-on-metal-fetch-deps.sh
-#!/usr/bin/env bash
-set -e
-bash terminal_menu.sh
-# Select option 2 (build/fetch_all_deps.sh)
-# After completion, press 's' for the suggested next step: option 1 (build/build_offline_zip.sh)
-EOF
-chmod +x ~/hands-on-metal-fetch-deps.sh
-~/hands-on-metal-fetch-deps.sh
-```
 
 ## Required binaries
 
@@ -30,74 +12,49 @@ chmod +x ~/hands-on-metal-fetch-deps.sh
 | `magisk32` | Magisk 32-bit binary (older SoCs) | Extracted from Magisk APK (see below) |
 | `magiskinit64` | Magisk init binary | Extracted from Magisk APK |
 
-## Manual setup (if not using fetch_all_deps.sh)
+## How to obtain
 
 ```bash
-cat <<'EOF' > ~/hands-on-metal-manual-setup.sh
-#!/usr/bin/env bash
-set -e
-
 # 1. busybox (static arm64)
 curl -L -o tools/busybox-arm64 \
-  https://busybox.net/downloads/binaries/1.31.0-defconfig-multiarch-musl/busybox-armv8l
+  https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox_ARM64
 chmod +x tools/busybox-arm64
 
 # 2. Magisk binaries — extract from the official APK
-MAGISK_VER="v30.7"
-_TMP="${TMPDIR:-${HOME:-.}/tmp}"
-curl -L -o "$_TMP/magisk.apk" \
+MAGISK_VER="v27.0"
+curl -L -o /tmp/magisk.apk \
   "https://github.com/topjohnwu/Magisk/releases/download/${MAGISK_VER}/Magisk-${MAGISK_VER}.apk"
 
-unzip -jo "$_TMP/magisk.apk" 'lib/arm64-v8a/libmagisk.so'    -d "$_TMP/"
-cp "$_TMP/libmagisk.so"     tools/magisk64   && chmod +x tools/magisk64
+unzip -j /tmp/magisk.apk 'lib/arm64-v8a/libmagisk64.so'   -d /tmp/
+unzip -j /tmp/magisk.apk 'lib/armeabi-v7a/libmagisk32.so' -d /tmp/
+unzip -j /tmp/magisk.apk 'lib/arm64-v8a/libmagiskinit.so' -d /tmp/
 
-unzip -jo "$_TMP/magisk.apk" 'lib/armeabi-v7a/libmagisk.so'  -d "$_TMP/"
-cp "$_TMP/libmagisk.so"     tools/magisk32   && chmod +x tools/magisk32
+cp /tmp/libmagisk64.so   tools/magisk64   && chmod +x tools/magisk64
+cp /tmp/libmagisk32.so   tools/magisk32   && chmod +x tools/magisk32
+cp /tmp/libmagiskinit.so tools/magiskinit64 && chmod +x tools/magiskinit64
 
-unzip -jo "$_TMP/magisk.apk" 'lib/arm64-v8a/libmagiskinit.so' -d "$_TMP/"
-cp "$_TMP/libmagiskinit.so" tools/magiskinit64 && chmod +x tools/magiskinit64
-
-rm "$_TMP/magisk.apk" "$_TMP"/lib*.so
-EOF
-chmod +x ~/hands-on-metal-manual-setup.sh
-~/hands-on-metal-manual-setup.sh
+rm /tmp/magisk.apk /tmp/lib*.so
 ```
 
-> **Legal**: Magisk is GPL-3.0 licensed. By distributing binaries you must also make the source available.
+> **Legal**: Magisk is GPL-3.0 licensed. By distributing binaries you must also make the source available.  
 > Official source: https://github.com/topjohnwu/Magisk
 
 ## Verifying binaries
 
 ```bash
-cat <<'EOF' > ~/hands-on-metal-verify-bins.sh
-#!/usr/bin/env bash
-set -e
 # Busybox
-file tools/busybox-arm64   # should say "ELF 64-bit LSB executable, ARM aarch64"
+./tools/busybox-arm64 --help | head -1
 
 # Magisk
-file tools/magisk64         # should say "ELF 64-bit LSB executable, ARM aarch64"
-file tools/magisk32         # should say "ELF 32-bit LSB executable, ARM"
-EOF
-chmod +x ~/hands-on-metal-verify-bins.sh
-~/hands-on-metal-verify-bins.sh
+# (binaries are arm64, run on device or via QEMU arm64 emulation)
+file tools/magisk64   # should say "ELF 64-bit LSB executable, ARM aarch64"
+file tools/magisk32   # should say "ELF 32-bit LSB executable, ARM"
 ```
 
 ## Building without bundled tools
 
 ```bash
-cat <<'EOF' > ~/hands-on-metal-build-no-tools.sh
-#!/usr/bin/env bash
-set -e
-cd ~/hands-on-metal
-bash terminal_menu.sh
-# Select option 1 (build/build_offline_zip.sh), then enter arguments: --no-tools
-# After completion, press 's' for the suggested next step
-EOF
-chmod +x ~/hands-on-metal-build-no-tools.sh
-~/hands-on-metal-build-no-tools.sh
+bash build/build_offline_zip.sh --no-tools
 ```
 
-The ZIPs will still work — they use whatever is already on the device (system
-Magisk binary, system busybox). Bundling is only needed for a fully standalone
-offline package.
+The ZIPs will still work — they use whatever is already on the device (system Magisk binary, system busybox). Bundling is only needed for a fully standalone offline package.

@@ -1,6 +1,5 @@
 #!/sbin/sh
 # recovery-zip/collect_recovery.sh
-# shellcheck disable=SC3043  # local is supported by Android mksh and BusyBox ash
 # ============================================================
 # Hands-on-metal — Mode B: Recovery Hardware Variable Collection
 # Runs inside TWRP / OrangeFox via the META-INF updater-script.
@@ -12,7 +11,7 @@
 #      board files, .pb configs, deviceconfig XMLs, fstab, and
 #      any other files reachable only in recovery context
 #   3. Write every discovered value into the flat env registry
-#      at $ENV_REGISTRY (~/hands-on-metal/env_registry.sh)
+#      at $ENV_REGISTRY (/sdcard/hands-on-metal/env_registry.sh)
 #      so the Magisk module (Mode A) and pipeline (Mode C) can
 #      cross-reference them
 #   4. Collect raw binary artefacts (dtbo.img, recovery.img,
@@ -20,14 +19,14 @@
 #
 # Safety guarantees:
 #   • All partition mounts are read-only
-#   • Never writes outside $OUT/
+#   • Never writes outside /sdcard/hands-on-metal/
 #   • Umounts every partition it mounts before exit
 # ============================================================
 
 set -u
 
-OUT="${HOME:-/tmp}/hands-on-metal/recovery_dump"
-ENV_REGISTRY="${HOME:-/tmp}/hands-on-metal/env_registry.sh"
+OUT=/sdcard/hands-on-metal/recovery_dump
+ENV_REGISTRY=/sdcard/hands-on-metal/env_registry.sh
 LOG=$OUT/collect_recovery.log
 MANIFEST=$OUT/recovery_manifest.txt
 
@@ -109,8 +108,8 @@ find_block() {
         "/dev/block/by-name/$name"; do
         [ -b "$try" ] && { echo "$try"; return 0; }
     done
-    for g in /dev/block/platform/*/by-name/"$name" \
-             /dev/block/platform/*/*/by-name/"$name"; do
+    for g in /dev/block/platform/*/by-name/$name \
+             /dev/block/platform/*/*/by-name/$name; do
         [ -b "$g" ] && { echo "$g"; return 0; }
     done
     return 1
@@ -129,15 +128,6 @@ mkdir -p "$OUT"
 : > "$MANIFEST"
 # Ensure env registry exists (Mode A may not have run yet)
 [ -f "$ENV_REGISTRY" ] || : > "$ENV_REGISTRY"
-
-# Pre-flight: record execution context if env_detect hasn't run
-if ! grep -q "^HOM_EXEC_NODE=" "$ENV_REGISTRY" 2>/dev/null; then
-    _uid=$(id -u 2>/dev/null || echo 9999)
-    _node="unprivileged"
-    [ "$_uid" = "0" ] && _node="root_recovery"
-    reg_set shell HOM_EXEC_NODE "$_node"
-    reg_set shell HOM_EXEC_UID "$_uid"
-fi
 
 log "=== collect_recovery.sh start (Mode B) ==="
 
@@ -181,10 +171,6 @@ for bprop in \
     /system/build.prop \
     /vendor/build.prop; do
     [ -f "$bprop" ] || continue
-    if [ ! -r "$bprop" ]; then
-        log "  Skipping unreadable $bprop (permission denied)"
-        continue
-    fi
     log "  Reading $bprop"
     copy_file "$bprop"
     # Extract the key hardware/board properties directly
@@ -192,13 +178,14 @@ for bprop in \
         # Skip blank lines and comments
         case "$k" in
             ''|\#*) continue ;;
+        esac
             ro.board.platform|ro.hardware|ro.product.board|ro.product.device|\
             ro.product.model|ro.build.fingerprint|ro.vendor.build.fingerprint|\
             ro.soc.manufacturer|ro.soc.model|ro.chipname|ro.arch|\
             ro.product.cpu.abi|ro.product.cpu.abilist|\
             ro.kernel.version|ro.build.version.release|\
             ro.crypto.state|ro.crypto.type)
-                ENV_KEY="HOM_PROP_$(echo "$k" | tr '.' '_' | tr '[:lower:]' '[:upper:]')"
+                ENV_KEY="HOM_PROP_$(echo "$k" | tr '.' '_' | tr 'a-z' 'A-Z')"
                 reg_set recovery "$ENV_KEY" "$v"
                 ;;
         esac
@@ -214,7 +201,7 @@ for search_root in "$SYS_MNT" "$VENDOR_MNT" "$ODM_MNT" /system /vendor /odm \
     find "$search_root" -name "fstab*" 2>/dev/null | while IFS= read -r f; do
         copy_file "$f"
         # Record each fstab as an env var
-        ENV_KEY="HOM_FSTAB_$(basename "$f" | tr '.' '_' | tr '[:lower:]' '[:upper:]')_PATH"
+        ENV_KEY="HOM_FSTAB_$(basename "$f" | tr '.' '_' | tr 'a-z' 'A-Z')_PATH"
         reg_set_path recovery "$ENV_KEY" "$f"
     done
 done
@@ -228,20 +215,10 @@ copy_dir /proc/device-tree
 reg_set_path recovery HOM_PROC_DEVICE_TREE "/proc/device-tree"
 
 # Extract compatible string (root of the hardware identity)
-if [ -r /proc/device-tree/compatible ]; then
-    COMPAT=$(tr '\0' '\n' < /proc/device-tree/compatible 2>/dev/null | head -1 || true)
-else
-    COMPAT=""
-    log "  /proc/device-tree/compatible is not readable"
-fi
+COMPAT=$(cat /proc/device-tree/compatible 2>/dev/null | tr '\0' '\n' | head -1 || true)
 [ -n "$COMPAT" ] && reg_set recovery HOM_DT_COMPATIBLE "$COMPAT"
 
-if [ -r /proc/device-tree/model ]; then
-    MODEL=$(tr '\0' ' ' < /proc/device-tree/model 2>/dev/null || true)
-else
-    MODEL=""
-    log "  /proc/device-tree/model is not readable"
-fi
+MODEL=$(cat /proc/device-tree/model 2>/dev/null | tr '\0' ' ' || true)
 [ -n "$MODEL" ] && reg_set recovery HOM_DT_MODEL "$MODEL"
 
 # ── 6. dtbo.img raw image (for offline dtc decompilation) ────
@@ -264,7 +241,7 @@ for search_root in "$VENDOR_MNT" "$ODM_MNT" /vendor /odm; do
     [ -d "$search_root" ] || continue
     find "$search_root" -name "*.pb" 2>/dev/null | while IFS= read -r f; do
         copy_file "$f"
-        key="HOM_PB_$(echo "$f" | sed 's|[/.]|_|g' | tr '[:lower:]' '[:upper:]')"
+        key="HOM_PB_$(echo "$f" | sed 's|[/.]|_|g' | tr 'a-z' 'A-Z')"
         reg_set_path recovery "$key" "$f"
     done
 done
@@ -307,25 +284,9 @@ for prop in ro.crypto.state ro.crypto.type \
             vold.decrypt; do
     v=$(getprop "$prop" 2>/dev/null || true)
     [ -n "$v" ] || continue
-    key="HOM_RECOVERY_$(echo "$prop" | tr '.' '_' | tr '[:lower:]' '[:upper:]')"
+    key="HOM_RECOVERY_$(echo "$prop" | tr '.' '_' | tr 'a-z' 'A-Z')"
     reg_set crypto "$key" "$v"
 done
-
-# FDE/FBE classification (aligned with env_detect.sh and collect.sh)
-_rec_cs=$(getprop ro.crypto.state 2>/dev/null || echo "unknown")
-_rec_ct=$(getprop ro.crypto.type 2>/dev/null || echo "unknown")
-_rec_cc="none"
-case "$_rec_cs" in
-    encrypted)
-        case "$_rec_ct" in
-            block) _rec_cc="FDE" ;;
-            file)  _rec_cc="FBE" ;;
-            *)     _rec_cc="unknown_encrypted" ;;
-        esac
-        ;;
-    unencrypted) _rec_cc="none" ;;
-esac
-reg_set crypto HOM_CRYPTO_CLASS "$_rec_cc"
 
 # Indicate whether userdata appears decrypted (heuristic: a well-known
 # subdirectory that only exists when userdata is readable).

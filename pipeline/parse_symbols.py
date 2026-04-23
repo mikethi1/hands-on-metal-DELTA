@@ -16,7 +16,7 @@ For each symbol:
 
 Usage:
   python pipeline/parse_symbols.py --db hardware_map.sqlite \
-      --dump /sdcard/hands-on-metal/boot_work --run-id 1
+      --dump /sdcard/hands-on-metal/live_dump --run-id 1
 """
 
 import argparse
@@ -229,12 +229,8 @@ def main() -> None:
     sym_dir = dump / "vendor_symbols"
 
     if not sym_dir.exists():
-        print(
-            f"vendor_symbols directory not found: {sym_dir}\n"
-            "  (vendor symbol data is only collected when root is available — skipping)",
-            file=sys.stderr,
-        )
-        sys.exit(0)
+        print(f"No vendor_symbols directory found at {sym_dir}", file=sys.stderr)
+        sys.exit(1)
 
     db = sqlite3.connect(args.db)
     # Apply schema if tables don't exist

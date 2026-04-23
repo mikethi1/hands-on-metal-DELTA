@@ -250,24 +250,6 @@ CREATE TABLE IF NOT EXISTS kernel_module (
 );
 
 -- ------------------------------------------------------------
--- Audio product strategies  (ComponentTypeSet XML)
--- Populated from audio_policy_engine_product_strategies.xml or
--- any ComponentTypeSet XML found under vendor/etc/audio/.
--- standard_name  — e.g. STRATEGY_MEDIA (no Identifier mapping)
--- vendor_id      — numeric Identifier from Mapping= (vendor only)
--- ------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS audio_strategy (
-    strat_id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id        INTEGER REFERENCES collection_run(run_id) ON DELETE CASCADE,
-    component_name TEXT NOT NULL,   -- the Name= attribute
-    standard_name  TEXT,            -- same as component_name when STRATEGY_*
-    vendor_id      INTEGER,         -- Identifier value; NULL for standard strategies
-    source_file    TEXT,
-    UNIQUE (run_id, component_name)
-);
-CREATE INDEX IF NOT EXISTS idx_strat_run ON audio_strategy(run_id);
-
--- ------------------------------------------------------------
 -- Collected file index
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS collected_file (

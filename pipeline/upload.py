@@ -6,12 +6,13 @@ Upload a hands-on-metal share bundle.
 
 DEFAULT (no auth, no network):
   Reads the local share/ bundle and prints a summary.
+  All PII is already stripped by core/share.sh.
   Use this mode to review what would be shared before doing anything.
 
   python pipeline/upload.py --bundle /sdcard/hands-on-metal/share/<RUN_ID>/
 
 AUTHENTICATED UPLOAD (opt-in, requires --token):
-  Creates a public GitHub Gist with an upload-time redacted bundle.
+  Creates a public GitHub Gist with the redacted bundle.
 
   python pipeline/upload.py \\
       --bundle /sdcard/hands-on-metal/share/<RUN_ID>/ \\
@@ -30,9 +31,9 @@ PRIVATE UPLOAD (opt-in, requires --token + explicit consent):
 
 Notes:
   - No token → local summary only (default)
-  - Token without --private → prompt + public Gist, redacted content
+  - Token without --private → public Gist, redacted content
   - Token + --private + consent → secret Gist, content passed as-is
-  - Local share bundle stays on-device; redaction is applied at upload time
+  - PII is stripped by core/share.sh before this script sees the data
   - This script never reads env_registry.sh or log files directly;
     it only reads the pre-built share bundle from core/share.sh
 """
@@ -51,35 +52,6 @@ from datetime import datetime, timezone
 
 
 _REQUIRED_CONSENT = "I consent to sharing unredacted diagnostic data"
-_REDACTED = "#"
-_PII_NAME_PATTERNS = (
-    "IMEI", "IMSI", "MEID", "MSISDN", "ICCID", "SIM_ID", "SIM_SERIAL",
-    "PHONE_NUMBER", "PHONE_NUM", "SUBSCRIBER", "OWNER_NAME", "OWNER_EMAIL",
-    "ACCOUNT_NAME", "ACCOUNT_ID", "USER_NAME", "WIFI_SSID", "WIFI_PSK",
-    "WIFI_PASSWORD", "BLUETOOTH_NAME", "BT_NAME", "GPS_LATITUDE",
-    "GPS_LONGITUDE", "GPS_COORDS", "LOCATION", "EMAIL", "FINGERPRINT",
-    "BUILD_FINGERPRINT", "SERIAL_NUMBER", "HW_SERIAL", "HARDWARE_SERIAL",
-    "DEVICE_SERIAL", "WLAN_MAC", "WIFI_MAC", "BT_MAC", "BLUETOOTH_MAC",
-    "ETH_MAC", "MAC_ADDR", "MAC_ADDRESS",
-)
-_PII_VALUE_PATTERNS = (
-    # 15-digit telecom IDs (IMEI/IMSI-like identifiers)
-    re.compile(r"^[0-9]{15}$"),
-    # 14-digit / 14-hex identifiers (legacy telecom IDs / MEID-like)
-    re.compile(r"^[0-9]{14}$"),
-    re.compile(r"^[0-9A-Fa-f]{14}$"),
-    # 19-20 digit SIM card identifiers (ICCID-like)
-    re.compile(r"^[0-9]{19,20}$"),
-    # Phone number variants
-    re.compile(r"^[0-9]{3}[-. ][0-9]{3}[-. ][0-9]{4}$"),
-    re.compile(r"^(\+[0-9]{1,3})?[ .-]?[0-9]{3}[ .-][0-9]{3}[ .-][0-9]{4}$"),
-    # Email address
-    re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"),
-    # MAC addresses (with separators and compact)
-    re.compile(r"^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$"),
-    re.compile(r"^[0-9A-Fa-f]{12}$"),
-)
-_KEYVAL_RE = re.compile(r'([A-Z0-9_]+)="([^"]*)"')
 
 
 def _now_iso() -> str:
@@ -153,70 +125,6 @@ def summarise_bundle(files: dict[str, str]) -> None:
     if "README.txt" in files:
         print(f"\n--- README ---")
         print(files["README.txt"])
-
-
-def _is_pii_name(name: str) -> bool:
-    upper_name = name.upper()
-    return any(token in upper_name for token in _PII_NAME_PATTERNS)
-
-
-def _is_pii_value(value: str) -> bool:
-    return any(pat.fullmatch(value) for pat in _PII_VALUE_PATTERNS)
-
-
-def _redact_value(name: str, value: str) -> str:
-    if _is_pii_name(name) or _is_pii_value(value):
-        return _REDACTED
-    return value
-
-
-def _redact_keyval_text(content: str) -> str:
-    def _replace(match: re.Match[str]) -> str:
-        key = match.group(1)
-        value = match.group(2)
-        safe = _redact_value(key, value)
-        return f'{key}="{safe}"'
-    return _KEYVAL_RE.sub(_replace, content)
-
-
-def redact_for_repo_upload(files: dict[str, str]) -> dict[str, str]:
-    """Return a copy of *files* with upload-time privacy redaction applied."""
-    out = dict(files)
-    for name, content in files.items():
-        if name == "share_bundle.json":
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError:
-                out[name] = _redact_keyval_text(content)
-                continue
-            variables = data.get("variables", {})
-            if isinstance(variables, dict):
-                data["variables"] = {
-                    k: _redact_value(str(k), str(v))
-                    for k, v in variables.items()
-                }
-            data["pii_redacted"] = True
-            data["sharing_mode"] = "repo_upload_redacted"
-            out[name] = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-            continue
-        if name in ("env_registry.txt", "var_audit.txt"):
-            out[name] = _redact_keyval_text(content)
-    return out
-
-
-def confirm_repo_upload(assume_yes: bool) -> bool:
-    """Prompt user before sending local data to GitHub."""
-    if assume_yes:
-        return True
-    if not sys.stdin.isatty():
-        print(
-            "Upload canceled: non-interactive session and no --yes flag.\n"
-            "Re-run with --yes to confirm upload.",
-            file=sys.stderr,
-        )
-        return False
-    answer = input("Send bundle to GitHub now? [y/yes/N]: ").strip().lower()
-    return answer in ("y", "yes")
 
 
 # ── GitHub Gist upload ────────────────────────────────────────────────────────
@@ -323,11 +231,6 @@ def main() -> None:
         default="hands-on-metal install diagnostic",
         help="Gist description (optional)",
     )
-    ap.add_argument(
-        "--yes",
-        action="store_true",
-        help="Skip confirmation prompt and proceed with upload.",
-    )
     args = ap.parse_args()
 
     # Validate private consent
@@ -357,14 +260,6 @@ def main() -> None:
         )
         return
 
-    if not confirm_repo_upload(args.yes):
-        print("Keeping bundle local only (upload aborted).", file=sys.stderr)
-        return
-
-    upload_files = files
-    if not args.private:
-        upload_files = redact_for_repo_upload(files)
-
     # Write private local copy first (if --private)
     if args.private:
         priv_dir = (
@@ -372,7 +267,7 @@ def main() -> None:
             if args.private_dir
             else bundle_dir.parent / "private" / bundle_dir.name
         )
-        write_private_local(upload_files, priv_dir)
+        write_private_local(files, priv_dir)
 
     # Upload to Gist
     public_gist = not args.private  # public Gist for redacted; secret for private
@@ -381,7 +276,7 @@ def main() -> None:
 
     try:
         url = upload_gist(
-            upload_files,
+            files,
             token=token,
             public=public_gist,
             description=args.description,
