@@ -192,8 +192,8 @@ def main() -> None:
             log_paths += sorted(p.glob("logs/master_*.log"))
             manifest_paths = sorted(p.glob("run_manifest_*.txt"))
             manifest_paths += sorted(p.glob("logs/run_manifest_*.txt"))
-        elif "*" in str(p) or "?" in str(p):
-            log_paths = sorted(Path(x) for x in glob.glob(str(p)))
+        elif "*" in str(p):
+            log_paths = sorted(Path(".").glob(str(p)))
         elif p.is_file():
             log_paths = [p]
         else:
@@ -202,8 +202,8 @@ def main() -> None:
     # Resolve manifest files
     if args.manifest:
         mp = Path(args.manifest)
-        if "*" in str(mp) or "?" in str(mp):
-            manifest_paths += sorted(Path(x) for x in glob.glob(str(mp)))
+        if "*" in str(mp):
+            manifest_paths += sorted(Path(".").glob(str(mp)))
         elif mp.is_file():
             manifest_paths.append(mp)
 

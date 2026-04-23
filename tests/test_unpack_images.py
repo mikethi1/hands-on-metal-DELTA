@@ -1,6 +1,8 @@
 import subprocess
 import sys
 import unittest
+import gzip
+import tempfile
 from pathlib import Path
 from unittest import mock
 
@@ -13,6 +15,49 @@ import unpack_images  # noqa: E402
 
 
 class UnpackImagesTests(unittest.TestCase):
+    @staticmethod
+    def _newc_entry(name: str, payload: bytes) -> bytes:
+        name_bytes = name.encode("utf-8") + b"\x00"
+        namesize = len(name_bytes)
+        filesize = len(payload)
+        fields = [
+            b"070701",
+            b"00000000",  # ino
+            b"000081A4",  # mode
+            b"00000000",  # uid
+            b"00000000",  # gid
+            b"00000001",  # nlink
+            b"00000000",  # mtime
+            f"{filesize:08x}".encode("ascii"),
+            b"00000000",  # devmajor
+            b"00000000",  # devminor
+            b"00000000",  # rdevmajor
+            b"00000000",  # rdevminor
+            f"{namesize:08x}".encode("ascii"),
+            b"00000000",  # check
+        ]
+        header = b"".join(fields)
+        if len(header) != 110:
+            raise ValueError("invalid newc header length")
+
+        def _pad4(buf: bytes) -> bytes:
+            return buf + (b"\x00" * ((4 - (len(buf) % 4)) % 4))
+
+        return header + _pad4(name_bytes) + _pad4(payload)
+
+    def test_decompress_ramdisk_recovers_gzip_with_prefixed_bytes(self) -> None:
+        cpio_payload = b"070701cpio"
+        ramdisk = gzip.compress(cpio_payload)
+        wrapped = (b"\x00" * 256) + ramdisk
+        out = unpack_images.decompress_ramdisk(wrapped)
+        self.assertEqual(out, cpio_payload)
+
+    def test_decompress_ramdisk_recovers_cpio_with_prefixed_bytes(self) -> None:
+        cpio_payload = b"070701cpio"
+        wrapped = b"prefix-junk" + cpio_payload
+        out = unpack_images.decompress_ramdisk(wrapped)
+        self.assertEqual(out, cpio_payload)
+
     def test_try_lz4_uses_cli_fallback_without_python_lz4(self) -> None:
         lz4_magic = b"\x04\x22\x4d\x18"
         fake_input = lz4_magic + b"payload"
@@ -89,6 +134,38 @@ class UnpackImagesTests(unittest.TestCase):
              mock.patch("unpack_images.subprocess.run", return_value=completed):
             out = unpack_images._try_lz4(fake_input)
         self.assertEqual(out, b"")
+
+    def test_try_lz4_block_decodes_cpio(self) -> None:
+        fake_input = b"raw-lz4-block-data"
+        fake_block = mock.Mock()
+        fake_block.decompress.return_value = b"070701cpio"
+        with mock.patch.object(unpack_images, "_HAS_LZ4_BLOCK", True), \
+             mock.patch.object(unpack_images, "_lz4_block", fake_block, create=True):
+            out = unpack_images._try_lz4_block(fake_input)
+        self.assertEqual(out, b"070701cpio")
+
+    def test_try_lz4_block_returns_none_without_module(self) -> None:
+        fake_input = b"raw-lz4-block-data"
+        with mock.patch.object(unpack_images, "_HAS_LZ4_BLOCK", False):
+            out = unpack_images._try_lz4_block(fake_input)
+        self.assertIsNone(out)
+
+    def test_extract_cpio_newc_malformed_header_does_not_raise(self) -> None:
+        bad = b"070701" + (b"Z" * 104)
+        with tempfile.TemporaryDirectory() as td:
+            out = unpack_images.extract_cpio(bad, Path(td))
+        self.assertEqual(out, [])
+
+    def test_extract_cpio_newc_rejects_parent_traversal_name(self) -> None:
+        archive = (
+            self._newc_entry("../outside.prop", b"leak")
+            + self._newc_entry("TRAILER!!!", b"")
+        )
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = Path(td)
+            out = unpack_images.extract_cpio(archive, out_dir)
+            self.assertEqual(out, [])
+            self.assertFalse((out_dir.parent / "outside.prop").exists())
 
 
 if __name__ == "__main__":
