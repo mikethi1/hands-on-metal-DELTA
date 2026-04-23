@@ -251,8 +251,17 @@ _boot_image_check_deps() {
         ux_print "  ⚠  Missing optional tools:$missing_optional"
     fi
 
-    _reg_set boot HOM_BOOT_IMG_HAS_CURL  "$(_has_cmd curl  && echo true || echo false)"
-    _reg_set boot HOM_BOOT_IMG_HAS_UNZIP "$(_has_cmd unzip && echo true || echo false)"
+    if _has_cmd curl; then
+        _reg_set boot HOM_BOOT_IMG_HAS_CURL "true"
+    else
+        _reg_set boot HOM_BOOT_IMG_HAS_CURL "false"
+    fi
+
+    if _has_cmd unzip; then
+        _reg_set boot HOM_BOOT_IMG_HAS_UNZIP "true"
+    else
+        _reg_set boot HOM_BOOT_IMG_HAS_UNZIP "false"
+    fi
 }
 
 # ── pre-placed image scanner ─────────────────────────────────
@@ -642,6 +651,106 @@ _confirm_yn_timeout() {
     esac
 }
 
+_prompt_option5_env_table_mode() {
+    # Prompt user to choose env-table mode for option 5 after boot-image
+    # detection output is shown.
+    #
+    # Writes:
+    #   HOM_OPTION5_ENV_TABLE_MODE
+    #   HOM_OPTION5_ENV_TABLE_REAL_LINK
+    #   HOM_OPTION5_ENV_TABLE_FACTORY_LINK
+    #   HOM_OPTION5_ENV_TABLE_BOTH_LINK
+    #   HOM_OPTION5_ENV_TABLE_SELECTED_LINK
+    local mode="both"
+    local input=""
+    local input_normalized=""
+    local links_dir_ok=1
+    local links_dir="$BOOT_WORK_DIR/env_table_links"
+    local real_link="$links_dir/real_hardware_env_table.link"
+    local factory_link="$links_dir/factory_image_env_table.link"
+    local both_link="$links_dir/both_env_tables.link"
+    local selected_link="$both_link"
+    local real_link_display="" factory_link_display="" both_link_display=""
+
+    if ! mkdir -p "$links_dir" 2>/dev/null; then
+        log_warn "Could not create env-table links directory: $links_dir. Link placeholders may be unavailable."
+        links_dir_ok=0
+    fi
+    if [ "$links_dir_ok" -eq 1 ]; then
+        local _entry _label _path
+        for _entry in \
+            "real:$real_link" \
+            "factory:$factory_link" \
+            "both:$both_link"; do
+            _label="${_entry%%:*}"
+            _path="${_entry#*:}"
+            if ! ln -sfn /dev/null "$_path" 2>/dev/null; then
+                log_warn "Could not create /dev/null link ($_label): $_path"
+            fi
+        done
+    fi
+
+    real_link_display=$(printf '%s' "$real_link" | tr -d '\r\n')
+    factory_link_display=$(printf '%s' "$factory_link" | tr -d '\r\n')
+    both_link_display=$(printf '%s' "$both_link" | tr -d '\r\n')
+
+    ux_print ""
+    ux_print "  ┌────────────────────────────────────────────────────────────────────┐"
+    ux_print "  │ Option 5 — Environment Table Selection                            │"
+    ux_print "  ├────────────────────────────────────────────────────────────────────┤"
+    ux_print "  │ 1) Real hardware environment table                                │"
+    ux_print "  ├────────────────────────────────────────────────────────────────────┤"
+    ux_print "  │ 2) Factory image based environment table                          │"
+    ux_print "  ├────────────────────────────────────────────────────────────────────┤"
+    ux_print "  │ 3) Both environment tables                                        │"
+    ux_print "  ├────────────────────────────────────────────────────────────────────┤"
+    ux_print "  │ Links: see below (placeholder links)                              │"
+    ux_print "  └────────────────────────────────────────────────────────────────────┘"
+    ux_print "    real   : $real_link_display"
+    ux_print "    factory: $factory_link_display"
+    ux_print "    both   : $both_link_display"
+
+    if [ -t 0 ] 2>/dev/null; then
+        ux_prompt input \
+            "Choose env table mode [1=real, 2=factory, 3=both]" \
+            "3"
+    else
+        input="3"
+        log_info "Non-interactive mode: defaulting option 5 env table mode to both"
+    fi
+
+    input_normalized=$(printf '%s' "$input" | tr '[:upper:]' '[:lower:]')
+
+    case "$input_normalized" in
+        1|real|hardware)
+            mode="real_hardware"
+            selected_link="$real_link"
+            ;;
+        2|factory|factory_image)
+            mode="factory_image"
+            selected_link="$factory_link"
+            ;;
+        3|both)
+            mode="both"
+            selected_link="$both_link"
+            ;;
+        *)
+            log_warn "Invalid env table mode input '$input' — defaulting to both"
+            mode="both"
+            selected_link="$both_link"
+            ;;
+    esac
+
+    _reg_set boot HOM_OPTION5_ENV_TABLE_MODE "$mode"
+    _reg_set boot HOM_OPTION5_ENV_TABLE_REAL_LINK "$real_link"
+    _reg_set boot HOM_OPTION5_ENV_TABLE_FACTORY_LINK "$factory_link"
+    _reg_set boot HOM_OPTION5_ENV_TABLE_BOTH_LINK "$both_link"
+    _reg_set boot HOM_OPTION5_ENV_TABLE_SELECTED_LINK "$selected_link"
+
+    ux_print "  ✓  Selected env table mode: $mode"
+    ux_print "     Active link: $selected_link"
+}
+
 _prompt_local_user_image() {
     # $1=boot_part, $2=codename, $3=build_id_lower
     # Echoes resolved path (or empty) on stdout.
@@ -758,6 +867,48 @@ _is_google_device_supported() {
 # call from inside a function whose stdout is captured via $(...).
 #
 # Usage: _extract_all_partitions_from_inner_zip <inner_zip_path>
+_find_zip_member_by_basename() {
+    # $1 = zip path
+    # $2 = basename to find (e.g., boot.img)
+    local zip_path="$1"
+    local base_name="$2"
+    [ -f "$zip_path" ] || return 1
+    _has_cmd unzip || return 1
+
+    local member
+    member=$(
+        unzip -Z1 "$zip_path" 2>/dev/null \
+            | awk -v n="$base_name" '
+                {
+                    m=$0
+                    sub(/^.*\//, "", m)
+                    if (m == n) {
+                        print $0
+                        exit
+                    }
+                }'
+    )
+    [ -n "$member" ] || return 1
+    printf '%s\n' "$member"
+    return 0
+}
+
+_extract_zip_member_by_basename() {
+    # $1 = zip path
+    # $2 = basename to extract (e.g., vendor_boot.img)
+    # $3 = output directory
+    local zip_path="$1"
+    local base_name="$2"
+    local out_dir="$3"
+    local member=""
+
+    member=$(_find_zip_member_by_basename "$zip_path" "$base_name" || true)
+    [ -n "$member" ] || return 1
+    mkdir -p "$out_dir" 2>/dev/null || return 1
+    unzip -joq "$zip_path" "$member" -d "$out_dir" 2>/dev/null || return 1
+    [ -s "$out_dir/$base_name" ]
+}
+
 _extract_all_partitions_from_inner_zip() {
     # $1 = path to inner image-*.zip
     # $2 = optional output directory for extracted partition images
@@ -773,28 +924,14 @@ _extract_all_partitions_from_inner_zip() {
     # entries are tolerated silently.
     local candidates="boot.img init_boot.img vendor_boot.img dtbo.img vbmeta.img vbmeta_system.img vbmeta_vendor.img recovery.img"
 
-    # Listing once is cheaper than probing each name with unzip.
-    local listing
-    listing=$(unzip -l "$inner_zip_path" 2>/dev/null || true)
-    [ -n "$listing" ] || return 1
-
     local extracted_count=0
     local extracted_names=""
     local img
     for img in $candidates; do
-        # Match the image name as a whole token in the listing
-        # (avoids false hits like "boot.img.lz4" when only boot.img
-        # was asked for).
-        if printf '%s\n' "$listing" | grep -Eq "[[:space:]]${img}\$"; then
-            if unzip -joq "$inner_zip_path" "$img" \
-                    -d "$part_dir" 2>/dev/null \
-                    && [ -s "$part_dir/$img" ]; then
-                extracted_count=$((extracted_count + 1))
-                extracted_names="$extracted_names $img"
-                log_info "Extracted partition image: $img -> $part_dir/$img"
-            else
-                log_warn "Failed to extract $img from inner ZIP"
-            fi
+        if _extract_zip_member_by_basename "$inner_zip_path" "$img" "$part_dir"; then
+            extracted_count=$((extracted_count + 1))
+            extracted_names="$extracted_names $img"
+            log_info "Extracted partition image: $img -> $part_dir/$img"
         fi
     done
 
@@ -904,7 +1041,7 @@ _download_factory_boot_image() {
     # anti-rollback bricks.
     local inner_build
     inner_build=$(echo "$inner_zip" \
-        | sed -n "s|.*image-${codename}-\\([^./]*\\)\\.zip.*|\\1|p" \
+        | sed -n "s|.*image-${codename}-\\([^/]*\\)\\.zip|\\1|p" \
         | tr '[:upper:]' '[:lower:]')
     if [ -n "$inner_build" ] && [ "$inner_build" != "$build_id_lower" ]; then
         log_warn "Factory ZIP build mismatch: device=$build_id_lower zip=$inner_build"
@@ -938,8 +1075,7 @@ _download_factory_boot_image() {
 
     # Step 2: extract boot.img or init_boot.img from inner ZIP
     local partitions_dir="$OPTION5_PARTITIONS_DIR"
-    if unzip -joq "$inner_zip_path" "${boot_part}.img" \
-            -d "$extract_dir" 2>/dev/null; then
+    if _extract_zip_member_by_basename "$inner_zip_path" "${boot_part}.img" "$extract_dir"; then
         local target_img="$extract_dir/${boot_part}.img"
         if [ -f "$target_img" ] && [ -s "$target_img" ]; then
             ux_print "  ✓  Extracted ${boot_part}.img from factory image"
@@ -969,8 +1105,7 @@ _download_factory_boot_image() {
         ux_print "  ⚠  init_boot.img not present in this factory image."
         ux_print "     This firmware may pre-date Android 13 / API 33."
         ux_print "     Falling back to boot.img."
-        if unzip -joq "$inner_zip_path" "boot.img" \
-                -d "$extract_dir" 2>/dev/null; then
+        if _extract_zip_member_by_basename "$inner_zip_path" "boot.img" "$extract_dir"; then
             local fallback_img="$extract_dir/boot.img"
             if [ -f "$fallback_img" ] && [ -s "$fallback_img" ]; then
                 ux_print "  ✓  Extracted boot.img as fallback"
@@ -1224,6 +1359,9 @@ run_boot_image_acquire() {
             ux_print "  No usable pre-placed or backup ${boot_part}.img found."
         fi
     fi
+
+    # Prompt exactly after boot-image detection output is shown.
+    _prompt_option5_env_table_mode
 
     # ── 3. Local user file (boot.img / init_boot.img / factory ZIP)
     #       or Google factory image download (Pixel devices) ──────
