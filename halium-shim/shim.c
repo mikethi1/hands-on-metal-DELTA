@@ -62,10 +62,20 @@ static FILE        *g_log         = NULL;
 static pthread_mutex_t g_log_mtx  = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t     g_call_idx    = 0;
 
+static int is_safe_log_path(const char *path) {
+    if (!path || path[0] != '/') return 0; /* Require absolute path */
+    if (strstr(path, "/../") != NULL) return 0;
+    if (strcmp(path, "..") == 0) return 0;
+    if (strncmp(path, "../", 3) == 0) return 0;
+    size_t len = strlen(path);
+    if (len >= 3 && strcmp(path + len - 3, "/..") == 0) return 0;
+    return 1;
+}
+
 static void shim_log_init(void) {
     if (g_log) return;
     const char *path = getenv("HOM_SHIM_LOG");
-    if (!path) path = "/tmp/hom_shim.jsonl";
+    if (!is_safe_log_path(path)) path = "/tmp/hom_shim.jsonl";
     g_log = fopen(path, "a");
     if (!g_log) g_log = stderr;
 }
